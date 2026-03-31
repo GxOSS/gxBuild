@@ -1,0 +1,18 @@
+[package]
+name = "ggxbuild"
+version = "1.0.1"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+libloading = "0.8.6"
+thiserror = "1.0"
+anyhow = "1.0"
+crc32fast = "1.4"
+rustpython-vm = "0.4.0"
+rustpython-compiler = "0.4.0"
+rustyline = "14.0.0"
+clap = "4.6.0"
+
+[build-dependencies]
+cc = "1.0"

@@ -1,0 +1,15 @@
+[submodule "src/crypto/ExCrypt"]
+	path = src/crypto/ExCrypt
+	url = https://github.com/emoose/ExCrypt
+[submodule "src/compression/liblzx"]
+	path = src/compression/liblzx
+	url = https://github.com/elasota/liblzx
+[submodule "src/builder/xenon-bltool"]
+	path = src/builder/xenon-bltool
+	url = https://github.com/InvoxiPlayGames/xenon-bltool
+[submodule "src/lib/xenon-bltool"]
+	path = src/lib/xenon-bltool
+	url = https://github.com/InvoxiPlayGames/xenon-bltool
+[submodule "src/lib/ExCrypt"]
+	path = src/lib/ExCrypt
+	url = https://github.com/emoose/ExCrypt
