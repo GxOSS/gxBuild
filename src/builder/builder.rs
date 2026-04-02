@@ -126,8 +126,8 @@ pub struct NandExtra {
 }
 
 pub struct NandPatches {
-    rglp: Option<Vec<u8>>,
-    xebuild: Option<Vec<u8>>,
+    pub rglp: Option<Vec<u8>>,
+    pub xebuild: Option<Vec<u8>>,
 }
 
 pub enum MotherboardType {
@@ -154,14 +154,14 @@ pub enum BuildType { // Custom images
 }
 
 pub struct BuildOptions {
-    layout: NandLayout,
-    image_type: ImageType,
-    build_type: BuildType,
-    motherboard: MotherboardType,
-    bigonsmall: bool = false, // Usually false, For RGL/ XDKB systems with nandfs on hdd
-    shadowboot: bool = false, // Toggle shadowboot image creation
-    mfg: bool = false,
-    patches: Option<NandPatches>,
+    pub layout: NandLayout,
+    pub image_type: ImageType,
+    pub build_type: BuildType,
+    pub motherboard: MotherboardType,
+    pub bigonsmall: bool, // Usually false, For RGL/ XDKB systems with nandfs on hdd
+    pub shadowboot: bool, // Toggle shadowboot image creation
+    pub mfg: bool,
+    pub patches: Option<NandPatches>,
 }
 
 pub struct BlockMap // (?)
