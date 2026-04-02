@@ -1,17 +1,11 @@
 # GGXBuild
 
-A session-based Rust NAND building and patching tool for the Xbox 360.
-
-Supported adapters:
-- xeBuild CLI and INI
-- FFI
-- LuaVM
+A session-based Rust NAND building and patching tool for Xbox 360.
 
 Supported inputs:
 - All image and block types
 - xeBuild and RGLoader patches
-- compiled loaderpatch patches
-- individual compiled patches with inputted metadata
+- xeBuild INI
 
 ## Project setup:
 

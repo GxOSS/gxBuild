@@ -109,6 +109,15 @@ pub fn parse_patch_records(mut reader: impl Read) -> io::Result<Vec<Vec<PatchRec
 pub fn parse_xe_binary(path: &str) -> anyhow::Result<XeBuildBinary> {
     let mut f = File::open(path)?;
 
+    let mut output = XeBuildBinary {
+        xetype: XeBuildBinaryType::Unknown,
+        onebl: None,
+        cb: None,
+        cb_b: None,
+        cd: None,
+        khv: None,
+        generic: None,
+    };
     // Check for XEPATCH0 header
     let mut header_buf = [0u8; 8];
     if f.read_exact(&mut header_buf).is_ok() {
@@ -128,15 +137,7 @@ pub fn parse_xe_binary(path: &str) -> anyhow::Result<XeBuildBinary> {
     let sections = parse_patch_records(&mut f)?;
     let section_count = sections.len();
 
-    let mut output = XeBuildBinary {
-        xetype: XeBuildBinaryType::Unknown,
-        onebl: None,
-        cb: None,
-        cb_b: None,
-        cd: None,
-        khv: None,
-        generic: None,
-    };
+    
     
     // Create a mutable copy of sections to work with
     let mut sections = sections;
