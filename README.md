@@ -1,38 +1,35 @@
-# GGXBuild
+# gxBuild
 
-A session-based Rust NAND building and patching tool for Xbox 360.
+A Rust Xbox 360 NAND building and patching tool. Matches the fbBuild/ggBuild/xeBuild CLI / INI style.
 
-Supported inputs:
-- All image and block types
-- xeBuild and RGLoader patches
-- xeBuild INI
+## Status
 
-## Project setup:
+- Untested
 
-Interface commands and adapters are dynamically loaded from the adapters/ and commands/ directories
+- INI parsing complete
 
-src/
-├── builder/ - NAND parsing and building
-├───── images/ - Image types available to build, dynamically loaded
-├── crypto/ - ExCrypt and related crypto
-├── patcher/ - Patching engine
-├── interface/
-├───── adapters/ - Supported input methods (CLI, FFI)
-├───────── data/ - Shared data type inputs
-├───────────── xebuild.rs - xeBuild INI parser
-├───────────── luascript.rs - GGXBuild Luascript parser
-├───────── cli.rs - Interface session with CLI, optional xeBuild style.
-├───────── ffi.rs - Export session over FFI
-├───── commands/ - Commands available in session
-├───── luavm.rs - `mlua` LuaVM object
-├───── session.rs - Session and queue manager, Loads commands and listens on adapters
-├───── interface.rs - module entry point
-└── main.rs - Entry point
+- Patching functionally complete
+- Crypto / unpacking functionally complete
+- Decompression functionally complete
 
-## Libraries
+- Session structured
+- CLI structured
 
-- `builder` - NAND parsing and building - Based on [flash-dump-tool](), [RGBuild](), [extract360.py](), and [xenon-bltool]()
-- `crypto` - Directly includes [ExCrypt](). Some logic from [Xbox-360-Crypto]()
-- `compression` - Directly includes [LibLZX]() and [libmspack LZXD]()
-- `patcher` - Based on [RGBuild](). Referenced from [mitchellwaite]()
-- `interface` - Directly includes [mlua](). Original work.
+- Building incomplete
+- FlashFS incomplete
+- Session commands incomplete
+
+
+## Credits
+
+I referenced ALLOT of projects in the building of this. These are the ones i directly took code from:
+
+- [xenon-bltool]() by [InxoviPlayGames]()
+- [RGBuild]() by stoker25, tydye81 and sk1080
+- [ExCrypt]() by [emoose]()
+- [Xenia]() by Xenia Contributors
+- [J-Runner with Extras]() by J-Runner Contributors
+
+## License
+
+All code wrote by ExposureMG is for the public domain. All code from RGBuild retains the copyright of the original owner. All code from xenon-bltool retains the GPL v2 license (see headers). All code from J-Runner with Extras retains the MIT license (see headers). All code from Xenia retains the copyright of the original owner.
