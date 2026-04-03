@@ -20,10 +20,12 @@
 */
 
 use crate::builder::builder::BootloaderHeader;
-use crate::lib::excrypt::{
+use crate::builder::deps::crypto::{
     ExCryptHmacSha, ExCryptRc4Ecb, ExCryptRc4Key, ExCryptRc4State, ExCryptRotSumSha,
 };
-use crate::lib::xenon_bltool::lzx_decompress;
+use crate::builder::deps::compression::{
+    Compress, Decompress,
+};
 use zerocopy::byteorder::big_endian;
 use zerocopy::FromBytes;
 

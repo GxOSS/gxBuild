@@ -21,10 +21,10 @@
 
 use zerocopy::{FromBytes, byteorder::big_endian};
 use crate::builder::builder::BootloaderHeader;
-use crate::lib::excrypt::{
+use crate::builder::deps::crypto::{
     ExCryptHmacSha, ExCryptRc4Ecb, ExCryptRc4Key, ExCryptRc4State, ExCryptRotSumSha, ExCryptSha,
 };
-use crate::lib::xenon_bltool::{bootloader_delta_block, lzxdelta_apply_patch};
+use crate::builder::deps::compression::{bootloader_delta_block, lzxdelta_apply_patch};
 
 #[derive(FromBytes)]
 #[repr(C)]

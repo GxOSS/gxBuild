@@ -148,7 +148,7 @@ pub fn decrypt_chain(cb: BootloaderCb, cbb: Option<BootloaderCb>, cd: Bootloader
     
 }
 
-pub fn encrypt_chain(cb: BootloaderCb, cbb: Option<BootloaderCb>, cd: BootloaderCd, ce: BootloaderCe, cf: BootloaderCf, cg: BootloaderCg, cpukey: String) {
+pub fn encrypt_chain(nand: &NandSkeleton, cpukey: String) {
     
 }
 

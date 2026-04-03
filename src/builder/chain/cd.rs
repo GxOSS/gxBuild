@@ -21,7 +21,7 @@
 
 use zerocopy::{FromBytes, byteorder::big_endian};
 use crate::builder::builder::BootloaderHeader;
-use crate::lib::excrypt::{
+use crate::builder::deps::crypto::{
     ExCryptBnQwBeSigVerify, ExCryptHmacSha, ExCryptRc4Ecb, ExCryptRc4Key, ExCryptRc4State,
     ExCryptRotSumSha, ExCryptRsa, ExCryptSig,
 };
