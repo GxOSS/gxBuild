@@ -46,6 +46,10 @@ pub struct NandHeader {
     pub smc_config_offset: u32<big_endian>,
     pub smc_boot_size: u32<big_endian>,
     pub smc_boot_offset: u32<big_endian>,
+    pub sys_update_addr: u32<big_endian>,
+    pub sys_update_count: u16<big_endian>,
+    pub sys_update_version: u16<big_endian>,
+    pub sys_update_size: u32<big_endian>,
 }
 
 impl NandHeader {
@@ -164,12 +168,12 @@ pub struct BuildOptions {
     pub patches: Option<NandPatches>,
 }
 
-pub struct BlockMap // (?)
+pub struct BlockMap; // Standard placeholder for now
 
 pub struct NandSkeleton {
     pub cpukey: Option<String>,
     pub image: Vec<u8>,
-    pub blockmap: Option<Blockmap>,
+    pub block_map: Option<BlockMap>,
     pub options: BuildOptions,
     pub header: NandHeader,
     pub extra: NandExtra,
@@ -179,7 +183,7 @@ pub struct NandSkeleton {
 }
 
 impl NandSkeleton {
-    pub fn new(nandimg: AsRef<Path>, cpukey: Option<String>) -> Result<Self, String> {
+    pub fn new(nandimg: &std::path::Path, cpukey: Option<String>) -> Result<Self, String> {
         // Read image
         // Check block type
         // Check bad blocks
@@ -193,7 +197,9 @@ impl NandSkeleton {
         // Read detailed info
         // Populate ImageType, BuildType, and BuildOptions
         // Build NandSkeleton
+        Err("Not implemented".to_string())
     }
+
     pub fn build() -> Result<Vec<u8>, String> {
         // Read NandSkeleton
         // Rehash and resign (?)
@@ -202,6 +208,11 @@ impl NandSkeleton {
         // Inject patches
         // Calculate ECC and inject
         // Remap bad blocks from blockmap
+        Ok(Vec::new()) // Stub
+    }
 
+    /// High-level scan that populates the skeleton's filesystem state automatically from the attached image.
+    pub fn scan_flashfs(&mut self) {
+        self.flashfs = FlashFS::scan(&self.image, &self.options.layout);
     }
 }

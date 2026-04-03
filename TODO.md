@@ -1,6 +1,25 @@
-# GGX Project TODO
+# GGXBuild TODO
 
-- FlashFS Parser / Builder
+| Feature | Status | Tested |
+|-----|-----|-----|
+| INI parsing | Complete | No |
+| Patching | Complete | No |
+| Crypto | Complete | No |
+| Decompression | Complete | No |
+| Recompression | Not Started | No |
+| NAND Building | Incomplete | No |
+| FlashFS | Complete | No |
+
+| Interface | Status | Tested |
+|-----|-----|-----|
+| Session structured | Complete | No |
+| Session commands | Incomplete | No |
+| CLI structured | Complete | No |
+| PyGG Interpreter | Complete | No |
+| PyGG Shell | Complete | No |
+
+
+- FlashFS Parser / Builder - FEATURE COMPLETE
 
 Parse 4-types of FlashFS: XSB, PKSB, PKBB, MMC
 
@@ -11,6 +30,31 @@ src/builder/tools/flashfs.rs
 - Final NAND Builder (From NandSkeleton)
 
 src/builder/builder.rs - NandSkeleton method
+
+Read BuildOptions and NandSkeleton data, Dynamically construct NAND, encrypt, add spare data, etc
+
+
+
+- Session Commands
+
+1. Parse NAND
+2. Extract
+3. Extract-All
+4. Extract-Required
+5. Encrypt / Decrypt
+6. Decompress
+7. Compress
+8. Load / Apply INI
+9. Load FlashFS Folder
+10. Apply-XePatch
+11. Apply-RGLP
+12. Build
+
+
+
+- Better build.rs
+
+Options to disable CLI, FFI interface, xeBuild INI, Python interpreter, etc
 
 
 

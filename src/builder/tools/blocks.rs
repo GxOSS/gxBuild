@@ -36,18 +36,50 @@ pub enum NandLayout {
     Layout3, // eMMC - Skip ECC
 }
 
-impl NandLayout {
-    pub fn block_size(&self) -> usize {
+    pub fn physical_block_size(&self) -> usize {
         match self {
             NandLayout::Layout0 | NandLayout::Layout1 => 0x4200,
             NandLayout::Layout2 => 0x21000,
+            NandLayout::Layout3 => 0x200, // eMMC
         }
+    }
+
+    pub fn block_size(&self) -> usize {
+        self.physical_block_size()
+    }
+
+    pub fn logical_pages_per_block(&self) -> usize {
+        match self {
+            NandLayout::Layout0 | NandLayout::Layout1 => 32,
+            NandLayout::Layout2 => 256, // 64 physical pages * 4 sub-pages
+            NandLayout::Layout3 => 1,
+        }
+    }
+
+    pub fn total_blocks(&self, image_len: usize) -> usize {
+        image_len / self.physical_block_size()
+    }
+
+    pub fn page_size(&self) -> usize {
+        0x200
+    }
+
+    pub fn spare_size(&self) -> usize {
+        match self {
+            NandLayout::Layout3 => 0,
+            _ => 0x10,
+        }
+    }
+
+    pub fn physical_page_size(&self) -> usize {
+        self.page_size() + self.spare_size()
     }
 
     pub fn marker_offset(&self) -> usize {
         match self {
             NandLayout::Layout0 | NandLayout::Layout1 => 0x205,
             NandLayout::Layout2 => 0x200,
+            NandLayout::Layout3 => 0, // No marker
         }
     }
 
@@ -55,6 +87,7 @@ impl NandLayout {
         match self {
             NandLayout::Layout0 => 0x200,
             NandLayout::Layout1 | NandLayout::Layout2 => 0x201,
+            NandLayout::Layout3 => 0,
         }
     }
 
@@ -62,13 +95,15 @@ impl NandLayout {
         match self {
             NandLayout::Layout0 | NandLayout::Layout1 => 0x3E0,
             NandLayout::Layout2 => 0x1E0,
+            NandLayout::Layout3 => 0,
         }
     }
 
     pub fn max_blocks(&self) -> usize {
         match self {
             NandLayout::Layout0 | NandLayout::Layout1 => 0x400,
-            NandLayout::Layout2 => 0x200, // Big Block reads strictly only span 0x200 max config capacity
+            NandLayout::Layout2 => 0x200, 
+            NandLayout::Layout3 => 0, // Not applicable
         }
     }
 }

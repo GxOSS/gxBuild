@@ -4,25 +4,7 @@ A Rust Xbox 360 NAND building and patching tool. Matches the fbBuild/ggBuild/xeB
 
 ## Status
 
-|-----|-----|-----|
-| Feature | Status | Tested |
-|-----|-----|-----|
-| INI parsing | Complete | No |
-| Patching | Complete | No |
-| Crypto | Complete | No |
-| Decompression | Complete | No |
-| Recompression | Not Started | No |
-| Building | Incomplete | No |
-| FlashFS | Incomplete | No |
-
-|-----|-----|-----|
-| Interface | Status | Tested |
-|-----|-----|-----|
-| Session structured | Complete | No |
-| Session commands | Incomplete | No |
-| CLI structured | Complete | No |
-| PyGG Interpreter | Complete | No |
-| PyGG Shell | Complete | No |
+See [TODO.md](TODO.md) for a full list of features and their status.
 
 ## Credits
 
