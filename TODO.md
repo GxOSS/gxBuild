@@ -5,10 +5,10 @@
 | INI parsing | Complete | No |
 | Patching | Complete | No |
 | Crypto | Complete | No |
-| Decompression | Complete | No |
+| Decompression | Incomplete | No |
 | Recompression | Not Started | No |
 | NAND Building | Incomplete | No |
-| FlashFS | Complete | No |
+| FlashFS | Incomplete | No |
 
 | Interface | Status | Tested |
 |-----|-----|-----|
@@ -19,19 +19,6 @@
 | PyGG Shell | Complete | No |
 
 
-- FlashFS Parser / Builder - FEATURE COMPLETE
-
-Parse 4-types of FlashFS: XSB, PKSB, PKBB, MMC
-
-src/builder/tools/flashfs.rs
-
-
-
-- Final NAND Builder (From NandSkeleton)
-
-src/builder/builder.rs - NandSkeleton method
-
-Read BuildOptions and NandSkeleton data, Dynamically construct NAND, encrypt, add spare data, etc
 
 
 

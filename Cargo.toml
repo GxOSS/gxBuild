@@ -12,6 +12,7 @@ crc32fast = "1.4"
 rustpython-vm = "0.4.0"
 rustpython-compiler = "0.4.0"
 rustyline = "14.0.0"
+zerocopy = "0.8.3"
 clap = { version = "4.6.0", features = ["derive"] }
 
 [build-dependencies]

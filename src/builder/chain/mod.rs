@@ -144,11 +144,83 @@ impl BootloaderGeneric {
     }
 }
 
-pub fn decrypt_chain(cb: BootloaderCb, cbb: Option<BootloaderCb>, cd: BootloaderCd, ce: BootloaderCe, cf: BootloaderCf, cg: BootloaderCg, cpukey: String) {
-    
+pub struct Keyvault {
+    pub data: Vec<u8>,
 }
 
-pub fn encrypt_chain(nand: &NandSkeleton, cpukey: String) {
+impl Keyvault {
+    pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
+        let size = self.header.header.size.get();
+        let size_aligned = (size + 0xF) & 0xFFFFFFF0;
+
+        // Size minus the Generic Header is the hashable payload
+        unsafe {
+            ExCryptRotSumSha(
+                &self.header as *const _ as *const u8,
+                0x10, // hash header key independently
+                self.data.as_ptr(),
+                size_aligned - std::mem::size_of::<BootloaderGenericHeader>() as u32,
+                sha_out.as_mut_ptr(),
+                0x14,
+            );
+        }
+    }
+
+    pub fn verify_signature(&self, salt: &[u8], pubkey: &ExCryptRsa) -> bool {
+        let mut bl_hash = [0u8; 0x14];
+        self.calculate_rotsum(&mut bl_hash);
+
+        let signature_ptr = self.header.signature.as_ptr() as *const ExCryptSig;
+
+        let result = unsafe {
+            ExCryptBnQwBeSigVerify(
+                signature_ptr,
+                bl_hash.as_ptr(),
+                salt.as_ptr(),
+                pubkey,
+            )
+        };
+
+        result == 1
+    }
+
+    pub fn decrypt(&mut self, dec_key: &[u8; 0x10]) {
+        let size = self.header.header.size.get();
+        let size_aligned = (size + 0xF) & 0xFFFFFFF0;
+
+        let mut rc4 = ExCryptRc4State {
+            s: [0; 256],
+            i: 0,
+            j: 0,
+        };
+
+        unsafe {
+            ExCryptHmacSha(
+                dec_key.as_ptr(),
+                0x10,
+                self.header.key.as_ptr(),
+                0x10,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                0,
+                self.header.key.as_mut_ptr(),
+                0x10,
+            );
+
+            ExCryptRc4Key(&mut rc4, self.header.key.as_ptr(), 0x10);
+
+            let encrypted_payload_ptr = self.data.as_mut_ptr();
+            ExCryptRc4Ecb(
+                &mut rc4,
+                encrypted_payload_ptr,
+                size_aligned - std::mem::size_of::<BootloaderGenericHeader>() as u32,
+            );
+        }
+    }
+}
+
+pub fn decrypt_chain(nand: &NandSkeleton, cpukey: String) {
     
 }
 
