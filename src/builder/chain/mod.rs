@@ -20,6 +20,7 @@ pub struct BootloaderHeader {
     pub flags: U16<BigEndian>,
     pub entrypoint: U32<BigEndian>,
     pub size: U32<BigEndian>,
+    pub salt: [u8; 16],
 }
 
 impl BootloaderHeader {
@@ -70,7 +71,6 @@ pub enum XenonBlType {
 #[repr(C)]
 pub struct BootloaderGenericHeader {
     pub header: BootloaderHeader,
-    pub key: [u8; 0x10],
     pub signature: [u8; 0x100], // matching EXCRYPT_SIG size
 }
 
@@ -100,16 +100,17 @@ impl BootloaderGeneric {
         excrypt::verify_signature(&self.header.signature, &bl_hash, salt, pubkey).unwrap_or(false)
     }
 
-    pub fn decrypt(&mut self, dec_key: &[u8; 0x10]) {
+    pub fn decrypt(&mut self, dec_key: &[u8; 16]) {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_size = size_aligned as usize - std::mem::size_of::<BootloaderGenericHeader>();
 
         // High-level HMAC-SHA and RC4
-        if let Ok(derived_key) = excrypt::hmac_sha(dec_key, &[&self.header.key]) {
-            self.header.key.copy_from_slice(&derived_key[..0x10]);
+        if let Ok(derived_key) = excrypt::hmac_sha(dec_key, &[&self.header.header.salt]) {
+            let mut decrypt_key = [0u8; 16];
+            decrypt_key.copy_from_slice(&derived_key[..16]);
             
-            if let Ok(mut rc4) = Rc4::new(&self.header.key) {
+            if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
                 let _ = rc4.crypt(&mut self.data[..payload_size]);
             }
         }

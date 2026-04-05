@@ -44,7 +44,7 @@ pub struct FsSpareData {
 impl FsSpareData {
     pub fn parse(data: &[u8; 16], layout: &NandLayout) -> Self {
         match layout {
-            NandLayout::Layout0 | NandLayout::Layout1 => {
+            NandLayout::Xsb | NandLayout::Sb => {
                 let block_id = u16::from_le_bytes([data[0], data[1] & 0xF]);
                 let fs_sequence = u32::from_be_bytes([data[6], data[2], data[3], data[4]]);
                 let bad_block = data[5] == 0xFF; 
@@ -54,7 +54,7 @@ impl FsSpareData {
 
                 FsSpareData { block_id, fs_sequence, fs_size, fs_page_count, fs_block_type, bad_block }
             }
-            NandLayout::Layout2 => {
+            NandLayout::Bb => {
                 let block_id = u16::from_le_bytes([data[1], data[2] & 0xF]);
                 let fs_sequence = u32::from_be_bytes([0, data[5], data[4], data[3]]);
                 let bad_block = data[0] == 0xFF;
@@ -64,7 +64,7 @@ impl FsSpareData {
 
                 FsSpareData { block_id, fs_sequence, fs_size, fs_page_count, fs_block_type, bad_block }
             }
-            NandLayout::Layout3 => {
+            NandLayout::Emmc => {
                 FsSpareData { block_id: 0, fs_sequence: 0, fs_size: 0, fs_page_count: 0, fs_block_type: 0, bad_block: false }
             }
         }

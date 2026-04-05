@@ -28,7 +28,6 @@ use crate::builder::deps::excrypt::{self, ExCryptRsa};
 #[repr(C)]
 pub struct SmcHeader {
     pub header: BootloaderHeader,
-    pub key: [u8; 0x10],
     pub signature: [u8; 0x100], // matching EXCRYPT_SIG size
 }
 
@@ -52,9 +51,9 @@ impl Smc {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
 
-        // Signature is excluded from the hash, just like CB/CD
+        // Signature is excluded from the hash
         if let Ok(hash) = excrypt::rot_sum_sha(
-            unsafe { std::slice::from_raw_parts(&self.header as *const _ as *const u8, 0x10) },
+            &IntoBytes::as_bytes(&self.header.header)[..0x10],
             &self.data[..(size_aligned as usize - std::mem::size_of::<SmcHeader>())],
         ) {
             sha_out.copy_from_slice(&hash);
@@ -71,31 +70,13 @@ impl Smc {
 
     /// Decrypts the SMC payload using the "SMC Hash" rolling-key cipher in-place.
     pub fn decrypt(&mut self) -> &mut Self {
-        let mut key: [u32; 4] = [0x42, 0x75, 0x4E, 0x79]; // "BuNy"
-        for i in 0..self.data.len() {
-            let ciphertext_byte = self.data[i];
-            let mod_val = (ciphertext_byte as u32) * 0xFB;
-        
-            self.data[i] ^= (key[i & 3] & 0xFF) as u8;
-        
-            key[(i + 1) & 3] = key[(i + 1) & 3].wrapping_add(mod_val);
-            key[(i + 2) & 3] = key[(i + 2) & 3].wrapping_add(mod_val >> 8);
-        }
+        smc_crypt(&mut self.data, false);
         self
     }
 
     /// Encrypts the SMC payload using the "SMC Hash" rolling-key cipher in-place.
     pub fn encrypt(&mut self) -> &mut Self {
-        let mut key: [u32; 4] = [0x42, 0x75, 0x4E, 0x79]; // "BuNy"
-        for i in 0..self.data.len() {
-            let ciphertext_byte = self.data[i] ^ (key[i & 3] & 0xFF) as u8;
-            let mod_val = (ciphertext_byte as u32) * 0xFB;
-        
-            self.data[i] = ciphertext_byte;
-        
-            key[(i + 1) & 3] = key[(i + 1) & 3].wrapping_add(mod_val);
-            key[(i + 2) & 3] = key[(i + 2) & 3].wrapping_add(mod_val >> 8);
-        }
+        smc_crypt(&mut self.data, true);
         self
     }
 
@@ -103,5 +84,51 @@ impl Smc {
         let mut out = IntoBytes::as_bytes(&self.header).to_vec();
         out.extend_from_slice(&self.data);
         out
+    }
+}
+
+/// A "Raw" SMC as found in retail NAND images, which lacks the 0x130 byte signed header.
+#[derive(Clone)]
+pub struct RawSmc {
+    pub data: Vec<u8>,
+}
+
+impl RawSmc {
+    pub fn new(data: Vec<u8>) -> Self {
+        Self { data }
+    }
+
+    /// Decrypts the raw SMC payload in-place using the "BuNy" rolling-key cipher.
+    pub fn decrypt(&mut self) {
+        smc_crypt(&mut self.data, false);
+    }
+
+    /// Encrypts the raw SMC payload in-place using the "BuNy" rolling-key cipher.
+    pub fn encrypt(&mut self) {
+        smc_crypt(&mut self.data, true);
+    }
+}
+
+/// Core implementation of the SMC "BuNy" rolling-key cipher.
+fn smc_crypt(data: &mut [u8], encrypt: bool) {
+    let mut key: [u32; 4] = [0x42, 0x75, 0x4E, 0x79]; // "BuNy"
+    for i in 0..data.len() {
+        let ciphertext_byte;
+        if encrypt {
+            ciphertext_byte = data[i] ^ (key[i & 3] & 0xFF) as u8;
+        } else {
+            ciphertext_byte = data[i];
+        }
+        
+        let mod_val = (ciphertext_byte as u32).wrapping_mul(0xFB);
+        
+        if !encrypt {
+            data[i] ^= (key[i & 3] & 0xFF) as u8;
+        } else {
+            data[i] = ciphertext_byte;
+        }
+    
+        key[(i + 1) & 3] = key[(i + 1) & 3].wrapping_add(mod_val);
+        key[(i + 2) & 3] = key[(i + 2) & 3].wrapping_add(mod_val >> 8);
     }
 }

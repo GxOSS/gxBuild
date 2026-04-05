@@ -1,41 +1,12 @@
-/*
-MIT License
-
-Copyright (c) 2021 Nick Stefanou, Josh Davidson, Mena Azer, and Other J-Runner Developers
-
-Modified in 2026 by Exposure / Zach for GGX
-
-This file has been taken from J-Runner and modified, and therefore retains the original
-License.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-*/
-
 use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
-use zerocopy::byteorder::{U16, U32, BigEndian};
+use zerocopy::byteorder::BigEndian;
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum NandLayout {
-    Layout0, // Small Block XSB
-    Layout1, // Small Block PSB / KSB
-    Layout2, // Big Block
-    Layout3, // eMMC - Skip ECC
+    Xsb,  // Xenon Small Block (Layout0)
+    Sb,   // Small Block (Layout1)
+    Bb,   // Big Block (Layout2)
+    Emmc, // eMMC (Layout3)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -51,41 +22,35 @@ pub struct BadBlock {
     pub target: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct BlockMap {
-    pub blocks: Vec<BadBlock>,
-    pub layout: NandLayout,
+pub struct RawImage {
+    pub image: Vec<u8>,
 }
 
-impl BlockMap {
-    pub fn is_bad(&self, block: usize) -> bool {
-        self.blocks.iter().any(|b| b.block == block)
+impl RawImage {
+    pub fn new(data: Vec<u8>) -> Self {
+        Self { image: data }
     }
 }
 
 impl NandLayout {
-    pub fn physical_block_size(&self) -> usize {
-        match self {
-            NandLayout::Layout0 | NandLayout::Layout1 => 0x4200,
-            NandLayout::Layout2 => 0x21000,
-            NandLayout::Layout3 => 0x200, // eMMC
-        }
-    }
-
     pub fn block_size(&self) -> usize {
-        self.physical_block_size()
+        match self {
+            NandLayout::Xsb | NandLayout::Sb => 0x4200,
+            NandLayout::Bb => 0x21000,
+            NandLayout::Emmc => 0x200,
+        }
     }
 
     pub fn logical_pages_per_block(&self) -> usize {
         match self {
-            NandLayout::Layout0 | NandLayout::Layout1 => 32,
-            NandLayout::Layout2 => 256, // 64 physical pages * 4 sub-pages
-            NandLayout::Layout3 => 1,
+            NandLayout::Xsb | NandLayout::Sb => 32,
+            NandLayout::Bb => 256,
+            NandLayout::Emmc => 1,
         }
     }
 
     pub fn total_blocks(&self, image_len: usize) -> usize {
-        image_len / self.physical_block_size()
+        image_len / self.block_size()
     }
 
     pub fn page_size(&self) -> usize {
@@ -94,7 +59,7 @@ impl NandLayout {
 
     pub fn spare_size(&self) -> usize {
         match self {
-            NandLayout::Layout3 => 0,
+            NandLayout::Emmc => 0,
             _ => 0x10,
         }
     }
@@ -105,46 +70,50 @@ impl NandLayout {
 
     pub fn marker_offset(&self) -> usize {
         match self {
-            NandLayout::Layout0 | NandLayout::Layout1 => 0x205,
-            NandLayout::Layout2 => 0x200,
-            NandLayout::Layout3 => 0, // No marker
+            NandLayout::Xsb | NandLayout::Sb => 0x205,
+            NandLayout::Bb => 0x200,
+            NandLayout::Emmc => 0, // No marker
         }
     }
 
     pub fn id_offset(&self) -> usize {
         match self {
-            NandLayout::Layout0 => 0x200,
-            NandLayout::Layout1 | NandLayout::Layout2 => 0x201,
-            NandLayout::Layout3 => 0,
+            NandLayout::Xsb => 0x200,
+            NandLayout::Sb | NandLayout::Bb => 0x201,
+            NandLayout::Emmc => 0,
         }
     }
 
     pub fn reserve_start(&self) -> usize {
         match self {
-            NandLayout::Layout0 | NandLayout::Layout1 => 0x3E0,
-            NandLayout::Layout2 => 0x1E0,
-            NandLayout::Layout3 => 0,
+            NandLayout::Xsb | NandLayout::Sb => 0x3E0,
+            NandLayout::Bb => 0x1E0,
+            NandLayout::Emmc => 0,
         }
     }
 
     pub fn max_blocks(&self) -> usize {
         match self {
-            NandLayout::Layout0 | NandLayout::Layout1 => 0x400,
-            NandLayout::Layout2 => 0x200, 
-            NandLayout::Layout3 => 0, // Not applicable
+            NandLayout::Xsb | NandLayout::Sb => 0x400,
+            NandLayout::Bb => 0x200, 
+            NandLayout::Emmc => 0, // Not applicable
         }
+    }
+
+    pub fn physical_block_size(&self) -> usize {
+        self.block_size()
     }
 
     pub fn detect(image: &[u8]) -> Result<Self, String> {
         let len = image.len();
         match len {
-            len if len >= 0x1080000 && len <= 0x1080000 + 0x1000 => Ok(NandLayout::Layout0), // 16MB
-            len if len >= 0x4200000 && len <= 0x4200000 + 0x1000 => Ok(NandLayout::Layout1), // 64MB
-            len if len >= 0x10800000 && len <= 0x10800000 + 0x1000 => Ok(NandLayout::Layout2), // 256MB
-            len if len >= 0x21000000 && len <= 0x21000000 + 0x1000 => Ok(NandLayout::Layout2), // 512MB
+            len if len >= 0x1080000 && len <= 0x1080000 + 0x1000 => Ok(NandLayout::Xsb), // 16MB
+            len if len >= 0x4200000 && len <= 0x4200000 + 0x1000 => Ok(NandLayout::Sb),  // 64MB
+            len if len >= 0x10800000 && len <= 0x10800000 + 0x1000 => Ok(NandLayout::Bb), // 256MB
+            len if len >= 0x21000000 && len <= 0x21000000 + 0x1000 => Ok(NandLayout::Bb), // 512MB
             _ => {
                 if len > 0x40000000 { // 1GB+
-                    Ok(NandLayout::Layout3) // eMMC
+                    Ok(NandLayout::Emmc) // eMMC
                 } else {
                     Err(format!("Could not detect NAND layout for size 0x{:x}", len))
                 }
@@ -153,8 +122,7 @@ impl NandLayout {
     }
 }
 
-/// Generates a 32-bit EDC checksum and writes it to the final 4 bytes of a 0x210-byte buffer.
-pub fn calcecc(data: &mut [u8]) {
+pub fn calculate_ecc(data: &mut [u8]) {
     if data.len() < 0x210 {
         return;
     }
@@ -183,13 +151,18 @@ pub fn calcecc(data: &mut [u8]) {
     data[0x20C..0x210].copy_from_slice(&ecc_temp);
 }
 
-/// Legacy wrapper for addecc_v2 using SpareProfile
+/// Legacy wrapper for add_spare using SpareProfile
 pub fn addecc(image: &[u8], layout: NandLayout, _profile: SpareProfile, blockstart: usize) -> Vec<u8> {
-    addecc_v2(image, layout, blockstart)
+    add_spare(image, layout, blockstart)
+}
+
+/// Compatibility alias for remove_spare
+pub fn unecc(image: &[u8]) -> Vec<u8> {
+    remove_spare(image)
 }
 
 /// Expands a 0x200-byte chunked image into a 0x210-byte aligned image with proper spare layouts.
-pub fn addecc_v2(image: &[u8], layout: NandLayout, blockstart: usize) -> Vec<u8> {
+pub fn add_spare(image: &[u8], layout: NandLayout, blockstart: usize) -> Vec<u8> {
     let page_size = 0x200;
     let spare_size = 0x10;
     let page_with_spare_size = 0x210;
@@ -211,27 +184,25 @@ pub fn addecc_v2(image: &[u8], layout: NandLayout, blockstart: usize) -> Vec<u8>
         let mut sparedata = [0u8; 16];
 
         match layout {
-            NandLayout::Layout0 => {
+            NandLayout::Xsb => {
                 sparedata[5] = 0xFF;
                 let val = (i / 32) + block_number_base;
                 sparedata[0] = (val & 0xFF) as u8;
                 sparedata[1] = ((val / 0x100) & 0xFF) as u8;
             }
-            NandLayout::Layout1 => {
+            NandLayout::Sb => {
                 sparedata[5] = 0xFF;
                 let val = (i / 32) + block_number_base;
                 sparedata[1] = (val & 0xFF) as u8;
                 sparedata[2] = ((val / 0x100) & 0xFF) as u8;
             }
-            NandLayout::Layout2 => {
-                 sparedata[0] = 0xFF;
-                 let val = (i / 0x100) + (blockstart / 0x21000);
-                 sparedata[1] = (val & 0xFF) as u8;
-                 sparedata[2] = ((val >> 8) & 0xFF) as u8;
+            NandLayout::Bb => {
+                sparedata[0] = 0xFF;
+                let val = (i / 0x100) + (blockstart / 0x21000);
+                sparedata[1] = (val & 0xFF) as u8;
+                sparedata[2] = ((val >> 8) & 0xFF) as u8;
             }
-            NandLayout::Layout3 => {
-                // eMMC / Layout3: Spare data is usually handled differently or not present in raw images
-            }
+            NandLayout::Emmc => {}
         }
 
         let write_offset = i * page_with_spare_size;
@@ -239,7 +210,7 @@ pub fn addecc_v2(image: &[u8], layout: NandLayout, blockstart: usize) -> Vec<u8>
         page_slice[..page_size].copy_from_slice(&data_block);
         page_slice[page_size..page_with_spare_size].copy_from_slice(&sparedata);
 
-        calcecc(page_slice);
+        calculate_ecc(page_slice);
     }
 
     result
@@ -247,7 +218,7 @@ pub fn addecc_v2(image: &[u8], layout: NandLayout, blockstart: usize) -> Vec<u8>
 
 /// Strips ECC/Spare data (0x10 bounds) dynamically to output clean 0x200 blocks. 
 /// Automatically handles Big Block (0x840 padding) when detected.
-pub fn unecc(image: &[u8]) -> Vec<u8> {
+pub fn remove_spare(image: &[u8]) -> Vec<u8> {
     if image.len() >= 0x840 && image[0x800] == 0xFF && image[0x810] == 0xFF && image[0x820] == 0xFF {
         let pages = image.len() / 0x840;
         let mut result = vec![0u8; pages * 0x800];
@@ -296,7 +267,7 @@ pub fn is_bad_block(image: &[u8], block_number: usize, layout: &NandLayout) -> b
     }
 
     let mut flag = false;
-    let bigblock = matches!(layout, NandLayout::Layout2);
+    let bigblock = matches!(layout, NandLayout::Bb);
 
     let mut i = 0;
     while i + 0x210 <= block_size {
@@ -324,6 +295,58 @@ pub fn is_bad_block(image: &[u8], block_number: usize, layout: &NandLayout) -> b
     }
 
     false
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BlockMap {
+    pub blocks: Vec<BadBlock>,
+    pub layout: NandLayout,
+}
+
+impl BlockMap {
+    pub fn is_bad(&self, block: usize) -> bool {
+        self.blocks.iter().any(|b| b.block == block)
+    }
+
+    /// Parse a raw image-with-spare into a BlockMap.
+    pub fn new(image: &RawImage) -> Option<Self> {
+        let layout = NandLayout::detect(&image.image).ok()?;
+        let mut bad_blocks = Vec::new();
+        let total_blocks = layout.total_blocks(image.image.len());
+
+        for block in 0..total_blocks {
+            if is_bad_block(&image.image, block, &layout) {
+                bad_blocks.push(BadBlock {
+                    block,
+                    target: block,
+                });
+            }
+        }
+        Some(Self {
+            blocks: bad_blocks,
+            layout,
+        })
+    }
+
+    pub fn map_and_heal(&mut self, image: &mut [u8]) -> Result<(), String> {
+         let bad_blocks_indices: Vec<usize> = self.blocks.iter().map(|b| b.block).collect();
+         if bad_blocks_indices.is_empty() { return Ok(()); }
+         
+         if bad_blocks_indices.len() > 32 {
+             return Err(format!("Too many bad blocks: {}", bad_blocks_indices.len()));
+         }
+
+         let remapped = resolve_remapped_blocks(image, &bad_blocks_indices, &self.layout)?;
+         remap_bad_blocks(image, &bad_blocks_indices, &remapped, &self.layout)?;
+
+         // Update our targets
+         for (i, target) in remapped.iter().enumerate() {
+             if let Some(t) = target {
+                 self.blocks[i].target = *t;
+             }
+         }
+         Ok(())
+    }
 }
 
 /// Scans the reserved block area and resolves the physical remapped targets for a list of bad block IDs.
@@ -426,35 +449,4 @@ pub fn remap_bad_blocks(
     }
 
     Ok(())
-}
-
-/// Scans the entire NAND image, identifying bad blocks and automatically replacing their data with valid remapped counterparts.
-pub fn map_and_heal_image(image: &mut [u8], layout: &NandLayout) -> Result<Vec<usize>, String> {
-    let mut bad_blocks = Vec::new();
-    let max_blocks = layout.max_blocks();
-    let total_blocks = image.len() / layout.block_size();
-
-    let boundary = std::cmp::min(max_blocks, total_blocks);
-
-    for block in 0..boundary {
-        if is_bad_block(image, block, layout) {
-            bad_blocks.push(block);
-        }
-    }
-
-    if bad_blocks.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    if bad_blocks.len() > 32 {
-        return Err(format!(
-            "Too many bad blocks discovered: {}! Only 32 mapped reserves.",
-            bad_blocks.len()
-        ));
-    }
-
-    let remapped = resolve_remapped_blocks(image, &bad_blocks, layout)?;
-    remap_bad_blocks(image, &bad_blocks, &remapped, layout)?;
-
-    Ok(bad_blocks)
 }

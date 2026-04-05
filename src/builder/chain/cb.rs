@@ -27,7 +27,6 @@ use zerocopy::{FromBytes, IntoBytes};
 #[repr(C)]
 pub struct BootloaderCbHeader {
     pub header: BootloaderHeader,
-    pub key: [u8; 0x10],
     pub padding_or_args: [u8; 32], // 4 * sizeof(uint64_t)
     pub signature: [u8; 0x100],    // EXCRYPT_SIG
     pub globals: [u8; 0x128],
@@ -71,7 +70,7 @@ impl BootloaderCb {
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
 
         if let Ok(hash) = excrypt::rot_sum_sha(
-            unsafe { std::slice::from_raw_parts(self as *const _ as *const u8, 0x10) },
+            &IntoBytes::as_bytes(&self.header.header)[..0x10],
             &self.header.globals[..(size_aligned as usize - 0x140)],
         ) {
             sha_out.copy_from_slice(&hash);
@@ -121,33 +120,35 @@ impl BootloaderCb {
         }
     }
 
-    pub fn decrypt(&mut self, onebl_key: &[u8; 0x10]) {
+    pub fn decrypt(&mut self, onebl_key: &[u8; 16]) {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
 
-        if let Ok(derived_key) = excrypt::hmac_sha(onebl_key, &[&self.header.key]) {
-            self.header.key.copy_from_slice(&derived_key[..0x10]);
+        if let Ok(derived_key) = excrypt::hmac_sha(onebl_key, &[&self.header.header.salt]) {
+            let mut decrypt_key = [0u8; 16];
+            decrypt_key.copy_from_slice(&derived_key[..16]);
             
-            if let Ok(mut rc4) = Rc4::new(&self.header.key) {
+            if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
                 let _ = rc4.crypt(&mut self.header.padding_or_args[..(size_aligned as usize - 0x20)]);
             }
         }
     }
 
-    pub fn decrypt_v1(&mut self, cb_a_key: &[u8; 0x10], cpu_key: &[u8; 0x10]) {
+    pub fn decrypt_v1(&mut self, cb_a_key: &[u8; 16], cpu_key: &[u8; 16]) {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
 
-        if let Ok(derived_key) = excrypt::hmac_sha(cb_a_key, &[&self.header.key, cpu_key]) {
-            self.header.key.copy_from_slice(&derived_key[..0x10]);
+        if let Ok(derived_key) = excrypt::hmac_sha(cb_a_key, &[&self.header.header.salt, cpu_key]) {
+            let mut decrypt_key = [0u8; 16];
+            decrypt_key.copy_from_slice(&derived_key[..16]);
             
-            if let Ok(mut rc4) = Rc4::new(&self.header.key) {
+            if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
                 let _ = rc4.crypt(&mut self.header.padding_or_args[..(size_aligned as usize - 0x20)]);
             }
         }
     }
 
-    pub fn decrypt_v2(&mut self, cb_a_hdr: &BootloaderCbHeader, cpu_key: &[u8; 0x10]) {
+    pub fn decrypt_v2(&mut self, cb_a_hdr: &BootloaderCbHeader, cpu_key: &[u8; 16]) {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
 
@@ -156,12 +157,13 @@ impl BootloaderCb {
         cb_a_hdr_copy.flags.set(0);
 
         if let Ok(derived_key) = excrypt::hmac_sha(
-            &cb_a_hdr.key, 
-            &[&self.header.key, cpu_key, unsafe { std::slice::from_raw_parts(&cb_a_hdr_copy as *const _ as *const u8, 0x10) }]
+            &cb_a_hdr.header.salt, 
+            &[&self.header.header.salt, cpu_key, &IntoBytes::as_bytes(&cb_a_hdr_copy)[..0x10]]
         ) {
-            self.header.key.copy_from_slice(&derived_key[..0x10]);
+            let mut decrypt_key = [0u8; 16];
+            decrypt_key.copy_from_slice(&derived_key[..16]);
             
-            if let Ok(mut rc4) = Rc4::new(&self.header.key) {
+            if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
                 let _ = rc4.crypt(&mut self.header.padding_or_args[..(size_aligned as usize - 0x20)]);
             }
         }

@@ -27,7 +27,6 @@ use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
 #[repr(C)]
 pub struct BootloaderScHeader {
     pub header: BootloaderHeader,
-    pub key: [u8; 0x10],
     pub signature: [u8; 0x100], // matching EXCRYPT_SIG size
 }
 
@@ -51,9 +50,9 @@ impl BootloaderSc {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
 
-        // Size minus the Header is the hashable payload
+        // Signature is excluded from the hash
         if let Ok(hash) = excrypt::rot_sum_sha(
-            unsafe { std::slice::from_raw_parts(&self.header as *const _ as *const u8, 0x10) },
+            &IntoBytes::as_bytes(&self.header.header)[..0x10],
             &self.data[..(size_aligned as usize - std::mem::size_of::<BootloaderScHeader>())],
         ) {
             sha_out.copy_from_slice(&hash);
@@ -67,18 +66,25 @@ impl BootloaderSc {
         excrypt::verify_signature(&self.header.signature, &bl_hash, salt, pubkey).unwrap_or(false)
     }
 
-    pub fn decrypt(&mut self, dec_key: &[u8; 0x10]) {
+    pub fn decrypt(&mut self, dec_key: &[u8; 16]) {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
+        let payload_size = size_aligned as usize - std::mem::size_of::<BootloaderScHeader>();
 
-        if let Ok(derived_key) = excrypt::hmac_sha(dec_key, &[&self.header.key]) {
-            self.header.key.copy_from_slice(&derived_key[..0x10]);
+        if let Ok(derived_key) = excrypt::hmac_sha(dec_key, &[&self.header.header.salt]) {
+            let mut decrypt_key = [0u8; 16];
+            decrypt_key.copy_from_slice(&derived_key[..16]);
             
-            if let Ok(mut rc4) = Rc4::new(&self.header.key) {
-                let bytes_to_decrypt = size_aligned as usize - std::mem::size_of::<BootloaderScHeader>();
-                let _ = rc4.crypt(&mut self.data[..bytes_to_decrypt]);
+            if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
+                let _ = rc4.crypt(&mut self.data[..payload_size]);
             }
         }
+    }
+
+    /// Decrypts a stock devkit/devgl SC stage using the standard Zero-Key.
+    pub fn decrypt_stock(&mut self) {
+        let zero_key = [0u8; 16];
+        self.decrypt(&zero_key);
     }
 
     pub fn serialize(&self) -> Vec<u8> {

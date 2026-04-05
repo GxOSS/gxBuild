@@ -28,7 +28,6 @@ use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
 #[repr(C)]
 pub struct BootloaderCdHeader {
     pub header: BootloaderHeader,
-    pub key: [u8; 0x10],
     pub signature: [u8; 0x100], // EXCRYPT_SIG
     pub idk_yet: [u8; 0x120],
     pub cf_salt: [u8; 10],
@@ -61,7 +60,7 @@ impl BootloaderCd {
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
 
         if let Ok(hash) = excrypt::rot_sum_sha(
-            unsafe { std::slice::from_raw_parts(&self.header as *const _ as *const u8, 0x10) },
+            &IntoBytes::as_bytes(&self.header.header)[..0x10],
             &self.header.idk_yet[..(size_aligned as usize - 0x120)],
         ) {
             sha_out.copy_from_slice(&hash);
@@ -90,24 +89,25 @@ impl BootloaderCd {
         }
     }
 
-    pub fn decrypt(&mut self, cbb_key: &[u8; 0x10], cpu_key: Option<&[u8; 0x10]>) {
+    pub fn decrypt(&mut self, cbb_key: &[u8; 16], cpu_key: Option<&[u8; 16]>) {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
+        let payload_size = size_aligned as usize - 0x20;
 
         // Derived key starts with CBB key
-        if let Ok(derived_key) = excrypt::hmac_sha(cbb_key, &[&self.header.key]) {
-            self.header.key.copy_from_slice(&derived_key[..0x10]);
+        if let Ok(derived_key) = excrypt::hmac_sha(cbb_key, &[&self.header.header.salt]) {
+            let mut final_key = [0u8; 16];
+            final_key.copy_from_slice(&derived_key[..16]);
 
             // Optional CPU Key layer (2nd HMAC)
             if let Some(key) = cpu_key {
-                if let Ok(derived_key_cpu) = excrypt::hmac_sha(key, &[&self.header.key]) {
-                    self.header.key.copy_from_slice(&derived_key_cpu[..0x10]);
+                if let Ok(derived_key_cpu) = excrypt::hmac_sha(key, &[&final_key]) {
+                    final_key.copy_from_slice(&derived_key_cpu[..16]);
                 }
             }
 
-            if let Ok(mut rc4) = Rc4::new(&self.header.key) {
-                // 0x20 = sizeof(bootloader_header), sizeof(hdr->key)
-                let _ = rc4.crypt(&mut self.header.signature[..(size_aligned as usize - 0x20)]);
+            if let Ok(mut rc4) = Rc4::new(&final_key) {
+                let _ = rc4.crypt(&mut self.header.signature[..payload_size]);
             }
         }
     }

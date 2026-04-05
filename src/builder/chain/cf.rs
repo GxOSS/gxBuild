@@ -34,7 +34,6 @@ pub struct BootloaderCfHeader {
     pub target_flags: U16<BigEndian>,
     pub unknown: U32<BigEndian>,
     pub cg_size: U32<BigEndian>,
-    pub key: [u8; 0x10],
     pub pairing: [u8; 0x200],
     pub signature: [u8; 0x100], // EXCRYPT_SIG
     pub cg_hmac: [u8; 0x10],
@@ -66,8 +65,8 @@ impl BootloaderCf {
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
 
         if let Ok(hash) = excrypt::rot_sum_sha(
-            unsafe { std::slice::from_raw_parts(&self.header as *const _ as *const u8, 0x20) },
-            unsafe { std::slice::from_raw_parts(self.header.cg_hmac.as_ptr(), (size_aligned - 0x330) as usize) },
+            &IntoBytes::as_bytes(&self.header.header)[..0x10],
+            unsafe { std::slice::from_raw_parts(self.header.cg_hmac.as_ptr(), (size_aligned - 0x320) as usize) },
         ) {
             sha_out.copy_from_slice(&hash);
         }
@@ -103,13 +102,17 @@ impl BootloaderCf {
         }
     }
 
-    pub fn decrypt(&mut self, onebl_key: &[u8; 0x10]) {
+    pub fn decrypt(&mut self, onebl_key: &[u8; 16]) {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
+        let payload_size = (size_aligned - 0x20) as usize; // Adjusted for new header structure
 
-        if let Ok(cf_key) = excrypt::hmac_sha(onebl_key, &[&self.header.key]) {
-            if let Ok(mut rc4) = Rc4::new(&cf_key) {
-                let _ = rc4.crypt(&mut self.header.pairing[..(size_aligned as usize - 0x30)]);
+        if let Ok(derived_key) = excrypt::hmac_sha(onebl_key, &[&self.header.header.salt]) {
+            let mut final_key = [0u8; 16];
+            final_key.copy_from_slice(&derived_key[..16]);
+
+            if let Ok(mut rc4) = Rc4::new(&final_key) {
+                let _ = rc4.crypt(&mut self.header.pairing[..payload_size]);
             }
         }
     }

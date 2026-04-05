@@ -216,22 +216,7 @@ pub struct BuildOptions {
     pub patches: Option<NandPatches>,
 }
 
-pub struct RawImage {
-    pub image: Vec<u8>,
-}
-
-impl RawImage {
-    pub fn get_page_spare(&self, page: usize) -> Option<[u8; 16]> {
-        let offset = (page * 0x210) + 0x200;
-        if offset + 16 <= self.image.len() {
-            let mut spare = [0u8; 16];
-            spare.copy_from_slice(&self.image[offset..offset + 16]);
-            Some(spare)
-        } else {
-            None
-        }
-    }
-}
+// RawImage and its implementation moved to blocks.rs
 
 #[derive(Clone)]
 pub struct NandSkeleton {
@@ -355,7 +340,7 @@ impl NandSkeleton {
 
         // Extract CB — its offset is the entrypoint in the header
         let cb_offset = header.cb_offset() as usize;
-        let p_cb_offset = if matches!(layout, NandLayout::Layout3) {
+        let p_cb_offset = if matches!(layout, NandLayout::Emmc) {
             cb_offset
         } else {
             // For NANDs with spares, we calculate the physical offset (0x210 steps)
@@ -370,7 +355,7 @@ impl NandSkeleton {
         let bl_hdr = bl_hdr.clone();
         
         let cb_size = bl_hdr.size.get() as usize;
-        let mut p_cb_size = if matches!(layout, NandLayout::Layout3) {
+        let mut p_cb_size = if matches!(layout, NandLayout::Emmc) {
             cb_size
         } else {
             ((cb_size + 0x1FF) / 0x200) * 0x210
@@ -408,7 +393,7 @@ impl NandSkeleton {
             let hdr = hdr.clone();
 
             let size = hdr.size.get() as usize;
-            let p_size = if matches!(layout, NandLayout::Layout3) { size } else { ((size + 0x1FF) / 0x200) * 0x210 };
+            let p_size = if matches!(layout, NandLayout::Emmc) { size } else { ((size + 0x1FF) / 0x200) * 0x210 };
             let p_aligned_size = (p_size + 0xF) & 0xFFFFFFF0;
 
             if *offset + p_aligned_size > raw_image.len() {
@@ -467,7 +452,7 @@ impl NandSkeleton {
 
         let cf_offset = header.cf_offset.get() as usize;
         if cf_offset != 0 {
-            let mut p_cur_offset = if matches!(layout, NandLayout::Layout3) { cf_offset } else { (cf_offset / 0x200) * 0x210 };
+            let mut p_cur_offset = if matches!(layout, NandLayout::Emmc) { cf_offset } else { (cf_offset / 0x200) * 0x210 };
             
             for _ in 0..4 { // Search for up to 4 slots (usually 2 CF+CG pairs)
                 if p_cur_offset + 0x100 > raw_image.len() { break; }
@@ -476,7 +461,7 @@ impl NandSkeleton {
                 let bl_hdr = if let Ok((h, _)) = BootloaderHeader::read_from_prefix(&peek[..0x10]) { h.clone() } else { break; };
                 
                 let size = bl_hdr.size.get() as usize;
-                let p_size = if matches!(layout, NandLayout::Layout3) { size } else { ((size + 0x1FF) / 0x200) * 0x210 };
+                let p_size = if matches!(layout, NandLayout::Emmc) { size } else { ((size + 0x1FF) / 0x200) * 0x210 };
                 let p_aligned = (p_size + 0xF) & 0xFFFFFFF0;
                 
                 if bl_hdr.get_type() == XenonBlType::CF {
@@ -521,10 +506,10 @@ impl NandSkeleton {
         let smc_offset = header.smc_boot_offset.get() as usize;
         let smc_size = header.smc_boot_size.get() as usize;
         
-        let p_kv_offset = if matches!(layout, NandLayout::Layout3) { kv_addr } else { (kv_addr / 0x200) * 0x210 };
-        let p_kv_size = if matches!(layout, NandLayout::Layout3) { kv_size } else { ((kv_size + 0x1FF) / 0x200) * 0x210 };
-        let p_smc_offset = if matches!(layout, NandLayout::Layout3) { smc_offset } else { (smc_offset / 0x200) * 0x210 };
-        let p_smc_size = if matches!(layout, NandLayout::Layout3) { smc_size } else { ((smc_size + 0x1FF) / 0x200) * 0x210 };
+        let p_kv_offset = if matches!(layout, NandLayout::Emmc) { kv_addr } else { (kv_addr / 0x200) * 0x210 };
+        let p_kv_size = if matches!(layout, NandLayout::Emmc) { kv_size } else { ((kv_size + 0x1FF) / 0x200) * 0x210 };
+        let p_smc_offset = if matches!(layout, NandLayout::Emmc) { smc_offset } else { (smc_offset / 0x200) * 0x210 };
+        let p_smc_size = if matches!(layout, NandLayout::Emmc) { smc_size } else { ((smc_size + 0x1FF) / 0x200) * 0x210 };
         
         let mut smc_data = unecc(&raw_image[p_smc_offset..p_smc_offset + p_smc_size]);
         // TODO: SMC Decryption should happen here
@@ -532,9 +517,9 @@ impl NandSkeleton {
 
         // Attempt to find SMC Config
         let (p_conf_off, p_conf_size) = match layout {
-            NandLayout::Layout0 | NandLayout::Layout1 => (0xFEB800, 0x4200 * 4),
-            NandLayout::Layout2 => (0x3D5C000, 0x21000 * 4),
-            NandLayout::Layout3 => (0x2FF0000, 0x4000 * 4),
+            NandLayout::Xsb | NandLayout::Sb => (0xFEB800, 0x4200 * 4),
+            NandLayout::Bb => (0x3D5C000, 0x21000 * 4),
+            NandLayout::Emmc => (0x2FF0000, 0x4000 * 4),
         };
         
         let extra = NandExtra {
@@ -670,9 +655,9 @@ impl NandSkeleton {
         // 6. Inject SMC Config (Config.bin)
         if let Some(config) = self.extra.smc_config.as_slice().get(..) {
             let config_offset = match self.layout {
-                NandLayout::Layout0 | NandLayout::Layout1 => 0x3DC * self.layout.logical_pages_per_block() * 0x200,
-                NandLayout::Layout2 => 0x1F0 * self.layout.logical_pages_per_block() * 0x200,
-                NandLayout::Layout3 => 0x2FF0000, // eMMC fixed offset
+                NandLayout::Xsb | NandLayout::Sb => 0x3DC * self.layout.logical_pages_per_block() * 0x200,
+                NandLayout::Bb => 0x1F0 * self.layout.logical_pages_per_block() * 0x200,
+                NandLayout::Emmc => 0x2FF0000, // eMMC fixed offset
             };
             if config_offset + config.len() <= logical_image.len() {
                 logical_image[config_offset..config_offset + config.len()].copy_from_slice(config);

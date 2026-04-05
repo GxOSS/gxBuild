@@ -29,7 +29,6 @@ use crate::builder::deps::xenia;
 #[repr(C)]
 pub struct BootloaderCgHeader {
     pub header: BootloaderHeader,
-    pub key: [u8; 0x10],
     pub original_size: U32<BigEndian>,
     pub original_hash: [u8; 0x14],
     pub new_size: U32<BigEndian>,
@@ -83,16 +82,20 @@ impl BootloaderCg {
         }
     }
 
-    pub fn decrypt(&mut self, cg_hmac: &[u8; 0x10]) {
+    pub fn decrypt(&mut self, cg_hmac: &[u8; 16]) {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
+        let payload_size = (size_aligned - 0x20) as usize;
 
-        if let Ok(cg_key) = excrypt::hmac_sha(cg_hmac, &[&self.header.key]) {
-            if let Ok(mut rc4) = Rc4::new(&cg_key) {
+        if let Ok(cg_key) = excrypt::hmac_sha(cg_hmac, &[&self.header.header.salt]) {
+            let mut final_key = [0u8; 16];
+            final_key.copy_from_slice(&cg_key[..16]);
+
+            if let Ok(mut rc4) = Rc4::new(&final_key) {
                 let encrypted_payload_slice = unsafe {
                     std::slice::from_raw_parts_mut(
                         &mut self.header.original_size as *mut _ as *mut u8,
-                        (size_aligned - 0x20) as usize
+                        payload_size
                     )
                 };
                 let _ = rc4.crypt(encrypted_payload_slice);
@@ -105,7 +108,7 @@ impl BootloaderCg {
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
 
         if let Ok(hash) = excrypt::rot_sum_sha(
-            unsafe { std::slice::from_raw_parts(&self.header as *const _ as *const u8, 0x10) },
+            &IntoBytes::as_bytes(&self.header.header)[..0x10],
             unsafe { std::slice::from_raw_parts(&self.header.original_size as *const _ as *const u8, (size_aligned - 0x20) as usize) },
         ) {
             sha_out.copy_from_slice(&hash);
