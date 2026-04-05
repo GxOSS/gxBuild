@@ -1,6 +1,5 @@
 #include <string.h>
 #include <stdlib.h>
-#include <stdio.h>
 
 #include "excrypt.h"
 
@@ -39,14 +38,17 @@ BOOL ExCryptBnQwBeSigVerify(EXCRYPT_SIG* sig, const uint8_t* hash, const uint8_t
 
 int32_t ExCryptBnQwBeSigDifference(EXCRYPT_SIG* sig, const uint8_t* hash, const uint8_t* salt, const EXCRYPT_RSA* pubkey)
 {
-  if (BE(pubkey->num_digits) != 0x20 || (BE(pubkey->pub_exponent) != 3 && BE(pubkey->pub_exponent) != 0x10001))
+  uint32_t num_digits_swap = _byteswap_ulong(pubkey->num_digits);
+  uint32_t exp = _byteswap_ulong(pubkey->pub_exponent);
+
+  if (num_digits_swap != 0x20 || (exp != 3 && exp != 0x10001))
     return -1;
 
   EXCRYPT_RSAPUB_2048* key = (EXCRYPT_RSAPUB_2048*)pubkey;
 
   uint64_t modulus_swap[0x20];
   for (int i = 0; i < 0x20; i++)
-      modulus_swap[i] = BE64(key->modulus[i]);
+      modulus_swap[i] = _byteswap_uint64(key->modulus[i]);
 
   uint64_t* qwSig = (uint64_t*)sig;
 
@@ -56,7 +58,6 @@ int32_t ExCryptBnQwBeSigDifference(EXCRYPT_SIG* sig, const uint8_t* hash, const 
   ExCryptBnQw_SwapDwQwLeBe(qwSig, qwSig, 32);
   ExCryptBnQw_Copy(qwSig, sig_copy, 32);
 
-  uint32_t exp = BE(pubkey->pub_exponent);
   while (1)
   {
     exp >>= 1;

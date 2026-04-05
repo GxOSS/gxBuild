@@ -27,8 +27,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-use zerocopy::{FromBytes, byteorder::big_endian};
+use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
+use zerocopy::byteorder::{U16, U32, BigEndian};
 
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum NandLayout {
     Layout0, // Small Block XSB
     Layout1, // Small Block PSB / KSB
@@ -36,6 +38,32 @@ pub enum NandLayout {
     Layout3, // eMMC - Skip ECC
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum SpareProfile {
+    None,
+    Metadata,
+    FileSystem,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BadBlock {
+    pub block: usize,
+    pub target: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BlockMap {
+    pub blocks: Vec<BadBlock>,
+    pub layout: NandLayout,
+}
+
+impl BlockMap {
+    pub fn is_bad(&self, block: usize) -> bool {
+        self.blocks.iter().any(|b| b.block == block)
+    }
+}
+
+impl NandLayout {
     pub fn physical_block_size(&self) -> usize {
         match self {
             NandLayout::Layout0 | NandLayout::Layout1 => 0x4200,
@@ -106,6 +134,23 @@ pub enum NandLayout {
             NandLayout::Layout3 => 0, // Not applicable
         }
     }
+
+    pub fn detect(image: &[u8]) -> Result<Self, String> {
+        let len = image.len();
+        match len {
+            len if len >= 0x1080000 && len <= 0x1080000 + 0x1000 => Ok(NandLayout::Layout0), // 16MB
+            len if len >= 0x4200000 && len <= 0x4200000 + 0x1000 => Ok(NandLayout::Layout1), // 64MB
+            len if len >= 0x10800000 && len <= 0x10800000 + 0x1000 => Ok(NandLayout::Layout2), // 256MB
+            len if len >= 0x21000000 && len <= 0x21000000 + 0x1000 => Ok(NandLayout::Layout2), // 512MB
+            _ => {
+                if len > 0x40000000 { // 1GB+
+                    Ok(NandLayout::Layout3) // eMMC
+                } else {
+                    Err(format!("Could not detect NAND layout for size 0x{:x}", len))
+                }
+            }
+        }
+    }
 }
 
 /// Generates a 32-bit EDC checksum and writes it to the final 4 bytes of a 0x210-byte buffer.
@@ -136,6 +181,11 @@ pub fn calcecc(data: &mut [u8]) {
     // Apply bit shift and encode to LE to match the byte reversal output from original strings
     let ecc_temp = (val << 6).to_le_bytes();
     data[0x20C..0x210].copy_from_slice(&ecc_temp);
+}
+
+/// Legacy wrapper for addecc_v2 using SpareProfile
+pub fn addecc(image: &[u8], layout: NandLayout, _profile: SpareProfile, blockstart: usize) -> Vec<u8> {
+    addecc_v2(image, layout, blockstart)
 }
 
 /// Expands a 0x200-byte chunked image into a 0x210-byte aligned image with proper spare layouts.
@@ -174,10 +224,13 @@ pub fn addecc_v2(image: &[u8], layout: NandLayout, blockstart: usize) -> Vec<u8>
                 sparedata[2] = ((val / 0x100) & 0xFF) as u8;
             }
             NandLayout::Layout2 => {
-                sparedata[0] = 0xFF;
-                let val = (i / 0x100) + (blockstart / 0x21000);
-                sparedata[1] = (val & 0xFF) as u8;
-                sparedata[2] = ((val >> 8) & 0xFF) as u8;
+                 sparedata[0] = 0xFF;
+                 let val = (i / 0x100) + (blockstart / 0x21000);
+                 sparedata[1] = (val & 0xFF) as u8;
+                 sparedata[2] = ((val >> 8) & 0xFF) as u8;
+            }
+            NandLayout::Layout3 => {
+                // eMMC / Layout3: Spare data is usually handled differently or not present in raw images
             }
         }
 

@@ -1,6 +1,13 @@
 #include <memory>
 #include <map>
 #include <vector>
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
+
+#ifndef _MSC_VER
+#define _byteswap_ulong(x) __builtin_bswap32(x)
+#endif
 
 #include "excrypt.h"
 
@@ -118,7 +125,8 @@ BOOL ExKeysLoadKeyVault(const uint8_t* decrypted_kv, uint32_t length)
 BOOL ExKeysLoadKeyVaultFromPath(const char* filepath)
 {
 	FILE* file;
-	if (fopen_s(&file, filepath, "rb") != 0)
+	file = fopen(filepath, "rb");
+	if (!file)
 		return false;
 
 	fseek(file, 0, SEEK_END);
@@ -246,7 +254,7 @@ uint32_t ExKeysGetConsoleID(uint8_t* raw_bytes, char* hex_string)
 		uint64_t counter = 0;
 		for (int i = 0; i < 5; i++)
 			counter = console_cert[2 + i] + counter * 0x100;
-		sprintf_s(string, 0x10, "%011llu%llx", counter >> 4, counter & 0xF);
+		snprintf(string, 0x10, "%011llu%llx", (unsigned long long)(counter >> 4), (unsigned long long)(counter & 0xF));
 		memcpy(hex_string, string, 0xC);
 	}
 	return 0;
@@ -256,7 +264,7 @@ uint32_t ExKeysGetConsoleType()
 {
 	uint8_t* console_cert = ExKeysGetKeyPtr(XEKEY_CONSOLE_CERTIFICATE);
 
-	return BE(*(uint32_t*)(console_cert + 0x18));
+	return _byteswap_ulong(*(uint32_t*)(console_cert + 0x18));
 }
 
 uint32_t ExKeysGetConsolePrivateKey(EXCRYPT_RSAPRV_1024* output)
@@ -302,7 +310,7 @@ BOOL ExKeysPkcs1Verify(const uint8_t* hash, const uint8_t* input_sig, EXCRYPT_RS
 {
 	uint64_t temp_sig[0x20];
 
-	uint32_t key_digits = BE(key->num_digits);
+	uint32_t key_digits = _byteswap_ulong(key->num_digits);
 	uint32_t modulus_size = key_digits * 8;
 	if (modulus_size > 0x200)
 		return false;
@@ -332,7 +340,7 @@ BOOL ExKeysConsoleSignatureVerification(const uint8_t* hash, uint8_t* input_sign
 	if (!ExKeysGetKey(XEKEY_CONSTANT_MASTER_KEY, master_key, &master_key_size))
 		memset(master_key, 0, 0x110);
 
-	if (master_key_size == 0x110 && BE(*(uint32_t*)master_key) == 0x20)
+	if (master_key_size == 0x110 && _byteswap_ulong(*(uint32_t*)master_key) == 0x20)
 	{
 		// Validate the input console certificate against the master public key.
 		uint8_t cert_checksum[0x14];
@@ -340,7 +348,7 @@ BOOL ExKeysConsoleSignatureVerification(const uint8_t* hash, uint8_t* input_sign
 		if (ExKeysPkcs1Verify(cert_checksum, input_signature + 0xA8, (EXCRYPT_RSA*)master_key))
 		{
 			// The certificate doesn't have the public key size - the real function does this stuff, too.
-			console_public_key.rsa.num_digits = BE(0x10);
+			console_public_key.rsa.num_digits = _byteswap_ulong(0x10);
 			console_public_key.rsa.pub_exponent = *(uint32_t*)(input_signature + 0x24);
 			memcpy(console_public_key.modulus, input_signature + 0x28, sizeof(console_public_key.modulus));
 			// Validate the input hash against the provided signatuer.

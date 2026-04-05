@@ -45,7 +45,7 @@ pub struct XeBuildIni {
     pub flashfs: HashMap<String, String>,
 }
 
-fn get_hash(path: impl AsRef<Path>) -> std::io::Result<XeBuildIni> {
+fn get_hash(path: impl AsRef<Path>) -> std::io::Result<String> {
     let data = fs::read(path)?;
     let mut hasher = Hasher::new();
     hasher.update(&data);

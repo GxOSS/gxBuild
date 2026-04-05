@@ -3,7 +3,7 @@
 
 #include "excrypt.h"
 
-#include "fp61.h" // CAT_MUL128
+#include "fp61.hpp" // CAT_MUL128
 
 // Unfortunately this seems to be a XeCrypt custom function, OpenSSL etc doesn't seem to include it, so we have to implement it ourselves :/
 // Many thanks to Just1n for posting a C# impl. of it at https://www.se7ensins.com/forums/threads/c-verify-rsa-signature.173155

@@ -19,11 +19,11 @@
     If not, see <https://www.gnu.org/licenses/>.
 */
 
-use zerocopy::{FromBytes, byteorder::big_endian};
-use crate::builder::builder::BootloaderHeader;
+use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
+use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
 
-#[derive(FromBytes)]
+#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
 #[repr(C)]
 pub struct BootloaderScHeader {
     pub header: BootloaderHeader,
@@ -31,12 +31,22 @@ pub struct BootloaderScHeader {
     pub signature: [u8; 0x100], // matching EXCRYPT_SIG size
 }
 
+#[derive(Clone)]
 pub struct BootloaderSc {
     pub header: BootloaderScHeader,
     pub data: Vec<u8>,
 }
 
 impl BootloaderSc {
+    pub fn parse(data: &[u8]) -> Result<Self, String> {
+        let (header, payload) = BootloaderScHeader::read_from_prefix(data)
+            .map_err(|_| "Failed to parse SC header")?;
+        Ok(Self {
+            header: header.clone(),
+            data: payload.to_vec(),
+        })
+    }
+
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
@@ -69,5 +79,11 @@ impl BootloaderSc {
                 let _ = rc4.crypt(&mut self.data[..bytes_to_decrypt]);
             }
         }
+    }
+
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = IntoBytes::as_bytes(&self.header).to_vec();
+        out.extend_from_slice(&self.data);
+        out
     }
 }

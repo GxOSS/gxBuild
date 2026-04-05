@@ -19,20 +19,21 @@
     If not, see <https://www.gnu.org/licenses/>.
 */
 
-use zerocopy::{FromBytes, byteorder::big_endian};
-use crate::builder::builder::BootloaderHeader;
+use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
+use zerocopy::byteorder::{U16, U32, BigEndian};
+use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa, ExCryptSig};
 
-#[derive(FromBytes)]
+#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
 #[repr(C)]
 pub struct BootloaderCfHeader {
     pub header: BootloaderHeader,
-    pub base_ver: u16<big_endian>,
-    pub base_flags: u16<big_endian>,
-    pub target_ver: u16<big_endian>,
-    pub target_flags: u16<big_endian>,
-    pub unknown: u32<big_endian>,
-    pub cg_size: u32<big_endian>,
+    pub base_ver: U16<BigEndian>,
+    pub base_flags: U16<BigEndian>,
+    pub target_ver: U16<BigEndian>,
+    pub target_flags: U16<BigEndian>,
+    pub unknown: U32<BigEndian>,
+    pub cg_size: U32<BigEndian>,
     pub key: [u8; 0x10],
     pub pairing: [u8; 0x200],
     pub signature: [u8; 0x100], // EXCRYPT_SIG
@@ -40,12 +41,22 @@ pub struct BootloaderCfHeader {
     pub cg_hash: [u8; 0x14],
 }
 
+#[derive(Clone)]
 pub struct BootloaderCf {
     pub header: BootloaderCfHeader,
     pub data: Vec<u8>,
 }
 
 impl BootloaderCf {
+    pub fn parse(data: &[u8]) -> Result<Self, String> {
+        let (header, payload) = BootloaderCfHeader::read_from_prefix(data)
+            .map_err(|_| "Failed to parse CF header")?;
+        Ok(Self {
+            header: header.clone(),
+            data: payload.to_vec(),
+        })
+    }
+
     pub fn is_decrypted(&self) -> bool {
         self.header.pairing[0] == 0x00
     }
@@ -101,5 +112,11 @@ impl BootloaderCf {
                 let _ = rc4.crypt(&mut self.header.pairing[..(size_aligned as usize - 0x30)]);
             }
         }
+    }
+
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = IntoBytes::as_bytes(&self.header).to_vec();
+        out.extend_from_slice(&self.data);
+        out
     }
 }

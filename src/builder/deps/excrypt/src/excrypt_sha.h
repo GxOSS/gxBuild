@@ -7,6 +7,9 @@ typedef struct _EXCRYPT_SHA_STATE
   uint32_t state[5];
   uint8_t buffer[64];
 } EXCRYPT_SHA_STATE;
+#ifdef __cplusplus
+static_assert(sizeof(EXCRYPT_SHA_STATE) == 0x58, "sizeof(EXCRYPT_SHA_STATE) != 0x58");
+#endif
 
 void ExCryptShaInit(EXCRYPT_SHA_STATE* state);
 void ExCryptShaUpdate(EXCRYPT_SHA_STATE* state, const uint8_t* input, uint32_t input_size);
@@ -21,6 +24,10 @@ typedef struct _EXCRYPT_HMACSHA_STATE
 {
   EXCRYPT_SHA_STATE ShaState[2];
 } EXCRYPT_HMACSHA_STATE;
+#ifdef __cplusplus
+static_assert(sizeof(EXCRYPT_HMACSHA_STATE) == 0xB0, "sizeof(EXCRYPT_HMACSHA_STATE) != 0xB0");
+#endif
+
 void ExCryptHmacShaInit(EXCRYPT_HMACSHA_STATE* state, const uint8_t* key, uint32_t key_size);
 void ExCryptHmacShaUpdate(EXCRYPT_HMACSHA_STATE* state, const uint8_t* input, uint32_t input_size);
 void ExCryptHmacShaFinal(EXCRYPT_HMACSHA_STATE* state, uint8_t* output, uint32_t output_size);

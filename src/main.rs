@@ -12,6 +12,7 @@
 
 // GGXBuild release entry point
 
+pub mod builder;
 pub mod core;
 
 fn main() {

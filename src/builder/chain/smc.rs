@@ -20,11 +20,11 @@
     If not, see <https://www.gnu.org/licenses/>.
 */
 
-use zerocopy::{FromBytes, byteorder::big_endian};
-use crate::builder::builder::BootloaderHeader;
+use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
+use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, ExCryptRsa};
 
-#[derive(FromBytes)]
+#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
 #[repr(C)]
 pub struct SmcHeader {
     pub header: BootloaderHeader,
@@ -32,12 +32,22 @@ pub struct SmcHeader {
     pub signature: [u8; 0x100], // matching EXCRYPT_SIG size
 }
 
+#[derive(Clone)]
 pub struct Smc {
     pub header: SmcHeader,
     pub data: Vec<u8>,
 }
 
 impl Smc {
+    pub fn parse(data: &[u8]) -> Result<Self, String> {
+        let (header, payload) = SmcHeader::read_from_prefix(data)
+            .map_err(|_| "Failed to parse SMC header")?;
+        Ok(Self {
+            header: header.clone(),
+            data: payload.to_vec(),
+        })
+    }
+
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
@@ -60,7 +70,7 @@ impl Smc {
     }
 
     /// Decrypts the SMC payload using the "SMC Hash" rolling-key cipher in-place.
-    pub fn decrypt(&mut self) {
+    pub fn decrypt(&mut self) -> &mut Self {
         let mut key: [u32; 4] = [0x42, 0x75, 0x4E, 0x79]; // "BuNy"
         for i in 0..self.data.len() {
             let ciphertext_byte = self.data[i];
@@ -71,10 +81,11 @@ impl Smc {
             key[(i + 1) & 3] = key[(i + 1) & 3].wrapping_add(mod_val);
             key[(i + 2) & 3] = key[(i + 2) & 3].wrapping_add(mod_val >> 8);
         }
+        self
     }
 
     /// Encrypts the SMC payload using the "SMC Hash" rolling-key cipher in-place.
-    pub fn encrypt(&mut self) {
+    pub fn encrypt(&mut self) -> &mut Self {
         let mut key: [u32; 4] = [0x42, 0x75, 0x4E, 0x79]; // "BuNy"
         for i in 0..self.data.len() {
             let ciphertext_byte = self.data[i] ^ (key[i & 3] & 0xFF) as u8;
@@ -85,5 +96,12 @@ impl Smc {
             key[(i + 1) & 3] = key[(i + 1) & 3].wrapping_add(mod_val);
             key[(i + 2) & 3] = key[(i + 2) & 3].wrapping_add(mod_val >> 8);
         }
+        self
+    }
+
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = IntoBytes::as_bytes(&self.header).to_vec();
+        out.extend_from_slice(&self.data);
+        out
     }
 }

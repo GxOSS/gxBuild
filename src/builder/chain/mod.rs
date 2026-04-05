@@ -5,21 +5,21 @@ pub mod ce;
 pub mod cf;
 pub mod cg;
 pub mod smc;
-pub mod xell;
+pub mod flashfs;
 
-use zerocopy::{FromBytes, AsBytes, byteorder::big_endian};
+use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
+use zerocopy::byteorder::{U16, U32, BigEndian};
 use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa, ExCryptSig};
-use crate::builder::builder::NandSkeleton;
 
-#[derive(FromBytes, AsBytes, Clone, Copy)]
+#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
 #[repr(C)]
 pub struct BootloaderHeader {
-    pub magic: u16<big_endian>,
-    pub version: u16<big_endian>,
-    pub pairing: u16<big_endian>,
-    pub flags: u16<big_endian>,
-    pub entrypoint: u32<big_endian>,
-    pub size: u32<big_endian>,
+    pub magic: U16<BigEndian>,
+    pub version: U16<BigEndian>,
+    pub pairing: U16<BigEndian>,
+    pub flags: U16<BigEndian>,
+    pub entrypoint: U32<BigEndian>,
+    pub size: U32<BigEndian>,
 }
 
 impl BootloaderHeader {
@@ -66,7 +66,7 @@ pub enum XenonBlType {
     INVALID = 0xFFFFFFFF,
 }
 
-#[derive(FromBytes)]
+#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable)]
 #[repr(C)]
 pub struct BootloaderGenericHeader {
     pub header: BootloaderHeader,
@@ -126,8 +126,8 @@ pub enum XellType {
 }
 
 impl XellType {
-    pub fn from_hash(hash: &[u8; 0x14]) -> Self {
-        
+    pub fn from_hash(_hash: &[u8; 0x14]) -> Self {
+        XellType::XellUnknown
     }
 }
 
@@ -139,7 +139,11 @@ pub struct Xell {
 
 impl Xell {
     pub fn new(data: Vec<u8>) -> Self {
-        let xell_type = XellType::from_hash(&data);
+        let mut hash = [0u8; 0x14];
+        if data.len() >= 0x14 {
+            hash.copy_from_slice(&data[..0x14]);
+        }
+        let xell_type = XellType::from_hash(&hash);
         Self {
             data,
             xell_type,
@@ -148,16 +152,26 @@ impl Xell {
 
     /// crc32 hash xeLL
     pub fn get_hash(&self) -> [u8; 0x14] {
-        
+        [0u8; 0x14]
     }
 
     /// identify xell with crc32
     pub fn identify(&self) -> XellType {
-        
+        XellType::XellUnknown
     }
 }
 
-pub fn decrypt_chain(nand: &NandSkeleton, cpukey: String) {
-    
+pub fn decrypt_chain(
+    cb: &mut cb::BootloaderCb,
+    cb_b: Option<&mut cb::BootloaderCb>,
+    sc: Option<&mut sc::BootloaderSc>,
+    cd: &mut cd::BootloaderCd,
+    ce: &mut ce::BootloaderCe,
+    cf: &mut cf::BootloaderCf,
+    cg: &mut cg::BootloaderCg,
+    cpukey: &str,
+) -> Result<(), String> {
+    // TODO: Implement the actual decryption logic here
+    Ok(())
 }
 

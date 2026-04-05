@@ -30,7 +30,7 @@ BOOL ExCryptBnQwNeRsaPrvCrypt(const uint64_t* input, uint64_t* output, const EXC
   if (!input || !output || !key)
     return false;
 
-  uint32_t key_digits = BE(key->num_digits);
+  uint32_t key_digits = _byteswap_ulong(key->num_digits);
   if (key_digits <= 0 || key_digits > 0x40)
     return false;
 
@@ -175,7 +175,7 @@ BOOL ExCryptBnQwNeRsaPubCrypt(const uint64_t* input, uint64_t* output, const EXC
   if (!input || !output || !key)
     return false;
 
-  uint32_t key_digits = BE(key->num_digits);
+  uint32_t key_digits = _byteswap_ulong(key->num_digits);
   if (key_digits <= 0 || key_digits > 0x40)
     return false;
 

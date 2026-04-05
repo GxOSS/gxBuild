@@ -19,7 +19,7 @@ void ExCryptBnDw_SwapLeBe(const uint32_t* source, uint32_t* dest, uint32_t num_d
 {
   for (uint32_t i = 0; i < num_dwords; i++)
   {
-    *dest = BE(*source);
+    *dest = _byteswap_ulong(*source);
     dest++;
     source++;
   }
@@ -67,8 +67,8 @@ void ExCryptBnQw_SwapDwQwLeBe(const uint64_t* source, uint64_t* dest, uint32_t n
   uint32_t* dest_dw = (uint32_t*)dest;
   for (uint32_t i = 0; i < num_qwords; i++)
   {
-    uint32_t first = BE(source_dw[0]);
-    uint32_t second = BE(source_dw[1]);
+    uint32_t first = _byteswap_ulong(source_dw[0]);
+    uint32_t second = _byteswap_ulong(source_dw[1]);
     dest_dw[0] = second;
     dest_dw[1] = first;
     source_dw += 2;
@@ -77,7 +77,7 @@ void ExCryptBnQw_SwapDwQwLeBe(const uint64_t* source, uint64_t* dest, uint32_t n
 #else
   for (uint32_t i = 0; i < num_qwords; i++)
   {
-    dest[i] = BE64(source[i]);
+    dest[i] = _byteswap_uint64(source[i]);
   }
 #endif
 }
@@ -95,8 +95,8 @@ int32_t ExCryptBnQwNeCompare(const uint64_t* input1, const uint64_t* input2, uin
     input1_end -= 2;
     input2_end -= 2;
 
-    uint32_t input1_dw = BE(*(input1_end + 1));
-    uint32_t input2_dw = BE(*(input2_end + 1));
+    uint32_t input1_dw = _byteswap_ulong(*(input1_end + 1));
+    uint32_t input2_dw = _byteswap_ulong(*(input2_end + 1));
 
     if (input1_dw != input2_dw)
       break;
@@ -105,8 +105,8 @@ int32_t ExCryptBnQwNeCompare(const uint64_t* input1, const uint64_t* input2, uin
       return 0;
   }
 
-  uint32_t input1_dw = BE(*(input1_end + 1));
-  uint32_t input2_dw = BE(*(input2_end + 1));
+  uint32_t input1_dw = _byteswap_ulong(*(input1_end + 1));
+  uint32_t input2_dw = _byteswap_ulong(*(input2_end + 1));
   if (input1_dw <= input2_dw)
     return -1;
   return 1;

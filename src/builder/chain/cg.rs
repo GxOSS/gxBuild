@@ -19,28 +19,39 @@
     If not, see <https://www.gnu.org/licenses/>.
 */
 
-use zerocopy::{FromBytes, byteorder::big_endian};
-use crate::builder::builder::BootloaderHeader;
+use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
+use zerocopy::byteorder::{U32, BigEndian};
+use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, Rc4};
-use crate::builder::deps::compression::{bootloader_delta_block, lzxdelta_apply_patch};
+use crate::builder::deps::xenia;
 
-#[derive(FromBytes)]
+#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
 #[repr(C)]
 pub struct BootloaderCgHeader {
     pub header: BootloaderHeader,
     pub key: [u8; 0x10],
-    pub original_size: u32<big_endian>,
+    pub original_size: U32<BigEndian>,
     pub original_hash: [u8; 0x14],
-    pub new_size: u32<big_endian>,
+    pub new_size: U32<BigEndian>,
     pub new_hash: [u8; 0x14],
 }
 
+#[derive(Clone)]
 pub struct BootloaderCg {
     pub header: BootloaderCgHeader,
     pub data: Vec<u8>,
 }
 
 impl BootloaderCg {
+    pub fn parse(data: &[u8]) -> Result<Self, String> {
+        let (header, payload) = BootloaderCgHeader::read_from_prefix(data)
+            .map_err(|_| "Failed to parse CG header")?;
+        Ok(Self {
+            header: header.clone(),
+            data: payload.to_vec(),
+        })
+    }
+
     pub fn is_decrypted(&self) -> bool {
         (self.header.original_size.get() & 0xFFF) == 0x000
     }
@@ -123,18 +134,11 @@ impl BootloaderCg {
         output_buf[..original_size].copy_from_slice(&base_data[..original_size]);
         // The rest is automatically padded with 0 since vec! initializes with 0
 
-        let r = unsafe {
-            lzxdelta_apply_patch(
-                self.data.as_ptr() as *const bootloader_delta_block,
-                size_of_compressed,
-                0x8000,
-                output_buf.as_mut_ptr(),
-            )
-        };
-
-        if r != 0 {
-            return Err(format!("lzxdelta_apply_patch returned error code {}", r));
-        }
+        xenia::apply_patch(
+            &self.data,
+            0x8000,
+            &mut output_buf,
+        ).map_err(|e| format!("lzxdelta_apply_patch returned error code {}", e))?;
 
         if let Ok(updated_kernel_hash) = excrypt::sha(&[&output_buf]) {
             if updated_kernel_hash != self.header.new_hash {
@@ -143,5 +147,11 @@ impl BootloaderCg {
         }
 
         Ok(output_buf)
+    }
+
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = IntoBytes::as_bytes(&self.header).to_vec();
+        out.extend_from_slice(&self.data);
+        out
     }
 }

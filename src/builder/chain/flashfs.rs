@@ -13,7 +13,7 @@ use std::io::{Read, Write, Cursor};
 use crate::builder::tools::blocks::*;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[repr(u8)]
 pub enum FileSystemExEntries {
     FsRootEntryAlt = 0x2c,
@@ -31,7 +31,7 @@ pub enum FileSystemExEntries {
     InUseMobileJ = 0x80,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FsSpareData {
     pub block_id: u16,
     pub fs_sequence: u32,
@@ -71,7 +71,7 @@ impl FsSpareData {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FileSystemEntry {
     pub page_number: i32,
     pub file_name: String,
@@ -134,7 +134,7 @@ impl FileSystemEntry {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FileSystemRoot {
     pub block_number: i32,
     pub version: i32,
@@ -499,8 +499,13 @@ impl FileSystemRoot {
             bm_j += 1;
         }
     }
+    pub fn serialize_logical(&self, _layout: &NandLayout) -> Vec<u8> {
+        // TODO: Actually serialize the logical flashfs structure here
+        Vec::new()
+    }
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct FlashFS {
     pub root: FileSystemRoot,
     pub partitions: std::collections::HashMap<u8, FileSystemRoot>,

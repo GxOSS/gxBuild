@@ -19,11 +19,11 @@
     If not, see <https://www.gnu.org/licenses/>.
 */
 
-use crate::builder::builder::BootloaderHeader;
+use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
-use zerocopy::FromBytes;
+use zerocopy::{FromBytes, IntoBytes};
 
-#[derive(FromBytes)]
+#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
 #[repr(C)]
 pub struct BootloaderCbHeader {
     pub header: BootloaderHeader,
@@ -40,12 +40,12 @@ pub struct BootloaderCbHeader {
 }
 
 impl BootloaderCbHeader {
-    pub fn new(bytes: &[u8]) -> Self {
+    pub fn new(_bytes: &[u8]) -> Self {
+        todo!()
     }
 }
 
-
-#[derive(FromBytes)]
+#[derive(Clone)]
 #[repr(C)]
 pub struct BootloaderCb {
     pub header: BootloaderCbHeader,
@@ -53,9 +53,14 @@ pub struct BootloaderCb {
 }
 
 impl BootloaderCb {
-    /// Parse
-    pub fn new(data: Vec<u8>) -> Self {
-        
+    pub fn parse(data: &[u8]) -> Result<Self, String> {
+        let (header, payload) = BootloaderCbHeader::read_from_prefix(data)
+            .map_err(|_| "Failed to parse CB header")?;
+        Ok(Self {
+            header: header.clone(),
+            data: payload.to_vec(),
+        })
+    }
 
     pub fn is_decrypted(&self) -> bool {
         self.header.globals[0x110] == 0x80
@@ -82,33 +87,33 @@ impl BootloaderCb {
     }
 
     pub fn print_info(&self) {
-        let magic = self.header.magic.get();
+        let magic = self.header.header.magic.get();
         let mut indicator = if (magic & 0xF000) == 0x5000 {
             "SB"
         } else {
             "CB"
         };
 
-        if (self.header.flags.get() & 0x800) == 0x800 {
+        if (self.header.header.flags.get() & 0x800) == 0x800 {
             indicator = "CB_A";
         }
 
-        if self.signature[0] == 0 {
+        if self.header.signature[0] == 0 {
             indicator = "CB_B";
         }
 
-        println!("{} version: {}", indicator, self.header.version.get());
-        println!("{} size: 0x{:x}", indicator, self.header.size.get());
+        println!("{} version: {}", indicator, self.header.header.version.get());
+        println!("{} size: 0x{:x}", indicator, self.header.header.size.get());
         println!(
             "{} entrypoint: 0x{:x}",
             indicator,
-            self.header.entrypoint.get()
+            self.header.header.entrypoint.get()
         );
 
         if self.is_decrypted() {
-            println!("{} LDV: {}", indicator, self.more_globals[1]);
-            println!("{} next hash: {:02x?}", indicator, self.cd_cbb_hash);
-            if self.signature[0] != 0 {
+            println!("{} LDV: {}", indicator, self.header.more_globals[1]);
+            println!("{} next hash: {:02x?}", indicator, self.header.cd_cbb_hash);
+            if self.header.signature[0] != 0 {
                 println!("{} signature: (requires keys to verify)", indicator);
             }
         } else {
@@ -160,5 +165,10 @@ impl BootloaderCb {
                 let _ = rc4.crypt(&mut self.header.padding_or_args[..(size_aligned as usize - 0x20)]);
             }
         }
+    }
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = zerocopy::IntoBytes::as_bytes(&self.header).to_vec();
+        out.extend_from_slice(&self.data);
+        out
     }
 }

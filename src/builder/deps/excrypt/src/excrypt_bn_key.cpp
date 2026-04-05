@@ -5,15 +5,15 @@
 
 void ExCryptBn_BeToLeKey(EXCRYPT_RSA* key, const uint8_t* input, uint32_t input_size)
 {
-  key->num_digits = BE(*(uint32_t*)input);
+  key->num_digits = _byteswap_ulong(*(uint32_t*)input);
   input += 4;
 
   int input_size_mul = key->num_digits / 0x10;
 
-  key->pub_exponent = BE(*(uint32_t*)input);
+  key->pub_exponent = _byteswap_ulong(*(uint32_t*)input);
   input += 4;
 
-  key->reserved = BE64(*(uint64_t*)input);
+  key->reserved = _byteswap_uint64(*(uint64_t*)input);
   input += 8;
 
   if (input_size <= 0x10)
@@ -28,7 +28,7 @@ void ExCryptBn_BeToLeKey(EXCRYPT_RSA* key, const uint8_t* input, uint32_t input_
   if (input_size <= (modulus_size + 0x10))
     return;
 
-  uint8_t* key_prv = ((uint8_t*)key_pub) + 0x10 + modulus_size;
+  auto* key_prv = ((uint8_t*)key_pub) + 0x10 + modulus_size;
   int prv_size = input_size_mul * 0x40;
 
   // P

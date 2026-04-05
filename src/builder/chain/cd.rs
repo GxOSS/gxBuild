@@ -19,11 +19,12 @@
     If not, see <https://www.gnu.org/licenses/>.
 */
 
-use zerocopy::{FromBytes, byteorder::big_endian};
-use crate::builder::builder::BootloaderHeader;
+use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
+use zerocopy::byteorder::{U16, U32, BigEndian};
+use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
 
-#[derive(FromBytes)]
+#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
 #[repr(C)]
 pub struct BootloaderCdHeader {
     pub header: BootloaderHeader,
@@ -31,16 +32,26 @@ pub struct BootloaderCdHeader {
     pub signature: [u8; 0x100], // EXCRYPT_SIG
     pub idk_yet: [u8; 0x120],
     pub cf_salt: [u8; 10],
-    pub unused2: u16<big_endian>,
+    pub unused2: U16<BigEndian>,
     pub ce_hash: [u8; 0x14],
 }
 
+#[derive(Clone)]
 pub struct BootloaderCd {
     pub header: BootloaderCdHeader,
     pub data: Vec<u8>,
 }
 
 impl BootloaderCd {
+    pub fn parse(data: &[u8]) -> Result<Self, String> {
+        let (header, payload) = BootloaderCdHeader::read_from_prefix(data)
+            .map_err(|_| "Failed to parse CD header")?;
+        Ok(Self {
+            header: header.clone(),
+            data: payload.to_vec(),
+        })
+    }
+
     pub fn is_decrypted(&self) -> bool {
         self.header.idk_yet[0] == 0x00
     }
@@ -107,5 +118,11 @@ impl BootloaderCd {
 
         let expected_salt = b"XBOX_ROM_4\0";
         excrypt::verify_signature(&self.header.signature, &cd_hash, expected_salt, pubkey).unwrap_or(false)
+    }
+
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = zerocopy::IntoBytes::as_bytes(&self.header).to_vec();
+        out.extend_from_slice(&self.data);
+        out
     }
 }

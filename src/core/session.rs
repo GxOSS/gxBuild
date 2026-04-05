@@ -17,7 +17,8 @@ use std::collections::BinaryHeap;
 use std::path::{Path, PathBuf};
 
 // External module commands
-use crate::core::commands::{extract, extract_all, NandSkeleton};
+use crate::core::commands::{extract, extract_all};
+use crate::builder::builder::NandSkeleton;
 use crate::core::commands::pygg::{python_interpreter, python_shell, python_script};
 use crate::core::commands::xeini::{parse_xe_ini, apply_xe_ini};
 
@@ -91,7 +92,7 @@ pub struct Session {
     queue: BinaryHeap<QueuedCommand>,
     next_seq_id: usize,
     /// Dummy state object for passing over to extract commands
-    pub active_nand: NandSkeleton,
+    pub active_nand: Option<NandSkeleton>,
 }
 
 impl Session {
@@ -99,7 +100,7 @@ impl Session {
         Self {
             queue: BinaryHeap::new(),
             next_seq_id: 0,
-            active_nand: NandSkeleton {},
+            active_nand: None,
         }
     }
 
@@ -175,9 +176,9 @@ impl Session {
                 InternalCommand::ParseIni { content, target, ini_base, common } => {
                      match parse_xe_ini(&content, &target, ini_base, common) {
                          Ok(ini_data) => {
-                             println!(" -> INI successfully parsed: {:?}", ini_data.name);
-                             // Wait for apply call mapping, here as a placeholder example
-                             let _ = apply_xe_ini(NandSkeleton {}, ini_data);
+                             if let Some(nand) = self.active_nand.clone() {
+                                 let _ = apply_xe_ini(nand, ini_data);
+                             }
                          },
                          Err(e) => eprintln!(" -> INI Parse Error: {}", e),
                      }

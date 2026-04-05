@@ -19,39 +19,51 @@
     If not, see <https://www.gnu.org/licenses/>.
 */
 
-use crate::builder::builder::BootloaderHeader;
+use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, Rc4};
-use crate::builder::deps::xenia::compression::{
-    Compress, Decompress,
-};
-use zerocopy::byteorder::big_endian;
-use zerocopy::FromBytes;
+use crate::builder::deps::xenia;
+use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
+use zerocopy::byteorder::{U16, U32, U64, BigEndian};
 
-#[derive(FromBytes)]
+#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
 #[repr(C)]
 pub struct BootloaderCeHeader {
     pub header: BootloaderHeader,
     pub key: [u8; 0x10],
-    pub target_address: u64<big_endian>,
-    pub uncompressed_size: u32<big_endian>,
-    pub unknown: u32<big_endian>,
+    pub target_address: U64<BigEndian>,
+    pub uncompressed_size: U32<BigEndian>,
+    pub unknown: U32<BigEndian>,
 }
 
-#[derive(FromBytes, Clone, Copy, Debug)]
+#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy, Debug)]
 #[repr(C)]
 struct BootloaderCompressionBlock {
-    pub compressed_size: u16<big_endian>,
-    pub decompressed_size: u16<big_endian>,
+    pub compressed_size: U16<BigEndian>,
+    pub decompressed_size: U16<BigEndian>,
 }
 
+#[derive(Clone)]
 pub struct BootloaderCe {
     pub header: BootloaderCeHeader,
+    pub data: Vec<u8>,
     pub data_ce: Option<Vec<u8>>,
     pub data_kernel: Option<Vec<u8>>,
     pub data_hv: Option<Vec<u8>>,
 }
 
 impl BootloaderCe {
+    pub fn parse(data: &[u8]) -> Result<Self, String> {
+        let (header, payload) = BootloaderCeHeader::read_from_prefix(data)
+            .map_err(|_| "Failed to parse CE header")?;
+        Ok(Self {
+            header: header.clone(),
+            data: payload.to_vec(),
+            data_ce: None,
+            data_kernel: None,
+            data_hv: None,
+        })
+    }
+
     pub fn is_decrypted(&self) -> bool {
         self.header.unknown.get() == 0x00000000
     }
@@ -160,29 +172,20 @@ impl BootloaderCe {
         let _size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let uncompressed_size = self.header.uncompressed_size.get();
 
-        // The data begins immediately following the CE Header Struct.
-        // Assuming self.data aligns exactly after the header bounds natively.
+        let data = self.data_ce.as_ref().ok_or("No CE data available")?;
+
         let consolidated_compressed = self
-            .get_full_compressed_buffer(&self.data, uncompressed_size)
+            .get_full_compressed_buffer(data, uncompressed_size)
             .map_err(|e| format!("Decompression structuring failed: {}", e))?;
 
         let mut decompressed = vec![0u8; uncompressed_size as usize];
 
-        let r = unsafe {
-            lzx_decompress(
-                consolidated_compressed.as_ptr(),
-                consolidated_compressed.len(),
-                decompressed.as_mut_ptr(),
-                decompressed.len(),
-                0x20000,
-                std::ptr::null_mut(),
-                0,
-            )
-        };
-
-        if r != 0 {
-            return Err(format!("lzx_decompress returned error code {}", r));
-        }
+        xenia::decompress(
+            &consolidated_compressed,
+            &mut decompressed,
+            0x20000,
+            None,
+        ).map_err(|e| format!("lzx_decompress returned error code {}", e))?;
 
         Ok(decompressed)
     }
@@ -190,6 +193,14 @@ impl BootloaderCe {
     /// Split Decompressed CE into Kernel and Hypervisor
     pub fn split_into_stages(&self) -> Result<(), String> {
         // TODO: Implement
-        
+        Ok(())
+    }
+
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = IntoBytes::as_bytes(&self.header).to_vec();
+        if let Some(ref data) = self.data_ce {
+            out.extend_from_slice(data);
+        }
+        out
     }
 }

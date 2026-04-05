@@ -19,22 +19,22 @@
     If not, see <https://www.gnu.org/licenses/>.
 */
 
-use bevy_reflect::{Reflect, Struct};
+
 use crate::builder::deps::excrypt::{
     ExCryptBnQwBeSigVerify, ExCryptHmacSha, ExCryptRc4Ecb, ExCryptRc4Key, ExCryptRc4State,
     ExCryptRotSumSha, ExCryptRsa, ExCryptSig,
 };
-use zerocopy::*;
+use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
 use zerocopy::byteorder::{U16, U32, U64, I16, I32, BigEndian};
 
-use crate::builder::tools::flashfs::FlashFS;
-use crate::builder::deps::compression::*;
+use crate::builder::chain::flashfs::FlashFS;
+use crate::builder::deps::xenia;
 use crate::builder::tools::blocks::*;
 use crate::builder::chain::*;
 
 /// Xbox 360 NAND header — matches xenon-bltool's `xenon_nand_header` layout.
 /// The first field is a `BootloaderHeader` whose `entrypoint` points to CB.
-#[derive(FromBytes, IntoBytes, KnownLayout, Immutable, Clone, Copy)]
+#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
 #[repr(C)]
 pub struct NandHeader {
     pub header: BootloaderHeader,       // magic 0xFF4F, entrypoint -> CB offset
@@ -107,9 +107,10 @@ use crate::builder::chain::cd::BootloaderCd;
 use crate::builder::chain::ce::BootloaderCe;
 use crate::builder::chain::cf::BootloaderCf;
 use crate::builder::chain::cg::BootloaderCg;
-use crate::builder::chain::xell::XeLL;
+
 
 // Bootchain will be interpreted from provided bootloaders
+#[derive(Clone)]
 pub struct NandBootloaders {
     pub cb: Option<BootloaderCb>,
     pub cb_a: Option<BootloaderCb>,
@@ -117,10 +118,10 @@ pub struct NandBootloaders {
     pub sc: Option<BootloaderSc>,
     pub cd: Option<BootloaderCd>,
     pub ce: Option<BootloaderCe>,
-    pub xell: Option<XeLL>,
 }
 
 // If only 0, will be treated as full images. If 0 and 1, will be treated as patchslots
+#[derive(Clone)]
 pub struct NandUpdate {
     pub cf_0: BootloaderCf,
     pub cg_0: BootloaderCg,
@@ -129,6 +130,7 @@ pub struct NandUpdate {
 }
 
 // SMC, Keyvault and Security
+#[derive(Clone)]
 pub struct NandExtra {
     pub smc: Vec<u8>,
     pub smc_config: Vec<u8>,
@@ -139,7 +141,7 @@ pub struct NandExtra {
     pub power_on_cause_b: u8,
 }
 
-#[derive(FromBytes, IntoBytes, KnownLayout, Immutable, Clone)]
+#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone)]
 #[repr(C)]
 pub struct KeyvaultRecord {
     pub unused0: [u8; 0xB0],
@@ -153,13 +155,13 @@ pub struct KeyvaultRecord {
     pub video_region: U16<BigEndian>,
 }
 
-pub struct
-
+#[derive(Clone)]
 pub struct NandPatches {
     pub rglp: Option<Vec<u8>>,
     pub xebuild: Option<Vec<u8>>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum MotherboardType {
     Xenon = 0,
     Zephyr = 1,
@@ -186,14 +188,14 @@ impl MotherboardType {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ImageType { // Base image type
     Single, // CB -> CD
     Split,  // CB_A -> CB_B -> CD
     Devkit, // SB (=CB) -> SC -> SD (=CD)
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum BuildType { // Custom images
     Retail,     // Regular secure image
     Jtag,       // Dual-boot with reboot chain
@@ -201,7 +203,9 @@ pub enum BuildType { // Custom images
     Conversion, // Load dev kernel on glitch or glitch kernel on dev
 }
 
+#[derive(Clone)]
 pub struct BuildOptions {
+    pub layout: NandLayout,
     pub block_map: BlockMap,
     pub image_type: ImageType,
     pub build_type: BuildType,
@@ -229,6 +233,7 @@ impl RawImage {
     }
 }
 
+#[derive(Clone)]
 pub struct NandSkeleton {
     pub cpukey: Option<String>,
     pub image: Vec<u8>,
@@ -250,7 +255,8 @@ impl NandSkeleton {
         if self.extra.smc.is_empty() {
             return Err("SMC binary is empty".to_string());
         }
-        self.extra.smc = smc_crypto::decrypt_smc(&self.extra.smc);
+        let mut smc = crate::builder::chain::smc::Smc::parse(&self.extra.smc)?;
+        self.extra.smc = smc.decrypt().data.clone();
         Ok(())
     }
 
@@ -281,7 +287,7 @@ impl NandSkeleton {
         }
 
         // 3. Decrypt the rest of the KV (0x10 to end) using RC4
-        let mut state = ExCryptRc4State { S: [0u8; 256], i: 0, j: 0 };
+        let mut state = ExCryptRc4State { s: [0u8; 256], i: 0, j: 0 };
         unsafe {
             ExCryptRc4Key(&mut state, rc4_key.as_ptr(), 16);
             ExCryptRc4Ecb(&mut state, kv[0x10..].as_mut_ptr(), (kv.len() - 0x10) as u32);
@@ -295,8 +301,9 @@ impl NandSkeleton {
         if self.extra.keyvault.len() < 0x130 {
             return Err("Keyvault not decrypted or too small".to_string());
         }
-        KeyvaultRecord::read_from_bytes(&self.extra.keyvault[..std::mem::size_of::<KeyvaultRecord>()])
-            .ok().ok_or_else(|| "Failed to map KeyvaultRecord structure".to_string())
+        KeyvaultRecord::read_from_prefix(&self.extra.keyvault[..std::mem::size_of::<KeyvaultRecord>()])
+            .map(|(kv, _)| kv.clone())
+            .map_err(|_| "Failed to map KeyvaultRecord structure".to_string())
     }
 
 
@@ -305,7 +312,7 @@ impl NandSkeleton {
     // TODO: Add crc32 hashing (?)
     /// Parse patches applied to a NandSkeleton
     pub fn get_patches(&self) -> Option<NandPatches> {
-        
+        self.options.patches.clone()
     }
 
     /// Parse nand image into populated NandSkeleton
@@ -319,8 +326,9 @@ impl NandSkeleton {
         // 2. Extract and Parse NandHeader (always at 0x0)
         // Header is raw at the start, we unecc it to be sure
         let raw_header = unecc(&raw_image[..0x4200]); // Grab first block
-        let header = NandHeader::read_from_bytes(&raw_header[..0x100])
-            .ok().ok_or("Failed to parse primary NAND header")?;
+        let header = NandHeader::read_from_prefix(&raw_header[..0x100])
+            .map(|(h, _)| h.clone())
+            .map_err(|_| "Failed to parse primary NAND header")?;
 
         // Capture Power-on cause / boot triggers from the hacked header area (0x4E/0x4F)
         let power_on_cause_a = raw_header[0x4E];
@@ -334,7 +342,6 @@ impl NandSkeleton {
             sc: None,
             cd: None,
             ce: None,
-            xell: None,
         };
 
         let extra = NandExtra {
@@ -358,8 +365,9 @@ impl NandSkeleton {
         // Read CB Header to find total size
         let raw_cb_hdr = &raw_image[p_cb_offset..p_cb_offset + 0x100]; // peek
         let clean_cb_hdr = unecc(raw_cb_hdr);
-        let bl_hdr = BootloaderHeader::read_from_bytes(&clean_cb_hdr[..0x10])
-            .ok().ok_or("Failed to read CB bootloader header")?;
+        let (bl_hdr, _) = BootloaderHeader::read_from_prefix(&clean_cb_hdr[..0x10])
+            .map_err(|_| "Failed to read CB bootloader header")?;
+        let bl_hdr = bl_hdr.clone();
         
         let cb_size = bl_hdr.size.get() as usize;
         let mut p_cb_size = if matches!(layout, NandLayout::Layout3) {
@@ -372,7 +380,7 @@ impl NandSkeleton {
 
         let cb_raw_data = &raw_image[p_cb_offset..p_cb_offset + p_cb_size];
         let cb_clean_data = unecc(cb_raw_data);
-        let cb_extracted = BootloaderCb::from_bytes(&cb_clean_data)?;
+        let cb_extracted = BootloaderCb::parse(&cb_clean_data)?;
         
         let mut image_type = ImageType::Single;
 
@@ -395,8 +403,9 @@ impl NandSkeleton {
             }
             let peek_raw = &raw_image[*offset..*offset + 0x100];
             let clean_peek = unecc(peek_raw);
-            let hdr = BootloaderHeader::read_from_bytes(&clean_peek[..0x10])
-            .ok().ok_or("Failed to read next stage header")?;
+            let (hdr, _) = BootloaderHeader::read_from_prefix(&clean_peek[..0x10])
+                .map_err(|_| "Failed to read next stage header")?;
+            let hdr = hdr.clone();
 
             let size = hdr.size.get() as usize;
             let p_size = if matches!(layout, NandLayout::Layout3) { size } else { ((size + 0x1FF) / 0x200) * 0x210 };
@@ -414,32 +423,37 @@ impl NandSkeleton {
         // If it was a split image, the next stage SHOULD be CB_B
         if image_type == ImageType::Split {
             let cb_b_data = extract_next(&mut p_next_offset, XenonBlType::CB)?;
-            bootloaders.cb_b = Some(BootloaderCb::from_bytes(&cb_b_data)?);
+            let cb_b_extracted = BootloaderCb::parse(&cb_b_data)?;
+            bootloaders.cb_b = Some(cb_b_extracted.clone());
         }
 
         // --- Sequence Scanner (SC -> CD -> CE / SD -> SE) ---
         while p_next_offset + 0x100 < raw_image.len() {
             let peek_raw = &raw_image[p_next_offset..p_next_offset + 0x100];
             let clean_peek = unecc(peek_raw);
-            let bl_hdr = if let Some(h) = BootloaderHeader::read_from_bytes(&clean_peek[..0x10]).ok() { h } else { break; };
+            let bl_hdr = if let Ok((h, _)) = BootloaderHeader::read_from_prefix(&clean_peek[..0x10]) { h.clone() } else { break; };
             
             match bl_hdr.get_type() {
                 XenonBlType::SC => {
                     let sc_data = extract_next(&mut p_next_offset, XenonBlType::SC)?;
-                    bootloaders.sc = Some(BootloaderSc::from_bytes(&sc_data)?);
+                    let sc_extracted = BootloaderSc::parse(&sc_data)?;
+                    bootloaders.sc = Some(sc_extracted.clone());
                 },
                 XenonBlType::CD => { // CD or SD (devkit variant)
                     let cd_data = extract_next(&mut p_next_offset, bl_hdr.get_type())?;
-                    bootloaders.cd = Some(BootloaderCd::from_bytes(&cd_data)?);
+                    let cd_extracted = BootloaderCd::parse(&cd_data)?;
+                    bootloaders.cd = Some(cd_extracted.clone());
                 },
                 XenonBlType::CE => { // CE or SE (devkit variant)
                     let ce_data = extract_next(&mut p_next_offset, bl_hdr.get_type())?;
-                    bootloaders.ce = Some(BootloaderCe::from_bytes(&ce_data)?);
+                    let ce_extracted = BootloaderCe::parse(&ce_data)?;
+                    bootloaders.ce = Some(ce_extracted.clone());
                 },
                 XenonBlType::CB if image_type == ImageType::Split && bootloaders.cb_b.is_none() => {
                     // Handle Split CB_B (or devkit SB equivalent)
                     let b_data = extract_next(&mut p_next_offset, bl_hdr.get_type())?;
-                    bootloaders.cb_b = Some(BootloaderCb::from_bytes(&b_data)?);
+                    let cb_b_extracted = BootloaderCb::parse(&b_data)?;
+                    bootloaders.cb_b = Some(cb_b_extracted.clone());
                 },
                 _ => break, 
             }
@@ -459,17 +473,19 @@ impl NandSkeleton {
                 if p_cur_offset + 0x100 > raw_image.len() { break; }
                 
                 let peek = unecc(&raw_image[p_cur_offset..p_cur_offset+0x100]);
-                let bl_hdr = if let Some(h) = BootloaderHeader::read_from_bytes(&peek[..0x10]).ok() { h } else { break; };
+                let bl_hdr = if let Ok((h, _)) = BootloaderHeader::read_from_prefix(&peek[..0x10]) { h.clone() } else { break; };
                 
                 let size = bl_hdr.size.get() as usize;
                 let p_size = if matches!(layout, NandLayout::Layout3) { size } else { ((size + 0x1FF) / 0x200) * 0x210 };
                 let p_aligned = (p_size + 0xF) & 0xFFFFFFF0;
                 
                 if bl_hdr.get_type() == XenonBlType::CF {
-                    let cf = BootloaderCf::from_bytes(&unecc(&raw_image[p_cur_offset..p_cur_offset+p_aligned]))?;
+                    let cf_extracted = BootloaderCf::parse(&unecc(&raw_image[p_cur_offset..p_cur_offset+p_aligned]))?;
+                    let cf = cf_extracted.clone();
                     if cf_0.is_none() { cf_0 = Some(cf); } else { cf_1 = Some(cf); }
                 } else if bl_hdr.get_type() == XenonBlType::CG {
-                    let cg = BootloaderCg::from_bytes(&unecc(&raw_image[p_cur_offset..p_cur_offset+p_aligned]))?;
+                    let cg_extracted = BootloaderCg::parse(&unecc(&raw_image[p_cur_offset..p_cur_offset+p_aligned]))?;
+                    let cg = cg_extracted.clone();
                     if cg_0.is_none() { cg_0 = Some(cg); } else { cg_1 = Some(cg); }
                 }
                 
@@ -539,7 +555,8 @@ impl NandSkeleton {
             layout,
             total_blocks,
             options: BuildOptions {
-                layout,  // NandLayout is Copy
+                layout,
+                block_map: BlockMap { blocks: Vec::new(), layout },
                 image_type, 
                 build_type: BuildType::Retail,
                 motherboard,
@@ -573,7 +590,8 @@ impl NandSkeleton {
         // 2. Map SMC and KV (Logical offsets)
         if let Some(smc) = self.extra.smc.as_slice().get(..) {
             // Re-encrypt SMC before mapping (Round-Trip)
-            let encrypted_smc = smc_crypto::encrypt_smc(smc);
+            let mut smc_obj = crate::builder::chain::smc::Smc::parse(smc)?;
+            let encrypted_smc = smc_obj.encrypt().data.clone();
             let smc_offset = 0x4000 - encrypted_smc.len();
             logical_image[smc_offset..smc_offset + encrypted_smc.len()].copy_from_slice(&encrypted_smc);
             header.smc_start.set(smc_offset as u32);
@@ -639,16 +657,7 @@ impl NandSkeleton {
             }
         }
 
-        // 5. Handle XeLL (Logical 0xC0000)
-        if xell_mode {
-            if let Some(ref xell) = bl.xell {
-                let xell_data = xell.serialize_for_nand(256 * 1024);
-                let xell_offset = 0xC0000;
-                if xell_offset + xell_data.len() <= logical_image.len() {
-                    logical_image[xell_offset..xell_offset + xell_data.len()].copy_from_slice(&xell_data);
-                }
-            }
-        }
+        // 5. Handle XeLL (Logical 0xC0000) - REMOVED
 
         // 5. Handle FlashFS (NandFS)
         // Usually anchored at logical 0x100000 for standard RGH images
@@ -671,7 +680,7 @@ impl NandSkeleton {
         }
 
         // 7. Final Header Sync
-        let header_bytes = header.as_bytes();
+        let header_bytes = zerocopy::IntoBytes::as_bytes(&header);
         logical_image[..header_bytes.len()].copy_from_slice(header_bytes);
 
         Ok(logical_image)
@@ -682,9 +691,8 @@ impl NandSkeleton {
     pub fn build(&self) -> Result<Vec<u8>, String> {
         use crate::builder::tools::blocks::{addecc, SpareProfile};
 
-        // 1. Logical Assembly (XeLL vs Retail)
-        let xell_mode = self.bootloaders.xell.is_some();
-        let logical_image = self.assemble_logical(xell_mode)?;
+        // 1. Logical Assembly
+        let logical_image = self.assemble_logical(false)?;
 
         // 2. Physical Distribution & Bad Block Mapping
         let layout = &self.options.layout;
