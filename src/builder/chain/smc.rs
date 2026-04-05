@@ -22,16 +22,7 @@
 
 use zerocopy::{FromBytes, byteorder::big_endian};
 use crate::builder::builder::BootloaderHeader;
-use crate::builder::deps::excrypt::{
-    ExCryptBnQwBeSigVerify,
-    ExCryptHmacSha,
-    ExCryptRc4Ecb,
-    ExCryptRc4Key,
-    ExCryptRc4State,
-    ExCryptRotSumSha,
-    ExCryptRsa,
-    ExCryptSig,
-};
+use crate::builder::deps::excrypt::{self, ExCryptRsa};
 
 #[derive(FromBytes)]
 #[repr(C)]
@@ -51,53 +42,12 @@ impl Smc {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
 
-        // Size minus the Generic Header is the hashable payload
-        unsafe {
-            ExCryptRotSumSha(
-                &self.header as *const _ as *const u8,
-                0x10, // hash header key independently
-                self.data.as_ptr(),
-                size_aligned - std::mem::size_of::<BootloaderGenericHeader>() as u32,
-                sha_out.as_mut_ptr(),
-                0x14,
-            );
-        }
-    }
-
-    pub fn verify_signature(&self, salt: &[u8], pubkey: &ExCryptRsa) -> bool {
-        let mut bl_hash = [0u8; 0x14];
-        self.calculate_rotsum(&mut bl_hash);
-
-        let signature_ptr = self.header.signature.as_ptr() as *const ExCryptSig;
-
-        let result = unsafe {
-            ExCryptBnQwBeSigVerify(
-                signature_ptr,
-                bl_hash.as_ptr(),
-                salt.as_ptr(),
-                pubkey,
-            )
-        };
-
-        result == 1
-    }
-}
-
-impl Smc {
-    pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
-        let size = self.header.header.size.get();
-        let size_aligned = (size + 0xF) & 0xFFFFFFF0;
-
         // Signature is excluded from the hash, just like CB/CD
-        unsafe {
-            ExCryptRotSumSha(
-                &self.header as *const _ as *const u8,
-                0x10, // hash header key independently
-                self.data.as_ptr(),
-                size_aligned - std::mem::size_of::<SmcHeader>() as u32,
-                sha_out.as_mut_ptr(),
-                0x14,
-            );
+        if let Ok(hash) = excrypt::rot_sum_sha(
+            unsafe { std::slice::from_raw_parts(&self.header as *const _ as *const u8, 0x10) },
+            &self.data[..(size_aligned as usize - std::mem::size_of::<SmcHeader>())],
+        ) {
+            sha_out.copy_from_slice(&hash);
         }
     }
 
@@ -105,19 +55,8 @@ impl Smc {
         let mut bl_hash = [0u8; 0x14];
         self.calculate_rotsum(&mut bl_hash);
 
-        let signature_ptr = self.header.signature.as_ptr() as *const ExCryptSig;
         let expected_salt = b"XBOX_ROM_S\0"; // Standard SMC salt
-
-        let result = unsafe {
-            ExCryptBnQwBeSigVerify(
-                signature_ptr,
-                bl_hash.as_ptr(),
-                expected_salt.as_ptr(),
-                pubkey,
-            )
-        };
-
-        result == 1
+        excrypt::verify_signature(&self.header.signature, &bl_hash, expected_salt, pubkey).unwrap_or(false)
     }
 
     /// Decrypts the SMC payload using the "SMC Hash" rolling-key cipher in-place.

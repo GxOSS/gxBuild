@@ -20,9 +20,7 @@
 */
 
 use crate::builder::builder::BootloaderHeader;
-use crate::builder::deps::excrypt::{
-    ExCryptHmacSha, ExCryptRc4Ecb, ExCryptRc4Key, ExCryptRc4State, ExCryptRotSumSha,
-};
+use crate::builder::deps::excrypt::{self, Rc4};
 use crate::builder::deps::xenia::compression::{
     Compress, Decompress,
 };
@@ -62,15 +60,11 @@ impl BootloaderCe {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
 
-        unsafe {
-            ExCryptRotSumSha(
-                &self.header as *const _ as *const u8,
-                0x10,
-                &self.header.target_address as *const _ as *const u8,
-                size_aligned - 0x20,
-                sha_out.as_mut_ptr(),
-                0x14,
-            );
+        if let Ok(hash) = excrypt::rot_sum_sha(
+            unsafe { std::slice::from_raw_parts(&self.header as *const _ as *const u8, 0x10) },
+            unsafe { std::slice::from_raw_parts(&self.header.target_address as *const _ as *const u8, (size_aligned - 0x20) as usize) },
+        ) {
+            sha_out.copy_from_slice(&hash);
         }
     }
 
@@ -103,31 +97,16 @@ impl BootloaderCe {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
 
-        let mut ce_key = [0u8; 0x10];
-        let mut rc4 = ExCryptRc4State {
-            s: [0; 256],
-            i: 0,
-            j: 0,
-        };
-
-        unsafe {
-            ExCryptHmacSha(
-                cd_key.as_ptr(),
-                0x10,
-                self.header.key.as_ptr(),
-                0x10,
-                std::ptr::null(),
-                0,
-                std::ptr::null(),
-                0,
-                ce_key.as_mut_ptr(),
-                0x10,
-            );
-
-            ExCryptRc4Key(&mut rc4, ce_key.as_ptr(), 0x10);
-
-            let encrypted_payload_ptr = &mut self.header.target_address as *mut _ as *mut u8;
-            ExCryptRc4Ecb(&mut rc4, encrypted_payload_ptr, size_aligned - 0x20);
+        if let Ok(ce_key) = excrypt::hmac_sha(cd_key, &[&self.header.key]) {
+            if let Ok(mut rc4) = Rc4::new(&ce_key) {
+                let encrypted_payload_slice = unsafe { 
+                    std::slice::from_raw_parts_mut(
+                        &mut self.header.target_address as *mut _ as *mut u8, 
+                        (size_aligned - 0x20) as usize
+                    ) 
+                };
+                let _ = rc4.crypt(encrypted_payload_slice);
+            }
         }
     }
 

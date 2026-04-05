@@ -21,10 +21,7 @@
 
 use zerocopy::{FromBytes, byteorder::big_endian};
 use crate::builder::builder::BootloaderHeader;
-use crate::builder::deps::crypto::{
-    ExCryptBnQwBeSigVerify, ExCryptHmacSha, ExCryptRc4Ecb, ExCryptRc4Key, ExCryptRc4State,
-    ExCryptRotSumSha, ExCryptRsa, ExCryptSig,
-};
+use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa, ExCryptSig};
 
 #[derive(FromBytes)]
 #[repr(C)]
@@ -57,15 +54,11 @@ impl BootloaderCf {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
 
-        unsafe {
-            ExCryptRotSumSha(
-                &self.header as *const _ as *const u8,
-                0x20, // 0x20 for CF
-                self.header.cg_hmac.as_ptr(),
-                size_aligned - 0x330,
-                sha_out.as_mut_ptr(),
-                0x14,
-            );
+        if let Ok(hash) = excrypt::rot_sum_sha(
+            unsafe { std::slice::from_raw_parts(&self.header as *const _ as *const u8, 0x20) },
+            unsafe { std::slice::from_raw_parts(self.header.cg_hmac.as_ptr(), (size_aligned - 0x330) as usize) },
+        ) {
+            sha_out.copy_from_slice(&hash);
         }
     }
 
@@ -73,19 +66,8 @@ impl BootloaderCf {
         let mut cf_hash = [0u8; 0x14];
         self.calculate_rotsum(&mut cf_hash);
 
-        let signature_ptr = self.header.signature.as_ptr() as *const ExCryptSig;
         let expected_salt = b"XBOX_ROM_6\0";
-
-        let result = unsafe {
-            ExCryptBnQwBeSigVerify(
-                signature_ptr,
-                cf_hash.as_ptr(),
-                expected_salt.as_ptr(),
-                rsa_1bl,
-            )
-        };
-
-        result == 1
+        excrypt::verify_signature(&self.header.signature, &cf_hash, expected_salt, rsa_1bl).unwrap_or(false)
     }
 
     pub fn print_info(&self) {
@@ -114,31 +96,10 @@ impl BootloaderCf {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
 
-        let mut cf_key = [0u8; 0x10];
-        let mut rc4 = ExCryptRc4State {
-            s: [0; 256],
-            i: 0,
-            j: 0,
-        };
-
-        unsafe {
-            ExCryptHmacSha(
-                onebl_key.as_ptr(),
-                0x10,
-                self.header.key.as_ptr(),
-                0x10,
-                std::ptr::null(),
-                0,
-                std::ptr::null(),
-                0,
-                cf_key.as_mut_ptr(),
-                0x10,
-            );
-
-            ExCryptRc4Key(&mut rc4, cf_key.as_ptr(), 0x10);
-
-            let encrypted_payload_ptr = self.header.pairing.as_mut_ptr();
-            ExCryptRc4Ecb(&mut rc4, encrypted_payload_ptr, size_aligned - 0x30);
+        if let Ok(cf_key) = excrypt::hmac_sha(onebl_key, &[&self.header.key]) {
+            if let Ok(mut rc4) = Rc4::new(&cf_key) {
+                let _ = rc4.crypt(&mut self.header.pairing[..(size_aligned as usize - 0x30)]);
+            }
         }
     }
 }

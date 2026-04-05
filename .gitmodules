@@ -13,3 +13,6 @@
 [submodule "src/lib/ExCrypt"]
 	path = src/lib/ExCrypt
 	url = https://github.com/emoose/ExCrypt
+[submodule "src/builder/deps/excrypt/src"]
+	path = src/builder/deps/excrypt/src
+	url = https://github.com/emoose/ExCrypt

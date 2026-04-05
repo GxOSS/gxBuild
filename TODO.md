@@ -15,7 +15,13 @@ mod.rs
 
 builder.rs
 - Rewrite nand parse function
-- Rewrite nand build function
+
+
+Rewrite nand build function
+- Assemble-Logical = Assemble Full NAND image
+- Assemble-Shadow = Assemble Shadowboot image
+- Assemble-Xell = Assemble XeLL image
+- Build = Build final image from assembled
 
 commands.rs
 - Session Commands
@@ -37,6 +43,8 @@ commands.rs
 
 
 Next Release:
+
+- RGLoader Patching and RGPATCH0
 
 - SMC Patching and XEPATCH1
 
