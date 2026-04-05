@@ -4,7 +4,7 @@
 
 - SC bootloader file -> sc.rs In Progress
 
-- SMC file with patching -> smc.rs Implemented
+- SMC file -> smc.rs Implemented
 
 - Error handler -> error.rs In Progress
 
@@ -38,12 +38,16 @@ commands.rs
 
 Next Release:
 
+- SMC Patching and XEPATCH1
+
+- GGX-Devkit: PPC dissasembler and patch builder
+
+- Gay-Runner with Sextras: Python Qt6 example GUI for GGX
+
 - PyGG
 
 - STFS / Xboxupd.bin parsing into CF/CG
 
-- Better build.rs
-
-Options to disable CLI, FFI interface, xeBuild INI, Python interpreter, etc
+- Better build.rs - options to disable CLI, FFI INI, python, etc
 
 - LZX recompression with LibLZX (?)

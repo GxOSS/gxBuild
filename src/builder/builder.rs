@@ -153,7 +153,9 @@ pub struct KeyvaultRecord {
     pub video_region: U16<BigEndian>,
 }
 
-pub struct NandPatch {
+pub struct
+
+pub struct NandPatches {
     pub rglp: Option<Vec<u8>>,
     pub xebuild: Option<Vec<u8>>,
 }
