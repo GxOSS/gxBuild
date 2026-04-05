@@ -116,18 +116,15 @@ pub enum CliConsoleType {
     zephyr,
     falcon,
     jasper,
-    jaspersb,
     jasper256,
     jasper512,
     jasperbb,
     jasperbigffs,
     trinity,
-    trinitybb,
     trinitybigffs,
     corona,
     corona4g,
     winchester,
-    winchester4g,
 }
 
 /// Custom parser for the -o options flag.

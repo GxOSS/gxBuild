@@ -1,27 +1,23 @@
 # GGXBuild TODO
 
-| Feature | Status | Tested |
-|-----|-----|-----|
-| INI parsing | Complete | No |
-| Patching | Complete | No |
-| Crypto | Complete | No |
-| Decompression | Incomplete | No |
-| Recompression | Not Started | No |
-| NAND Building | Incomplete | No |
-| FlashFS | Incomplete | No |
+- Rewrite spare data parser -> spare.rs In Progress
 
-| Interface | Status | Tested |
-|-----|-----|-----|
-| Session structured | Complete | No |
-| Session commands | Incomplete | No |
-| CLI structured | Complete | No |
-| PyGG Interpreter | Complete | No |
-| PyGG Shell | Complete | No |
+- SC bootloader file -> sc.rs In Progress
 
+- SMC file with patching -> smc.rs Implemented
 
+- Error handler -> error.rs In Progress
 
+mod.rs
+- Keyvault crypto
+- Keyvault parser
+- XeLL image file - In Progress
 
+builder.rs
+- Rewrite nand parse function
+- Rewrite nand build function
 
+commands.rs
 - Session Commands
 
 1. Parse NAND
@@ -35,22 +31,19 @@
 9. Load FlashFS Folder
 10. Apply-XePatch
 11. Apply-RGLP
-12. Build
+12. Build NAND
+13. Build XeLL Image
 
 
+
+Next Release:
+
+- PyGG
+
+- STFS / Xboxupd.bin parsing into CF/CG
 
 - Better build.rs
 
 Options to disable CLI, FFI interface, xeBuild INI, Python interpreter, etc
 
-
-
 - LZX recompression with LibLZX (?)
-
-## Commands:
-
-- Extract
-- Extract-All
-- Patch
-- Replace
-- ...

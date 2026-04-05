@@ -1,8 +1,11 @@
 pub mod cb;
+pub mod sc;
 pub mod cd;
 pub mod ce;
 pub mod cf;
 pub mod cg;
+pub mod smc;
+pub mod xell;
 
 #[derive(FromBytes, AsBytes, Clone, Copy)]
 #[repr(C)]
@@ -217,6 +220,45 @@ impl Keyvault {
                 size_aligned - std::mem::size_of::<BootloaderGenericHeader>() as u32,
             );
         }
+    }
+}
+
+pub enum XellType {
+    Xell1f = 0,
+    Xell2f = 1,
+    XellGg = 2,
+    XellUnknown = 3,
+}
+
+impl XellType {
+    pub fn from_hash(hash: &[u8; 0x14]) -> Self {
+        
+    }
+}
+
+
+pub struct Xell {
+    pub data: Vec<u8>,
+    pub xell_type: XellType,
+}
+
+impl Xell {
+    pub fn new(data: Vec<u8>) -> Self {
+        let xell_type = XellType::from_hash(&data);
+        Self {
+            data,
+            xell_type,
+        }
+    }
+
+    /// crc32 hash xeLL
+    pub fn get_hash(&self) -> [u8; 0x14] {
+        
+    }
+
+    /// identify xell with crc32
+    pub fn identify(&self) -> XellType {
+        
     }
 }
 

@@ -31,7 +31,6 @@ use crate::builder::tools::flashfs::FlashFS;
 use crate::builder::deps::compression::*;
 use crate::builder::tools::blocks::*;
 use crate::builder::chain::*;
-use crate::builder::tools::smc_crypto;
 
 /// Xbox 360 NAND header — matches xenon-bltool's `xenon_nand_header` layout.
 /// The first field is a `BootloaderHeader` whose `entrypoint` points to CB.
@@ -154,7 +153,7 @@ pub struct KeyvaultRecord {
     pub video_region: U16<BigEndian>,
 }
 
-pub struct NandPatches {
+pub struct NandPatch {
     pub rglp: Option<Vec<u8>>,
     pub xebuild: Option<Vec<u8>>,
 }
@@ -201,7 +200,7 @@ pub enum BuildType { // Custom images
 }
 
 pub struct BuildOptions {
-    pub layout: NandLayout,
+    pub block_map: BlockMap,
     pub image_type: ImageType,
     pub build_type: BuildType,
     pub motherboard: MotherboardType,
@@ -211,19 +210,27 @@ pub struct BuildOptions {
     pub patches: Option<NandPatches>,
 }
 
-pub struct BlockMap; // Standard placeholder for now
-
-impl BlockMap {
-    pub fn is_bad(&self, _block: usize) -> bool {
-        false // TODO: implement real bad block tracking
-    }
+pub struct RawImage {
+    pub image: Vec<u8>,
 }
 
+impl RawImage {
+    pub fn get_page_spare(&self, page: usize) -> Option<[u8; 16]> {
+        let offset = (page * 0x210) + 0x200;
+        if offset + 16 <= self.image.len() {
+            let mut spare = [0u8; 16];
+            spare.copy_from_slice(&self.image[offset..offset + 16]);
+            Some(spare)
+        } else {
+            None
+        }
+    }
+}
 
 pub struct NandSkeleton {
     pub cpukey: Option<String>,
     pub image: Vec<u8>,
-    pub block_map: Option<BlockMap>,
+    pub block_map: Option<BlockMap>, // Need to retarget
     pub options: BuildOptions,
     pub header: NandHeader,
     pub extra: NandExtra,
@@ -290,6 +297,16 @@ impl NandSkeleton {
             .ok().ok_or_else(|| "Failed to map KeyvaultRecord structure".to_string())
     }
 
+
+    // From J-Runner-with-Extras>J-Runner>Nand>PatchParser.cs
+    // Thanks Mena
+    // TODO: Add crc32 hashing (?)
+    /// Parse patches applied to a NandSkeleton
+    pub fn get_patches(&self) -> Option<NandPatches> {
+        
+    }
+
+    /// Parse nand image into populated NandSkeleton
     pub fn parse_nand(nandimg: &std::path::Path, cpukey: String) -> Result<Self, String> {
         let raw_image = std::fs::read(nandimg)
             .map_err(|e| format!("Failed to read NAND image: {}", e))?;

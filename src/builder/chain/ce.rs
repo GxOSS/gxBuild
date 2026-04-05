@@ -48,7 +48,9 @@ struct BootloaderCompressionBlock {
 
 pub struct BootloaderCe {
     pub header: BootloaderCeHeader,
-    pub data: Vec<u8>,
+    pub data_ce: Option<Vec<u8>>,
+    pub data_kernel: Option<Vec<u8>>,
+    pub data_hv: Option<Vec<u8>>,
 }
 
 impl BootloaderCe {
@@ -204,5 +206,11 @@ impl BootloaderCe {
         }
 
         Ok(decompressed)
+    }
+
+    /// Split Decompressed CE into Kernel and Hypervisor
+    pub fn split_into_stages(&self) -> Result<(), String> {
+        // TODO: Implement
+        
     }
 }
