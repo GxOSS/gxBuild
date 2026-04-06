@@ -21,16 +21,24 @@
 
 
 use crate::builder::deps::excrypt::{
-    ExCryptBnQwBeSigVerify, ExCryptHmacSha, ExCryptRc4Ecb, ExCryptRc4Key, ExCryptRc4State,
-    ExCryptRotSumSha, ExCryptRsa, ExCryptSig,
+    Rc4, ExCryptRsa, ExCryptSig,
 };
-use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
-use zerocopy::byteorder::{U16, U32, U64, I16, I32, BigEndian};
+use zerocopy::{FromBytes, IntoBytes, Immutable};
+use zerocopy::byteorder::{U16, U32, I16, BigEndian};
 
-use crate::builder::chain::flashfs::FlashFS;
-use crate::builder::deps::xenia;
 use crate::builder::tools::blocks::*;
 use crate::builder::chain::*;
+use crate::builder::chain::flashfs::FlashFS;
+
+pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&hex[i..i + 2], 16)
+                .map_err(|e| format!("Invalid hex byte: {}", e))
+        })
+        .collect()
+}
 
 /// Xbox 360 NAND header — matches xenon-bltool's `xenon_nand_header` layout.
 /// The first field is a `BootloaderHeader` whose `entrypoint` points to CB.
@@ -125,8 +133,8 @@ pub struct NandBootloaders {
 pub struct NandUpdate {
     pub cf_0: BootloaderCf,
     pub cg_0: BootloaderCg,
-    pub cf_1: Option<BootloaderCf>,
-    pub cg_1: Option<BootloaderCg>,
+    pub cf_1: BootloaderCf,
+    pub cg_1: BootloaderCg,
 }
 
 // SMC, Keyvault and Security
@@ -141,19 +149,7 @@ pub struct NandExtra {
     pub power_on_cause_b: u8,
 }
 
-#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone)]
-#[repr(C)]
-pub struct KeyvaultRecord {
-    pub unused0: [u8; 0xB0],
-    pub serial: [u8; 12],
-    pub unused1: [u8; 0x6],
-    pub console_id: [u8; 5],
-    pub unused2: [u8; 0x2B],
-    pub dvd_key: [u8; 16],
-    pub unused3: [u8; 0x10],
-    pub game_region: U16<BigEndian>,
-    pub video_region: U16<BigEndian>,
-}
+// KeyvaultRecord moved to src/builder/chain/kv.rs
 
 #[derive(Clone)]
 pub struct NandPatches {
@@ -234,64 +230,6 @@ pub struct NandSkeleton {
 }
 
 impl NandSkeleton {
-    /// Discovers and extracts all critical NAND metadata (Header, Bootloaders, Keyvault, SMC) from a raw dump.
-    /// A CPU Key is required for successful decryption of the bootloader chain.
-    pub fn decrypt_smc(&mut self) -> Result<(), String> {
-        if self.extra.smc.is_empty() {
-            return Err("SMC binary is empty".to_string());
-        }
-        let mut smc = crate::builder::chain::smc::Smc::parse(&self.extra.smc)?;
-        self.extra.smc = smc.decrypt().data.clone();
-        Ok(())
-    }
-
-    pub fn decrypt_kv(&mut self, cpukey: [u8; 16]) -> Result<(), String> {
-        if self.extra.keyvault.len() < 0x10 {
-            return Err("Keyvault is too small".to_string());
-        }
-
-        let kv = &mut self.extra.keyvault;
-        
-        // 1. Extract the HMAC-SHA1 Nonce (first 16 bytes)
-        let mut nonce = [0u8; 16];
-        nonce.copy_from_slice(&kv[..0x10]);
-
-        // 2. Derive the RC4 key: HMAC-SHA1(CPUKey, Nonce)
-        let mut rc4_key = [0u8; 20];
-        unsafe {
-            ExCryptHmacSha(
-                cpukey.as_ptr(),
-                cpukey.len() as u32,
-                nonce.as_ptr(),
-                nonce.len() as u32,
-                std::ptr::null(), 0,
-                std::ptr::null(), 0,
-                rc4_key.as_mut_ptr(),
-                20
-            );
-        }
-
-        // 3. Decrypt the rest of the KV (0x10 to end) using RC4
-        let mut state = ExCryptRc4State { s: [0u8; 256], i: 0, j: 0 };
-        unsafe {
-            ExCryptRc4Key(&mut state, rc4_key.as_ptr(), 16);
-            ExCryptRc4Ecb(&mut state, kv[0x10..].as_mut_ptr(), (kv.len() - 0x10) as u32);
-        }
-
-        Ok(())
-    }
-
-    /// Retrieve critical console metadata (DVD Key, Region, Serial) from a decrypted Keyvault.
-    pub fn get_kv_info(&self) -> Result<KeyvaultRecord, String> {
-        if self.extra.keyvault.len() < 0x130 {
-            return Err("Keyvault not decrypted or too small".to_string());
-        }
-        KeyvaultRecord::read_from_prefix(&self.extra.keyvault[..std::mem::size_of::<KeyvaultRecord>()])
-            .map(|(kv, _)| kv.clone())
-            .map_err(|_| "Failed to map KeyvaultRecord structure".to_string())
-    }
-
-
     // From J-Runner-with-Extras>J-Runner>Nand>PatchParser.cs
     // Thanks Mena
     // TODO: Add crc32 hashing (?)
@@ -307,6 +245,7 @@ impl NandSkeleton {
 
         // 1. Detect Layout e.g. 16MB vs 64MB+ vs eMMC
         let layout = NandLayout::detect(&raw_image)?;
+        let cpukey_bytes: [u8; 16] = hex_to_bytes(&cpukey).map_err(|_| "Invalid CPU Key format")?.try_into().map_err(|_| "CPU Key must be 16 bytes")?;
 
         // 2. Extract and Parse NandHeader (always at 0x0)
         // Header is raw at the start, we unecc it to be sure
@@ -327,15 +266,6 @@ impl NandSkeleton {
             sc: None,
             cd: None,
             ce: None,
-        };
-
-        let extra = NandExtra {
-            smc: Vec::new(),
-            smc_config: Vec::new(),
-            keyvault: Vec::new(),
-            fcrt: None,
-            power_on_cause_a,
-            power_on_cause_b,
         };
 
         // Extract CB — its offset is the entrypoint in the header
@@ -484,20 +414,22 @@ impl NandSkeleton {
 
         decrypt_chain(
             bootloaders.cb.as_mut().or(bootloaders.cb_a.as_mut()).ok_or("CB stage missing")?,
-            bootloaders.cb_b.as_mut(),
             bootloaders.sc.as_mut(),
             bootloaders.cd.as_mut().ok_or("CD stage missing")?,
             bootloaders.ce.as_mut().ok_or("CE stage missing")?,
             cf_final,
             cg_final,
-            &cpukey,
+            &cpukey_bytes,
         )?;
 
+        let cf_0_final = cf_0.clone().ok_or("CF_0 stage not found in NAND image")?;
+        let cg_0_final = cg_0.clone().ok_or("CG_0 stage not found in NAND image")?;
+
         let update = NandUpdate {
-            cf_0: cf_0.ok_or("CF_0 stage not found in NAND image")?,
-            cg_0: cg_0.ok_or("CG_0 stage not found in NAND image")?,
-            cf_1,
-            cg_1,
+            cf_0: cf_0_final.clone(),
+            cg_0: cg_0_final.clone(),
+            cf_1: cf_1.unwrap_or(cf_0_final),
+            cg_1: cg_1.unwrap_or(cg_0_final),
         };
 
         // 6. Extract Extra (SMC / KV)
@@ -506,14 +438,21 @@ impl NandSkeleton {
         let smc_offset = header.smc_boot_offset.get() as usize;
         let smc_size = header.smc_boot_size.get() as usize;
         
-        let p_kv_offset = if matches!(layout, NandLayout::Emmc) { kv_addr } else { (kv_addr / 0x200) * 0x210 };
-        let p_kv_size = if matches!(layout, NandLayout::Emmc) { kv_size } else { ((kv_size + 0x1FF) / 0x200) * 0x210 };
         let p_smc_offset = if matches!(layout, NandLayout::Emmc) { smc_offset } else { (smc_offset / 0x200) * 0x210 };
         let p_smc_size = if matches!(layout, NandLayout::Emmc) { smc_size } else { ((smc_size + 0x1FF) / 0x200) * 0x210 };
         
-        let mut smc_data = unecc(&raw_image[p_smc_offset..p_smc_offset + p_smc_size]);
-        // TODO: SMC Decryption should happen here
-        let motherboard = MotherboardType::from_smc(smc_data[0x100]);
+        let smc_raw = unecc(&raw_image[p_smc_offset..p_smc_offset + p_smc_size]);
+        let mut smc = crate::builder::chain::smc::RawSmc::new(smc_raw);
+        smc.decrypt(); // SMC is always encrypted with the BuNy cipher
+
+        let motherboard = MotherboardType::from_smc(smc.data[0x100]);
+
+        let p_kv_offset = if matches!(layout, NandLayout::Emmc) { kv_addr } else { (kv_addr / 0x200) * 0x210 };
+        let p_kv_size = if matches!(layout, NandLayout::Emmc) { kv_size } else { ((kv_size + 0x1FF) / 0x200) * 0x210 };
+        
+        let kv_raw = unecc(&raw_image[p_kv_offset..p_kv_offset + p_kv_size]);
+        let mut kv = crate::builder::chain::kv::Keyvault::parse(&kv_raw)?;
+        kv.decrypt(&cpukey_bytes)?;
 
         // Attempt to find SMC Config
         let (p_conf_off, p_conf_size) = match layout {
@@ -523,17 +462,20 @@ impl NandSkeleton {
         };
         
         let extra = NandExtra {
-            smc: smc_data,
+            smc: smc.data,
             smc_config: unecc(&raw_image[p_conf_off..p_conf_off + p_conf_size]),
-            keyvault: unecc(&raw_image[p_kv_offset..p_kv_offset + p_kv_size]),
+            keyvault: kv.data,
             fcrt: None,
-            power_on_cause_a,
-            power_on_cause_b,
+            power_on_cause_a: 0,
+            power_on_cause_b: 0,
         };
 
         let total_blocks = raw_image.len() / layout.physical_block_size();
 
-        let mut skeleton = NandSkeleton {
+        // 6. Discover Filesystem
+        let flashfs = FlashFS::scan(&raw_image, &layout);
+
+        let skeleton = NandSkeleton {
             cpukey: Some(cpukey),
             image: raw_image,
             block_map: None,
@@ -554,11 +496,8 @@ impl NandSkeleton {
             extra,
             bootloaders,
             update,
-            flashfs: FlashFS::new(),
+            flashfs,
         };
-
-        // 6. Discover Filesystem
-        skeleton.scan_flashfs();
 
         Ok(skeleton)
     }
@@ -566,120 +505,135 @@ impl NandSkeleton {
 
     /// Assembles a 'Flat' logical image (0x200 pages) from the skeleton's components.
     /// This is the precursor to applying physical spare data and ECC.
-    pub fn assemble_logical(&self, xell_mode: bool) -> Result<Vec<u8>, String> {
-        let mut logical_image = vec![0xFFu8; self.total_blocks * 0x200];
-
-        // 1. Header (0x0)
-        let mut header = self.header;
+    pub fn assemble_logical(&self) -> Result<Vec<u8>, String> {
+        let layout = &self.options.layout;
+        let mut logical_image = vec![0xFFu8; self.total_blocks * layout.logical_pages_per_block() * 0x200];
         
-        // 2. Map SMC and KV (Logical offsets)
-        if let Some(smc) = self.extra.smc.as_slice().get(..) {
-            // Re-encrypt SMC before mapping (Round-Trip)
-            let mut smc_obj = crate::builder::chain::smc::Smc::parse(smc)?;
-            let encrypted_smc = smc_obj.encrypt().data.clone();
-            let smc_offset = 0x4000 - encrypted_smc.len();
-            logical_image[smc_offset..smc_offset + encrypted_smc.len()].copy_from_slice(&encrypted_smc);
-            header.smc_start.set(smc_offset as u32);
-            header.smc_size.set(encrypted_smc.len() as u32);
+        let mut header = self.header.clone();
+        
+        // 1. Placement Strategy (Logical Offsets)
+        let smc_offset = header.smc_boot_offset.get() as usize;
+        let kv_offset = 0x4000;
+        let bootchain_start = 0x8000;
+
+        // 2. Inject SMC
+        if self.extra.smc.len() > 0 {
+            let smc_len = self.extra.smc.len();
+            logical_image[smc_offset..smc_offset + smc_len].copy_from_slice(&self.extra.smc);
+            header.smc_boot_size.set(smc_len as u32);
         }
 
-        if let Some(kv) = self.extra.keyvault.as_slice().get(..) {
-            logical_image[0x4000..0x4000 + kv.len()].copy_from_slice(kv);
+        // 3. Inject Keyvault
+        if self.extra.keyvault.len() > 0 {
+            let kv_len = self.extra.keyvault.len();
+            logical_image[kv_offset..kv_offset + kv_len].copy_from_slice(&self.extra.keyvault);
+            header.kv_addr.set(kv_offset as u32);
+            header.kv_size.set(kv_len as u32);
         }
 
-        // 3. Assemble the Bootchain (starting at 0x8000 usually)
-        let mut current_offset = 0x8000;
+        // 4. Inject Bootchain (Starting at 0x8000)
+        let mut current_offset = bootchain_start;
         let bl = &self.bootloaders;
 
-        // Sequence: CB (A+B or Single) -> SC -> CD -> CE
-        if let Some(cb_primary) = bl.cb_a.as_ref().or(bl.cb.as_ref()) {
-            let cb_primary_data = cb_primary.serialize(); 
-            logical_image[current_offset..current_offset + cb_primary_data.len()].copy_from_slice(&cb_primary_data);
-            header.block_offset.set(current_offset as u32);
-            current_offset += (cb_primary_data.len() + 0xF) & 0xFFFFFFF0;
+        let mut stages: Vec<Vec<u8>> = Vec::new();
+
+        if let Some(cb_bl) = bl.cb.as_ref().or(bl.cb_a.as_ref()) {
+            stages.push(cb_bl.serialize());
+        }
+        if let Some(cb_b) = bl.cb_b.as_ref() {
+            stages.push(cb_b.serialize());
+        }
+        if let Some(sc) = bl.sc.as_ref() {
+            stages.push(sc.serialize());
+        }
+        if let Some(cd) = bl.cd.as_ref() {
+            stages.push(cd.serialize());
+        }
+        if let Some(ce) = bl.ce.as_ref() {
+            stages.push(ce.serialize());
         }
 
-        if let Some(ref cb_b) = bl.cb_b {
-            let cb_b_data = cb_b.serialize();
-            logical_image[current_offset..current_offset + cb_b_data.len()].copy_from_slice(&cb_b_data);
-            current_offset += (cb_b_data.len() + 0xF) & 0xFFFFFFF0;
+        for data in stages {
+            let len = data.len();
+            logical_image[current_offset..current_offset + len].copy_from_slice(&data);
+            current_offset += (len + 0xF) & 0xFFFFFFF0; // 0x10 Alignment
         }
 
-        if let Some(ref sc) = bl.sc {
-            let sc_data = sc.serialize();
-            logical_image[current_offset..current_offset + sc_data.len()].copy_from_slice(&sc_data);
-            current_offset += (sc_data.len() + 0xF) & 0xFFFFFFF0;
-        }
+        // 5. Inject Mandated Dual Patch Slots (CF/CG)
+        header.cf_offset.set(current_offset as u32);
+        
+        // Slot 0
+        let cf_0_data = self.update.cf_0.serialize();
+        logical_image[current_offset..current_offset + cf_0_data.len()].copy_from_slice(&cf_0_data);
+        current_offset += (cf_0_data.len() + 0xF) & 0xFFFFFFF0;
 
-        if let Some(ref cd) = bl.cd {
-            let cd_data = cd.serialize();
-            logical_image[current_offset..current_offset + cd_data.len()].copy_from_slice(&cd_data);
-            current_offset += (cd_data.len() + 0xF) & 0xFFFFFFF0;
-        }
+        let cg_0_data = self.update.cg_0.serialize();
+        logical_image[current_offset..current_offset + cg_0_data.len()].copy_from_slice(&cg_0_data);
+        current_offset += (cg_0_data.len() + 0xF) & 0xFFFFFFF0;
 
-        if let Some(ref ce) = bl.ce {
-            let ce_data = ce.serialize();
-            logical_image[current_offset..current_offset + ce_data.len()].copy_from_slice(&ce_data);
-            current_offset += (ce_data.len() + 0xF) & 0xFFFFFFF0;
-        }
+        // Slot 1 (Mandatory)
+        let cf_1_data = self.update.cf_1.serialize();
+        logical_image[current_offset..current_offset + cf_1_data.len()].copy_from_slice(&cf_1_data);
+        current_offset += (cf_1_data.len() + 0xF) & 0xFFFFFFF0;
 
-        let bootchain_end = current_offset;
+        let cg_1_data = self.update.cg_1.serialize();
+        logical_image[current_offset..current_offset + cg_1_data.len()].copy_from_slice(&cg_1_data);
+        current_offset += (cg_1_data.len() + 0xF) & 0xFFFFFFF0;
 
-        // 4. Inject in-memory KHV patches (CDXell)
-        // Patches are appended directly after the bootchain end
-        // CD engine looks at: Header[0x64] + Header[0x70] + 0x5C
-        if let Some(ref patches) = self.options.patches {
-            if let Some(ref xebuild) = patches.xebuild {
-                // Header Synchronization for the patch engine
-                header.cf_offset.set(0x8000);
-                header.patch_size.set((bootchain_end - 0x8000) as u32);
-
-                // Add 0x5C padding for 'Virtual Fuses' as used by the search pointer
-                let patch_start = bootchain_end + 0x5C;
-                if patch_start + xebuild.len() <= logical_image.len() {
-                    logical_image[patch_start..patch_start + xebuild.len()].copy_from_slice(xebuild);
-                }
-            }
-        }
-
-        // 5. Handle XeLL (Logical 0xC0000) - REMOVED
-
-        // 5. Handle FlashFS (NandFS)
-        // Usually anchored at logical 0x100000 for standard RGH images
-        let fs_blob = self.flashfs.root.clone().serialize_logical(&self.layout);
-        let fs_offset = 0x100000;
-        if fs_offset + fs_blob.len() <= logical_image.len() {
-            logical_image[fs_offset..fs_offset + fs_blob.len()].copy_from_slice(&fs_blob);
-        }
-
-        // 6. Inject SMC Config (Config.bin)
-        if let Some(config) = self.extra.smc_config.as_slice().get(..) {
-            let config_offset = match self.layout {
-                NandLayout::Xsb | NandLayout::Sb => 0x3DC * self.layout.logical_pages_per_block() * 0x200,
-                NandLayout::Bb => 0x1F0 * self.layout.logical_pages_per_block() * 0x200,
-                NandLayout::Emmc => 0x2FF0000, // eMMC fixed offset
-            };
-            if config_offset + config.len() <= logical_image.len() {
-                logical_image[config_offset..config_offset + config.len()].copy_from_slice(config);
-            }
-        }
-
-        // 7. Final Header Sync
+        // 6. Final Header Sync & Write
+        header.header.entrypoint.set(bootchain_start as u32);
         let header_bytes = zerocopy::IntoBytes::as_bytes(&header);
         logical_image[..header_bytes.len()].copy_from_slice(header_bytes);
+
+        // 7. FlashFS (Usually at 0x100000)
+        let fs_blob = self.flashfs.root.clone().serialize_logical(layout);
+        let fs_anchor = 0x100000;
+        if fs_anchor + fs_blob.len() <= logical_image.len() {
+            logical_image[fs_anchor..fs_anchor + fs_blob.len()].copy_from_slice(&fs_blob);
+        }
 
         Ok(logical_image)
     }
 
     /// Reconstructs a full physical NAND image from the skeleton.
     /// This follows the J-Runner logic: Logical Assembly -> Physical Distribution (skipping bad blocks).
-    pub fn build(&self) -> Result<Vec<u8>, String> {
-        use crate::builder::tools::blocks::{addecc, SpareProfile};
+    pub fn build(&self, cpukey: String) -> Result<Vec<u8>, String> {
+        let cpukey_bytes: [u8; 16] = hex_to_bytes(&cpukey)
+            .map_err(|_| "Invalid CPU Key format")?
+            .try_into()
+            .map_err(|_| "CPU Key must be 16 bytes")?;
 
-        // 1. Logical Assembly
-        let logical_image = self.assemble_logical(false)?;
+        // 1. Prepare an Encrypted Clone
+        let mut skeleton = self.clone();
+        
+        // Encrypt Keyvault
+        let mut kv = crate::builder::chain::kv::Keyvault::parse(&skeleton.extra.keyvault)?;
+        kv.encrypt(&cpukey_bytes, true)?; // Build defaults to Hashed KV
+        skeleton.extra.keyvault = kv.data;
 
-        // 2. Physical Distribution & Bad Block Mapping
+        // Encrypt Chain
+        let mut smc = crate::builder::chain::smc::RawSmc::new(skeleton.extra.smc.clone());
+        // SMC starts encrypted with BuNy, encrypt_chain will handle FixPerBoxDigest marriage logic
+        
+        encrypt_chain(
+            skeleton.bootloaders.cb.as_mut().or(skeleton.bootloaders.cb_a.as_mut()).ok_or("CB missing")?,
+            skeleton.bootloaders.sc.as_mut(),
+            skeleton.bootloaders.cd.as_mut().ok_or("CD missing")?,
+            skeleton.bootloaders.ce.as_mut().ok_or("CE missing")?,
+            &mut skeleton.update.cf_0, 
+            &mut skeleton.update.cg_0,
+            &mut smc,
+            &cpukey_bytes,
+        )?;
+
+        // Re-encrypt SMC with BuNy
+        smc.encrypt();
+        skeleton.extra.smc = smc.data;
+
+        // 2. Logical Assembly
+        let logical_image = skeleton.assemble_logical()?;
+
+        // 3. Physical Distribution & Bad Block Mapping
         let layout = &self.options.layout;
         let mut physical_image = vec![0xFFu8; self.total_blocks * layout.physical_page_size()];
         
@@ -688,40 +642,28 @@ impl NandSkeleton {
         
         let mut logical_ptr = 0;
         for p_block in 0..self.total_blocks {
-            // Check if this physical block is bad
-            // If it is, we leave it as 0xFF and move to the next physical slot
+            // Bad block skipping
             if let Some(ref map) = self.block_map {
                 if map.is_bad(p_block) {
                     continue;
                 }
             }
 
-            // Pull the next logical chunk
             if logical_ptr + logical_block_size <= logical_image.len() {
                 let logical_chunk = &logical_image[logical_ptr..logical_ptr + logical_block_size];
+                let profile = if p_block < 0x20 { SpareProfile::Metadata } else { SpareProfile::FileSystem };
                 
-                // Identify the profile for this block (Metadata for start of NAND, FileSystem for the rest)
-                let profile = if p_block < 0x8 { SpareProfile::Metadata } else { SpareProfile::FileSystem };
-                
-                // Physical conversion (0x210 pages)
                 let ecc_chunk = addecc(logical_chunk, layout.clone(), profile, p_block * physical_block_size);
                 
-                // Copy to final image
                 let p_offset = p_block * physical_block_size;
                 physical_image[p_offset..p_offset + ecc_chunk.len()].copy_from_slice(&ecc_chunk);
                 
                 logical_ptr += logical_block_size;
             } else {
-                // No more logical data to write
                 break;
             }
         }
 
         Ok(physical_image)
-    }
-
-    /// High-level scan that populates the skeleton's filesystem state automatically from the attached image.
-    pub fn scan_flashfs(&mut self) {
-        self.flashfs = FlashFS::scan(&self.image, &self.options.layout);
     }
 }

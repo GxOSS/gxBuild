@@ -1,27 +1,13 @@
 # GGXBuild TODO
 
-- Rewrite spare data parser -> spare.rs In Progress
-
-- SC bootloader file -> sc.rs In Progress
-
-- SMC file -> smc.rs Implemented
-
-- Error handler -> error.rs In Progress
-
-mod.rs
-- Keyvault crypto
-- Keyvault parser
-- XeLL image file - In Progress
-
 builder.rs
 - Rewrite nand parse function
 
-
 Rewrite nand build function
-- Assemble-Logical = Assemble Full NAND image
+- ~~Assemble-Logical = Assemble Full NAND image~~
 - Assemble-Shadow = Assemble Shadowboot image
 - Assemble-Xell = Assemble XeLL image
-- Build = Build final image from assembled
+- ~~Build = Build final image from assembled~~
 
 commands.rs
 - Session Commands
@@ -41,21 +27,29 @@ commands.rs
 13. Build XeLL Image
 
 
-
 Next Release:
 
-- RGLoader Patching and RGPATCH0
+General:
+- Python Scripting
+- Upgraded Build System
+- LZX Recompression
+- Error Handler / Saftey net
 
-- SMC Patching and XEPATCH1
+Parsing:
+- STFS PIRS
+- Xboxupd.bin
+- Shadowboot
+- XDK Recovery
 
+Patching:
+- Keyvault
+- SMC
+- RGLP
+
+New Projects:
 - GGX-Devkit: PPC dissasembler and patch builder
-
 - Gay-Runner with Sextras: Python Qt6 example GUI for GGX
 
-- PyGG
+- GGX-Loader: ExposureMG's custom patchset
 
-- STFS / Xboxupd.bin parsing into CF/CG
-
-- Better build.rs - options to disable CLI, FFI INI, python, etc
-
-- LZX recompression with LibLZX (?)
+- Glitch3s: Glitch2, 17559 base kernel

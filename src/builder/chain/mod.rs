@@ -6,10 +6,17 @@ pub mod cf;
 pub mod cg;
 pub mod smc;
 pub mod flashfs;
+pub mod kv;
 
-use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
+use zerocopy::{FromBytes, IntoBytes, Immutable};
 use zerocopy::byteorder::{U16, U32, BigEndian};
-use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa, ExCryptSig};
+use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa, sha};
+use crate::builder::chain::smc::RawSmc;
+
+pub const ONEBL_KEY: [u8; 16] = [
+    0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7,
+    0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0x47,
+];
 
 #[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
 #[repr(C)]
@@ -162,17 +169,100 @@ impl Xell {
     }
 }
 
+/// Calculates the critical digest used to marriage the SMC and the Bootloaders.
+/// This matches J-Runner's FixPerBoxDigest implementation.
+pub fn fix_per_box_digest(
+    smc_data: &[u8],
+    cb_dec: &[u8],
+    cb_key: &[u8; 16],
+    cpukey: &[u8; 16],
+) -> Result<[u8; 16], String> {
+    let mut digest = [0u8; 0x30];
+    
+    // 1. Calculate SMC Hash (of the raw/encrypted SMC data)
+    let smc_hash = sha(&[smc_data]).map_err(|e| format!("SMC hashing failed: {}", e))?;
+    
+    // 2. Build the 0x30-byte digest
+    digest[0x0..0x10].copy_from_slice(cb_key);
+    digest[0x10..0x13].copy_from_slice(&cb_dec[0x20..0x23]); // Pairing Data
+    digest[0x13] = cb_dec[0x23]; // LDV
+    digest[0x14..0x20].copy_from_slice(&cb_dec[0x24..0x30]); // Reserved
+    digest[0x20..0x30].copy_from_slice(&smc_hash[..16]);     // SMC Hash
+    
+    // 3. HMAC-SHA1(CPUKey, Digest)
+    let res = excrypt::hmac_sha(cpukey, &[&digest])
+        .map_err(|e| format!("FixPerBoxDigest HMAC failed: {}", e))?;
+    
+    let mut final_digest = [0u8; 16];
+    final_digest.copy_from_slice(&res[..16]);
+    Ok(final_digest)
+}
+
 pub fn decrypt_chain(
     cb: &mut cb::BootloaderCb,
-    cb_b: Option<&mut cb::BootloaderCb>,
     sc: Option<&mut sc::BootloaderSc>,
     cd: &mut cd::BootloaderCd,
     ce: &mut ce::BootloaderCe,
     cf: &mut cf::BootloaderCf,
     cg: &mut cg::BootloaderCg,
-    cpukey: &str,
+    cpukey: &[u8; 16],
 ) -> Result<(), String> {
-    // TODO: Implement the actual decryption logic here
+    // 1. Decrypt CB using 1BL Key or CPU Key (depending on RGH)
+    // For simplicity, we assume retail 1BL key here; caller handles RGH variants
+    cb.decrypt(&ONEBL_KEY);
+    
+    // 2. Derive CB Key (used for CD, CE, and FixPerBoxDigest)
+    let derived = excrypt::hmac_sha(&ONEBL_KEY, &[&cb.header.header.salt])
+        .map_err(|e| format!("CB key derivation failed: {}", e))?;
+    let mut cb_key = [0u8; 16];
+    cb_key.copy_from_slice(&derived[..16]);
+
+    // 3. Decrypt the rest of the chain
+    if let Some(sc_bl) = sc {
+        sc_bl.decrypt(&ONEBL_KEY);
+    }
+    
+    cd.decrypt(&cb_key, None);
+    ce.decrypt(&cb_key);
+    cf.decrypt(&ONEBL_KEY);
+    cg.decrypt(&cf.header.cg_hmac); // CG uses CF's HMAC key
+
+    Ok(())
+}
+
+pub fn encrypt_chain(
+    cb: &mut cb::BootloaderCb,
+    sc: Option<&mut sc::BootloaderSc>,
+    cd: &mut cd::BootloaderCd,
+    ce: &mut ce::BootloaderCe,
+    cf: &mut cf::BootloaderCf,
+    cg: &mut cg::BootloaderCg,
+    smc: &mut RawSmc,
+    cpukey: &[u8; 16],
+) -> Result<(), String> {
+    // RC4 is symmetric, so we reuse the decrypt methods
+    
+    // 1. Calculate and apply FixPerBoxDigest to SMC if needed
+    // In many RGH builds, the digest is stored in the decrypted CB or SMC
+    // Here we derive the key same as decryption
+    let derived = excrypt::hmac_sha(&ONEBL_KEY, &[&cb.header.header.salt])
+        .map_err(|e| format!("CB key derivation failed: {}", e))?;
+    let mut cb_key = [0u8; 16];
+    cb_key.copy_from_slice(&derived[..16]);
+
+    let _digest = fix_per_box_digest(&smc.data, &cb.data, &cb_key, cpukey)?;
+    // TODO: Apply digest if target build requires it (e.g. at 0x24 in modded SMC)
+
+    // 2. Encrypt in order
+    cg.decrypt(&cf.header.cg_hmac);
+    cf.decrypt(&ONEBL_KEY);
+    ce.decrypt(&cb_key);
+    cd.decrypt(&cb_key, None);
+    if let Some(sc_bl) = sc {
+        sc_bl.decrypt(&ONEBL_KEY);
+    }
+    cb.decrypt(&ONEBL_KEY);
+
     Ok(())
 }
 
