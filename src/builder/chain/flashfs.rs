@@ -246,7 +246,10 @@ impl FileSystemRoot {
         }
     }
 
-    pub fn build_from_folder(&mut self, image: &mut [u8], layout: &NandLayout, folder_path: &std::path::Path) -> std::io::Result<()> {
+    pub fn build_from_folder(image: &mut [u8], layout: &NandLayout, folder_path: &std::path::Path, fs_start_block: u16) -> std::io::Result<Self> {
+        let mut root = FileSystemRoot::new(-1, 0);
+        root.create_defaults(image.len(), layout, fs_start_block);
+
         for entry in std::fs::read_dir(folder_path)? {
             let entry = entry?;
             let path = entry.path();
@@ -256,12 +259,17 @@ impl FileSystemRoot {
                 
                 let mut new_entry = FileSystemEntry::new(0);
                 new_entry.file_name = name;
-                self.set_entry_data(image, layout, &mut new_entry, &file_content);
-                self.entries.push(new_entry);
+                root.set_entry_data(image, layout, &mut new_entry, &file_content);
+                root.entries.push(new_entry);
             }
         }
-        self.write(image, layout);
-        Ok(())
+
+        if root.block_number == -1 {
+            root.block_number = root.allocate_new_block(image, layout, 1, fs_start_block) as i32;
+        }
+
+        root.write(image, layout);
+        Ok(root)
     }
 
     pub fn get_block_chain(&self, start_block: u16, limit: usize) -> Vec<u16> {

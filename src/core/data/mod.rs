@@ -1,5 +1,5 @@
 /*
-    commands/mod.rs
+    data/mod.rs
     
     This file was wrote by ExposureMG / Zach for the Public Domain.
 
@@ -10,12 +10,3 @@
 */
 
 pub mod xeini;
-
-
-use crate::builder::builder::NandSkeleton;
-
-pub fn extract(_nand: &Option<NandSkeleton>, _id: String) {}
-pub fn extract_all(_nand: &Option<NandSkeleton>) {}
-pub fn apply_xe_ini(_nand: Option<NandSkeleton>, _ini: xeini::XeBuildIni) -> anyhow::Result<Option<NandSkeleton>> {
-    Ok(_nand)
-}

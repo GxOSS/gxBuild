@@ -1,22 +1,17 @@
 # GGXBuild TODO
 
-builder.rs
-- Rewrite nand parse function
+- Rewrite nand parse function ?
 
-Rewrite nand build function
-- ~~Assemble-Logical = Assemble Full NAND image~~
 - Assemble-Shadow = Assemble Shadowboot image
 - Assemble-Xell = Assemble XeLL image
-- ~~Build = Build final image from assembled~~
+
+- Identify-Patch function
+- Load-Ini function
 
 Weak Files:
 kv.rs
 flashfs.rs
 smc.rs
-
-
-commands.rs
-- Session Commands - In Progress
 
 
 Next Release:

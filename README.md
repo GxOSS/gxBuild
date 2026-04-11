@@ -4,13 +4,21 @@ A Rust Xbox 360 NAND, Shadowboot and XeLL image builder and patcher.
 
 Uses the fbBuild/ggBuild/xeBuild CLI and INI style.
 
-## NOTICE
+## Download
 
-I will not be around to maintain this in the future! If you are interested in maintaining gxBuild or the entire GGX organisation, please contact me (ExposureMG).
+Available for Windows, Mac and Linux.
 
-## Status
+Download from [GitHub Releases](https://github.com/GGX-Project/ggx/releases).
 
-See [TODO.md](TODO.md) for a full list of features and their status.
+## PyGG
+
+PyGG is an optional `rust-python` scripting engine for gxBuild. All gxBuild functions and cli inputs are exposed to a script or a shell, allowing custom workflows and automation.
+
+Download from [GitHub Releases](https://github.com/GGX-Project/ggx/releases).
+
+## Documentation
+
+Documentation is hosted on [GitHub Pages](https://exposuremg.github.io/ggx/home/).
 
 ## Credits
 
@@ -22,7 +30,6 @@ These are the projects i directly took code from:
 - [RGBuild]() by [emoose](), [tydye81]() and [sk1080]()
 - [J-Runner with Extras]() by J-Runner Contributors
 - [RGH3]() by [15432]()
-
 - [Xbox 360 Crypto]() by [GoobyCorp]()
 
 And these are the projects i referenced:
@@ -37,8 +44,15 @@ And these are the projects i referenced:
 And these are the people who deserve credit either way:
 
 - c0z for his work on xeBuild patches
-- 
-- the teams
+- Ikari for his work on FreeBoot
+- team xeBuild
+- team fbBuild
+- team ggBuild
+
+## Developer Info
+
+Heavily uses zerocopy for byteorder.
+Slimmed versions of ExCrypt, Mspack and Xenon-bltool are included locally and compiled with cc.
 
 ## License
 
