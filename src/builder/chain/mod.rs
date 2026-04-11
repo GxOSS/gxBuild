@@ -9,7 +9,7 @@ pub mod flashfs;
 pub mod kv;
 
 use zerocopy::byteorder::{U16, U32, BigEndian};
-use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa, sha};
+use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
 use crate::builder::chain::smc::RawSmc;
 
 pub const ONEBL_KEY: [u8; 16] = [
@@ -179,14 +179,15 @@ pub fn fix_per_box_digest(
     let mut digest = [0u8; 0x30];
     
     // 1. Calculate SMC Hash (of the raw/encrypted SMC data)
-    let smc_hash = sha(&[smc_data]).map_err(|e| format!("SMC hashing failed: {}", e))?;
+    // Matches J-Runner/RGBuild CalculateSMCHash
+    let smc_hash = excrypt::calculate_smc_hash(smc_data);
     
     // 2. Build the 0x30-byte digest
     digest[0x0..0x10].copy_from_slice(cb_key);
-    digest[0x10..0x13].copy_from_slice(&cb_dec[0x20..0x23]); // Pairing Data
+    digest[0x10..0x13].copy_from_slice(&cb_dec[0x20..0x23]); // Pairing Data (at offset 0x20 of CB)
     digest[0x13] = cb_dec[0x23]; // LDV
     digest[0x14..0x20].copy_from_slice(&cb_dec[0x24..0x30]); // Reserved
-    digest[0x20..0x30].copy_from_slice(&smc_hash[..16]);     // SMC Hash
+    digest[0x20..0x30].copy_from_slice(&smc_hash);           // SMC Hash (16 bytes)
     
     // 3. HMAC-SHA1(CPUKey, Digest)
     let res = excrypt::hmac_sha(cpukey, &[&digest])
@@ -249,8 +250,9 @@ pub fn encrypt_chain(
     let mut cb_key = [0u8; 16];
     cb_key.copy_from_slice(&derived[..16]);
 
-    let _digest = fix_per_box_digest(&smc.data, &cb.data, &cb_key, cpukey)?;
-    // TODO: Apply digest if target build requires it (e.g. at 0x24 in modded SMC)
+    let cb_hdr_bytes = zerocopy::IntoBytes::as_bytes(&cb.header);
+    let digest = fix_per_box_digest(&smc.data, cb_hdr_bytes, &cb_key, cpukey)?;
+    cb.header.padding_or_args[0x10..0x20].copy_from_slice(&digest);
 
     // 2. Encrypt in order
     cg.decrypt(&cf.header.cg_hmac);

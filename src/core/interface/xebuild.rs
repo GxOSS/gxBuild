@@ -11,7 +11,7 @@
 
 #![cfg(feature = "cli")]
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum, CommandFactory};
 use std::path::PathBuf;
 use crate::core::session::Session;
 
@@ -23,9 +23,9 @@ pub struct GgxArgs {
     #[command(subcommand)]
     pub mode: Option<GgxMode>,
 
-    /// Image type: retail, jtag, glitch, glitch2, glitch2m, devkit
-    #[arg(short = 't', long = "type", default_value = "retail")]
-    pub build_type: CliBuildType,
+    /// Target image type
+    #[arg(short = 't', long = "type")]
+    pub build_type: Option<CliBuildType>,
 
     /// 32 character CPU hex key
     #[arg(short = 'p', long = "cpukey")]
@@ -35,7 +35,7 @@ pub struct GgxArgs {
     #[arg(short = 'b', long = "blkey")]
     pub bl_key: Option<String>,
 
-    /// Console/Motherboard type (e.g., xenon, jasper, trinity...)
+    /// Console motherboard type
     #[arg(short = 'c', long = "console")]
     pub console: Option<CliConsoleType>,
 
@@ -78,6 +78,10 @@ pub struct GgxArgs {
     /// Suppresses prompt for enter key when finished
     #[arg(long = "noenter")]
     pub no_enter: bool,
+    
+    /// Optional source NAND image
+    #[arg(short = 'n', long = "nand")]
+    pub source_nand: Option<PathBuf>,
 
     /// Optional output image name
     pub output: Option<PathBuf>,
@@ -88,7 +92,7 @@ pub enum GgxMode {
     /// Image Build Mode (Default)
     Build {
         #[arg(from_global)]
-        build_type: CliBuildType,
+        build_type: Option<CliBuildType>,
     },
     /// Perform dump loading and verification
     Extract,
@@ -140,14 +144,8 @@ fn parse_key_val(s: &str) -> Result<(String, String), String> {
 
 pub fn ggx_cli() {
     if std::env::args().count() == 1 {
-        let help_path = "c:\\Users\\Exposure\\Documents\\References\\xeBuild\\help.txt";
-        if let Ok(content) = std::fs::read_to_string(help_path) {
-            println!("{}", content);
-        } else {
-            // Fallback if the reference file is missing
-            println!("gxbuild [mode] -t <type> [<switch> [<switch>...]] <out.bin>");
-            println!("(Help reference missing at {})", help_path);
-        }
+        let mut cmd = GgxArgs::command();
+        cmd.print_help().unwrap();
         
         println!("\nPress Enter to exit...");
         let mut input = String::new();
@@ -160,7 +158,10 @@ pub fn ggx_cli() {
 
     match args.mode.clone() {
         Some(GgxMode::Build { .. }) | None => {
-            handle_build(&args, &mut session);
+            if let Err(e) = handle_build(&args, &mut session) {
+                eprintln!("\n[GGX] Build Setup Failed: {}", e);
+                std::process::exit(1);
+            }
         }
         Some(GgxMode::Extract) => {
             session.extract_all();
@@ -197,24 +198,26 @@ pub fn ggx_cli() {
     }
 }
 
-fn handle_build(args: &GgxArgs, session: &mut Session) {
+fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
+    let build_type = args.build_type.as_ref().ok_or_else(|| anyhow::anyhow!("Missing required argument: --type (-t)"))?;
+    let console_type = args.console.as_ref().ok_or_else(|| anyhow::anyhow!("Missing required argument: --console (-c)"))?;
+
     // 1. Determine common and data paths
     let data_dir = args.data_dir.clone().unwrap_or_else(|| PathBuf::from("./data"));
     let fw_dir = args.fw_dir.clone().unwrap_or_else(|| PathBuf::from("./"));
 
     // 2. Resolve the correct INI file
-    let build_type_str = format!("{:?}", args.build_type).to_lowercase();
+    let build_type_str = format!("{:?}", build_type).to_lowercase();
     let ini_suffix = args.ini_ext.as_ref().map(|ext| format!("_{}", ext)).unwrap_or_default();
     let ini_filename = format!("_{}{}.ini", build_type_str, ini_suffix);
     let ini_path = data_dir.join(ini_filename);
 
-    let console_type = args.console.unwrap_or(CliConsoleType::xenon);
     let console_base = format!("{:?}", console_type).to_lowercase();
     let bl_suffix = args.bl_ext.as_ref().map(|ext| format!("_{}", ext)).unwrap_or_default();
     let console_section = format!("{}bl{}", console_base, bl_suffix);
 
     println!("\n--- GGX Build Configuration ---");
-    println!("Type:      {:?}", args.build_type);
+    println!("Type:      {:?}", build_type);
     println!("Console:   {}", console_base);
     println!("Section:   {}", console_section);
     println!("INI Path:  {:?}", ini_path);
@@ -235,13 +238,44 @@ fn handle_build(args: &GgxArgs, session: &mut Session) {
         CliConsoleType::corona4g | CliConsoleType::winchester => crate::builder::tools::blocks::NandLayout::Emmc,
     };
 
-    // 3. Initialize NAND (Blank synthesis)
-    session.enqueue(crate::core::session::InternalCommand::CreateImage { layout });
+    // 3. Initialize NAND (Parse from source or create blank)
+    let mut nand_found = false;
+    let mut parsed_nand_path = None;
+
+    if let Some(nand) = &args.source_nand {
+        parsed_nand_path = Some(nand.clone());
+        nand_found = true;
+    } else {
+        // Fallback search for source NAND
+        let discovery_targets = [
+            data_dir.join("nanddump.bin"),
+            fw_dir.join("nanddump.bin"),
+            data_dir.join("updflash.bin"),
+            fw_dir.join("updflash.bin"),
+        ];
+        
+        for p in &discovery_targets {
+            if p.exists() {
+                parsed_nand_path = Some(p.clone());
+                nand_found = true;
+                break;
+            }
+        }
+    }
+
+    if nand_found {
+        let path = parsed_nand_path.unwrap();
+        println!("[GGX] Auto-discovered source NAND image from {:?}", path);
+        session.enqueue(crate::core::session::InternalCommand::ParseImage { path, key: None });
+    } else {
+        println!("[GGX] Synthesizing blank image from scratch.");
+        session.enqueue(crate::core::session::InternalCommand::CreateImage { layout });
+    }
 
     if let Ok(content) = std::fs::read_to_string(&ini_path) {
         session.parse_ini(content, console_section, ini_path.parent().unwrap(), data_dir.join("common"));
     } else {
-        eprintln!("[GGX] Warning: Could not find or read INI at {:?}", ini_path);
+        anyhow::bail!("Could not find or read INI at {:?}", ini_path);
     }
 
     if let Some(key) = &args.cpu_key {
@@ -285,7 +319,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) {
         }
         
         if !key_found {
-            println!("[GGX] Warning: No CPU Key provided and no cpukey.bin/txt found.");
+            anyhow::bail!("No CPU Key provided. A CPU key is strictly required to build.");
         }
     }
 
@@ -329,6 +363,8 @@ fn handle_build(args: &GgxArgs, session: &mut Session) {
         let mut input = String::new();
         std::io::stdin().read_line(&mut input).ok();
     }
+
+    Ok(())
 }
 
 impl Session {

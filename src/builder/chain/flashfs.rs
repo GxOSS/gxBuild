@@ -238,7 +238,7 @@ impl FileSystemRoot {
             self.block_map[self.block_number as usize] = 0x1FFF;
         }
         
-        let config_start = layout.reserve_start().saturating_sub(4);
+        let config_start = layout.reserve_start(image_len).saturating_sub(4);
         for i in 0..5 {
             if config_start + i < self.block_map.len() {
                 self.block_map[config_start + i] = 0x1FFB;

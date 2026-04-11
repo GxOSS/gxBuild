@@ -308,3 +308,19 @@ impl Aes {
         Ok(())
     }
 }
+
+pub fn calculate_smc_hash(data: &[u8]) -> [u8; 16] {
+    let mut s0: u64 = 0;
+    let mut s1: u64 = 0;
+    for chunk in data.chunks_exact(4) {
+        let val = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as u64;
+        s0 = s0.wrapping_add(val);
+        s1 = s1.wrapping_sub(val);
+        s0 = s0.rotate_left(29);
+        s1 = s1.rotate_left(31);
+    }
+    let mut hash = [0u8; 16];
+    hash[0..8].copy_from_slice(&s0.to_be_bytes());
+    hash[8..16].copy_from_slice(&s1.to_be_bytes());
+    hash
+}

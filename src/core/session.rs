@@ -373,23 +373,23 @@ impl Session {
                     if let Some(nand) = self.active_nand.take() {
                         match crate::core::data::xeini::parse_xe_ini(&content, &target, &ini_base, &common) {
                             Ok(parsed_cfg) => {
-                                match crate::core::data::xeini::apply_xe_ini(nand, parsed_cfg, &ini_base, &common) {
+                                match crate::core::data::xeini::apply_xe_ini(nand, parsed_cfg) {
                                     Ok(updated_nand) => {
                                         self.active_nand = Some(updated_nand);
                                         println!(" -> INI Bootloaders and FlashFS mappings applied natively!");
                                     }
                                     Err(e) => {
-                                        eprintln!(" -> Applied INI data failed due to bindings error: {}", e);
+                                        return Err(format!("Applied INI data failed due to bindings error: {}", e));
                                     }
                                 }
                             }
                             Err(e) => {
                                 self.active_nand = Some(nand);
-                                eprintln!(" -> Failed parsing INI descriptors: {}", e);
+                                return Err(format!("Failed parsing INI descriptors: {}", e));
                             }
                         }
                     } else {
-                        eprintln!(" -> No active NAND skeleton active to apply INI map onto!");
+                        return Err("No active NAND skeleton active to apply INI map onto!".to_string());
                     }
                 }
                 #[cfg(feature = "python")]

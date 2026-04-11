@@ -20,7 +20,7 @@
 // Return the section, security and flashfs as a struct
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::fs;
 use crc32fast::Hasher;
 use thiserror::Error;
@@ -38,11 +38,18 @@ pub enum IniError {
     IoError(#[from] std::io::Error),
 }
 
+#[derive(Debug, Clone)]
+pub struct IniEntry {
+    pub filename: String,
+    pub path: PathBuf,
+    pub hash: Option<String>,
+}
+
 pub struct XeBuildIni {
     pub name: String,
-    pub main: Vec<Vec<String>>,
-    pub security: Vec<String>,
-    pub flashfs: HashMap<String, String>,
+    pub main: Vec<IniEntry>,
+    pub security: Vec<IniEntry>,
+    pub flashfs: Vec<IniEntry>,
 }
 
 fn get_hash(path: impl AsRef<Path>) -> std::io::Result<String> {
@@ -85,79 +92,85 @@ pub fn parse_xe_ini(
     }
 
     // 2. Extract specific data
-    let main_data = sections.get(&target_section.to_lowercase())
+    let main_data_raw = sections.get(&target_section.to_lowercase())
         .ok_or_else(|| IniError::SectionNotFound(target_section.to_string()))?;
 
-    let security_data = sections.get("security")
+    let security_data_raw = sections.get("security")
         .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|p| p[0].clone())
-        .collect();
+        .unwrap_or_default();
 
-    let flashfs_data: HashMap<String, String> = sections.get("flashfs")
+    let flashfs_data_raw = sections.get("flashfs")
         .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|p| p.len() >= 2)
-        .map(|p| (p[0].clone(), p[1].clone()))
-        .collect();
+        .unwrap_or_default();
 
-    // 3. Validation
-    let ini = XeBuildIni {
-        name: target_section.to_string(),
-        main: main_data.clone(),
-        security: security_data,
-        flashfs: flashfs_data,
-    };
-
-    // Helper for validation
-    let validate = |search_path: &Path, filename: &str, expected_hash: Option<&str>| -> Result<(), IniError> {
-        let full_path = search_path.join(filename);
+    // Helper for validation and path resolution
+    let validate_and_resolve = |search_path: &Path, filename: &str, expected_hash: Option<&str>| -> Result<IniEntry, IniError> {
+        let full_path = if filename.starts_with("..\\") || filename.starts_with("../") {
+            search_path.parent().unwrap_or(search_path).join(&filename[3..])
+        } else {
+            search_path.join(filename)
+        };
+        
         if !full_path.exists() {
             return Err(IniError::FileNotFound(filename.to_string()));
         }
+        let mut final_hash = None;
         if let Some(expected) = expected_hash {
             if !expected.is_empty() {
                 let actual = get_hash(&full_path)?;
                 if actual.to_lowercase() != expected.to_lowercase() {
                     return Err(IniError::HashMismatch(filename.to_string(), expected.to_string(), actual));
                 }
+                final_hash = Some(actual);
             }
         }
-        Ok(())
+        Ok(IniEntry {
+            filename: filename.to_string(),
+            path: full_path,
+            hash: final_hash,
+        })
     };
 
-    // Validate Main section (from /common/)
-    for entry in &ini.main {
-        validate(common_base, &entry[0], entry.get(1).map(|s| s.as_str()))?;
+    let mut main_entries = Vec::new();
+    for entry in main_data_raw {
+        main_entries.push(validate_and_resolve(common_base, &entry[0], entry.get(1).map(|s| s.as_str()))?);
     }
 
-    // Validate Security section (from INI folder)
-    for filename in &ini.security {
-        validate(ini_base, filename, None)?;
+    let mut security_entries = Vec::new();
+    for entry in security_data_raw {
+        if !entry.is_empty() {
+            security_entries.push(validate_and_resolve(ini_base, &entry[0], None)?);
+        }
     }
 
-    // Validate FlashFS section (from INI folder)
-    for (filename, hash) in &ini.flashfs {
-        validate(ini_base, filename, Some(hash))?;
+    let mut flashfs_entries = Vec::new();
+    for entry in flashfs_data_raw {
+        if entry.len() >= 2 {
+            flashfs_entries.push(validate_and_resolve(ini_base, &entry[0], Some(&entry[1]))?);
+        } else if entry.len() == 1 {
+            flashfs_entries.push(validate_and_resolve(ini_base, &entry[0], None)?);
+        }
     }
+
+    let ini = XeBuildIni {
+        name: target_section.to_string(),
+        main: main_entries,
+        security: security_entries,
+        flashfs: flashfs_entries,
+    };
 
     Ok(ini)
 }
 
 pub fn apply_xe_ini(
     mut nand: NandSkeleton,
-    ini: XeBuildIni,
-    ini_base: impl AsRef<Path>,
-    common_base: impl AsRef<Path>
+    ini: XeBuildIni
 ) -> anyhow::Result<NandSkeleton> {
     
     // 1. Process [main] bootloaders
     for entry in &ini.main {
-        let filename = &entry[0];
-        let file_path = common_base.as_ref().join(filename);
-        let data = std::fs::read(&file_path)?;
+        let filename = &entry.filename;
+        let data = std::fs::read(&entry.path)?;
         
         let lower = filename.to_lowercase();
         if lower.starts_with("cba_") {
@@ -179,29 +192,21 @@ pub fn apply_xe_ini(
 
     // Process File Entries (Security & FlashFS)
     let mut file_entries = ini.security.clone();
-    for (name, _) in &ini.flashfs {
-        file_entries.push(name.clone());
-    }
+    file_entries.extend(ini.flashfs.clone());
 
     // 2. Map and bind into FlashFS
-    for filename in &file_entries {
-        let file_path = if filename.starts_with("..\\") || filename.starts_with("../") {
-            ini_base.as_ref().parent().unwrap_or(ini_base.as_ref()).join(&filename[3..])
-        } else {
-            ini_base.as_ref().join(filename)
-        };
-        
-        let file_content = std::fs::read(&file_path)?;
-        let basen = Path::new(filename).file_name().unwrap_or_default().to_string_lossy().to_string();
+    for entry in &file_entries {
+        let file_content = std::fs::read(&entry.path)?;
+        let basen = entry.path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
         if basen.to_lowercase() == "fcrt.bin" {
             nand.extra.fcrt = Some(file_content.clone());
         }
 
-        let mut entry = FileSystemEntry::new(0);
-        entry.file_name = basen;
-        nand.flashfs.root.set_entry_data(&mut nand.image, &nand.layout, &mut entry, &file_content);
-        nand.flashfs.root.entries.push(entry);
+        let mut fs_entry = FileSystemEntry::new(0);
+        fs_entry.file_name = basen;
+        nand.flashfs.root.set_entry_data(&mut nand.image, &nand.layout, &mut fs_entry, &file_content);
+        nand.flashfs.root.entries.push(fs_entry);
     }
     
     nand.flashfs.root.write(&mut nand.image, &nand.layout);

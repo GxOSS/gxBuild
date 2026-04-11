@@ -73,9 +73,16 @@ impl NandLayout {
         }
     }
 
-    pub fn reserve_start(&self) -> usize {
+    pub fn reserve_start(&self, image_len: usize) -> usize {
         match self {
-            NandLayout::Xsb | NandLayout::Sb => 0x3E0,
+            NandLayout::Xsb => 0x3E0,
+            NandLayout::Sb => {
+                if image_len >= 0x4200000 {
+                    0xF80
+                } else {
+                    0x3E0
+                }
+            }
             NandLayout::Bb => 0x1E0,
             NandLayout::Emmc => 0,
         }
@@ -353,7 +360,7 @@ pub fn resolve_remapped_blocks(
     let block_size = layout.block_size();
     let id_offset = layout.id_offset();
     let marker_offset = layout.marker_offset();
-    let reserve_start = layout.reserve_start();
+    let reserve_start = layout.reserve_start(image.len());
 
     // Iterate backwards through the 32 reserved blocks
     for block_idx in (0..0x20).rev() {
