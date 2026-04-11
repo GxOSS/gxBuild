@@ -9,11 +9,11 @@
     ExposureMG / Zach is not responsible or liable for any damage caused by this code.
 */
 
+#![cfg(feature = "cli")]
+
 use clap::{Parser, Subcommand, ValueEnum};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use crate::core::session::Session;
-use crate::builder::builder::{BuildType, ImageType, MotherboardType};
 
 /// xeBuild v1.21.810 clone - System image builder
 #[derive(Parser, Debug)]
@@ -43,7 +43,7 @@ pub struct GgxArgs {
     #[arg(short = 'd', long = "datadir")]
     pub data_dir: Option<PathBuf>,
 
-    /// Use different data dir and file lists
+    /// Use different firmware dir
     #[arg(short = 'f', long = "fwdir")]
     pub fw_dir: Option<PathBuf>,
 
@@ -142,15 +142,9 @@ pub fn ggx_cli() {
     let args = GgxArgs::parse();
     let mut session = Session::new();
 
-    // Map options to HashMap for the session
-    let mut _opts_map = HashMap::new();
-    for (k, v) in &args.options {
-        _opts_map.insert(k.clone(), v.clone());
-    }
-
     match args.mode.clone() {
         Some(GgxMode::Build { .. }) | None => {
-            handle_build(args, &mut session);
+            handle_build(&args, &mut session);
         }
         Some(GgxMode::Extract) => {
             session.extract_all();
@@ -159,7 +153,7 @@ pub fn ggx_cli() {
             println!("Client mode selected.");
         }
         Some(GgxMode::Update) => {
-            session.update();
+            println!("Update mode not fully implemented yet.");
         }
     }
 
@@ -187,26 +181,26 @@ pub fn ggx_cli() {
     }
 }
 
-fn handle_build(args: GgxArgs, session: &mut Session) {
+fn handle_build(args: &GgxArgs, session: &mut Session) {
     // 1. Determine common and data paths
-    let data_dir = args.data_dir.unwrap_or_else(|| PathBuf::from("./data"));
-    let fw_dir = args.fw_dir.unwrap_or_else(|| PathBuf::from("./")); // Default to current dir or reference
+    let data_dir = args.data_dir.clone().unwrap_or_else(|| PathBuf::from("./data"));
+    let fw_dir = args.fw_dir.clone().unwrap_or_else(|| PathBuf::from("./"));
 
     // 2. Resolve the correct INI file
-    // xeBuild logic: <fw_dir>/<version>/_<type>.ini
-    // For now we'll assume a default version '17559' if not specified, 
-    // but in a real scenario we'd look in all subfolders or a config.
-    let version = "17559"; // TODO: make this configurable or scanned
     let build_type_str = format!("{:?}", args.build_type).to_lowercase();
-    let console_type = args.console.unwrap_or(CliConsoleType::xenon);
-    let console_str = format!("{:?}", console_type).to_lowercase();
+    let ini_suffix = args.ini_ext.as_ref().map(|ext| format!("_{}", ext)).unwrap_or_default();
+    let ini_filename = format!("_{}{}.ini", build_type_str, ini_suffix);
+    let ini_path = data_dir.join(ini_filename);
 
-    let ini_filename = format!("_{}.ini", build_type_str);
-    let ini_path = fw_dir.join(version).join(ini_filename);
+    let console_type = args.console.unwrap_or(CliConsoleType::xenon);
+    let console_base = format!("{:?}", console_type).to_lowercase();
+    let bl_suffix = args.bl_ext.as_ref().map(|ext| format!("_{}", ext)).unwrap_or_default();
+    let console_section = format!("{}bl{}", console_base, bl_suffix);
 
     println!("\n--- GGX Build Configuration ---");
     println!("Type:      {:?}", args.build_type);
-    println!("Console:   {}", console_str);
+    println!("Console:   {}", console_base);
+    println!("Section:   {}", console_section);
     println!("INI Path:  {:?}", ini_path);
     println!("-------------------------------\n");
 
@@ -223,21 +217,60 @@ fn handle_build(args: GgxArgs, session: &mut Session) {
         CliConsoleType::trinitybigffs => crate::builder::tools::blocks::NandLayout::Bb,
         CliConsoleType::corona => crate::builder::tools::blocks::NandLayout::Sb,
         CliConsoleType::corona4g | CliConsoleType::winchester => crate::builder::tools::blocks::NandLayout::Emmc,
-        _ => crate::builder::tools::blocks::NandLayout::Sb,
     };
 
     // 3. Initialize NAND (Blank synthesis)
     session.enqueue(crate::core::session::InternalCommand::CreateImage { layout });
 
     if let Ok(content) = std::fs::read_to_string(&ini_path) {
-        // We use the console string as the target section in the INI
-        session.parse_ini(content, console_str, ini_path.parent().unwrap(), fw_dir.join("common"));
+        session.parse_ini(content, console_section, ini_path.parent().unwrap(), data_dir.join("common"));
     } else {
         eprintln!("[GGX] Warning: Could not find or read INI at {:?}", ini_path);
     }
 
-    if let Some(key) = args.cpu_key {
-        session.set_cpukey(key);
+    if let Some(key) = &args.cpu_key {
+        session.set_cpukey(key.clone());
+    } else {
+        // Look for cpukey.bin (binary) or cpukey.txt (text) in data_dir OR fw_dir
+        let mut key_found = false;
+        
+        let discovery_targets = [
+            (data_dir.join("cpukey.bin"), true),
+            (fw_dir.join("cpukey.bin"), true),
+            (data_dir.join("cpukey.txt"), false),
+            (fw_dir.join("cpukey.txt"), false),
+        ];
+
+        for (p, is_bin) in discovery_targets {
+            if p.exists() {
+                if is_bin {
+                    if let Ok(bytes) = std::fs::read(&p) {
+                        if bytes.len() >= 16 {
+                            let mut key = [0u8; 16];
+                            key.copy_from_slice(&bytes[..16]);
+                            session.parse_keybin(Some(key));
+                            println!("[GGX] Auto-discovered CPU Key binary from {:?}", p);
+                            key_found = true;
+                            break;
+                        }
+                    }
+                } else {
+                    if let Ok(text) = std::fs::read_to_string(&p) {
+                        let clean_key = text.trim();
+                        if clean_key.len() >= 32 {
+                            session.set_cpukey(clean_key.to_string());
+                            println!("[GGX] Auto-discovered CPU Key string from {:?}", p);
+                            key_found = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
+        if !key_found {
+            println!("[GGX] Warning: No CPU Key provided and no cpukey.bin/txt found.");
+        }
     }
 
     if args.bl_key.is_some() {
@@ -284,8 +317,16 @@ fn handle_build(args: GgxArgs, session: &mut Session) {
 
 impl Session {
     // Helper to set session state from CLI
-    pub fn set_cpukey(&mut self, _key: String) {
-        // self.active_nand.cpukey = Some(key);
+    pub fn set_cpukey(&mut self, key: String) {
+        if let Ok(bytes) = crate::builder::builder::hex_to_bytes(&key) {
+            if let Ok(arr) = bytes.try_into() {
+                self.parse_key(arr);
+            } else {
+                eprintln!("[Session] Error: CPU Key must be 32 hex characters (16 bytes).");
+            }
+        } else {
+            eprintln!("[Session] Error: Invalid hex format for CPU Key.");
+        }
     }
     pub fn set_verbose(&mut self, _v: bool) {
         // session verbosity logic

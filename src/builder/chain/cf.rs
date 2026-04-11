@@ -19,10 +19,10 @@
     If not, see <https://www.gnu.org/licenses/>.
 */
 
-use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
+use zerocopy::{FromBytes, IntoBytes};
 use zerocopy::byteorder::{U16, U32, BigEndian};
 use super::BootloaderHeader;
-use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa, ExCryptSig};
+use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
 
 #[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
 #[repr(C)]

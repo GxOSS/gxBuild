@@ -9,6 +9,5 @@
     ExposureMG / Zach is not responsible or liable for any damage caused by this code.
 */
 
-
-
 /// Export session struct and or methods over FFI
+pub fn ffi_stub() {}

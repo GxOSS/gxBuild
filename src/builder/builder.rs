@@ -20,10 +20,8 @@
 */
 
 
-use crate::builder::deps::excrypt::{
-    Rc4, ExCryptRsa, ExCryptSig,
-};
-use zerocopy::{FromBytes, IntoBytes, Immutable};
+use std::collections::HashMap;
+use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
 use zerocopy::byteorder::{U16, U32, I16, BigEndian};
 
 use crate::builder::tools::blocks::*;
@@ -42,7 +40,7 @@ pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
 
 /// Xbox 360 NAND header — matches xenon-bltool's `xenon_nand_header` layout.
 /// The first field is a `BootloaderHeader` whose `entrypoint` points to CB.
-#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
+#[derive(FromBytes, IntoBytes, KnownLayout, Immutable, Clone, Copy)]
 #[repr(C)]
 pub struct NandHeader {
     pub header: BootloaderHeader,       // magic 0xFF4F, entrypoint -> CB offset
@@ -151,10 +149,19 @@ pub struct NandExtra {
 
 // KeyvaultRecord moved to src/builder/chain/kv.rs
 
+/// One patch entry – copy `data` to `address`.
+#[derive(Debug, Clone)]
+pub struct PatchRecord {
+    pub address: u32,
+    pub amount: u32,
+    pub data: Vec<u32>,
+}
+
 #[derive(Clone)]
 pub struct NandPatches {
     pub rglp: Option<Vec<u8>>,
     pub xebuild: Option<Vec<u8>>,
+    pub khv: Vec<PatchRecord>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -221,7 +228,7 @@ pub struct BuildOptions {
 
 #[derive(Clone)]
 pub struct NandSkeleton {
-    pub cpukey: Option<String>,
+    pub cpukey: Option<[u8; 16]>,
     pub image: Vec<u8>,
     pub block_map: Option<BlockMap>, // Need to retarget
     pub options: BuildOptions,
@@ -288,7 +295,8 @@ impl NandSkeleton {
                 cg_1: BootloaderCg { header: unsafe { std::mem::zeroed() }, data: Vec::new() },
             },
             flashfs: FlashFS {
-                root: crate::builder::chain::flashfs::FileSystemRoot::new(),
+                root: crate::builder::chain::flashfs::FileSystemRoot::new(0, 0),
+                partitions: HashMap::new(),
             },
             layout,
             total_blocks: layout.total_blocks(size),
@@ -306,13 +314,13 @@ impl NandSkeleton {
     }
 
     /// Parse nand image into populated NandSkeleton
-    pub fn parse_nand(nandimg: &std::path::Path, cpukey: String) -> Result<Self, String> {
+    pub fn parse_nand(nandimg: &std::path::Path, cpukey: [u8; 16]) -> Result<Self, String> {
         let raw_image = std::fs::read(nandimg)
             .map_err(|e| format!("Failed to read NAND image: {}", e))?;
 
         // 1. Detect Layout e.g. 16MB vs 64MB+ vs eMMC
         let layout = NandLayout::detect(&raw_image)?;
-        let cpukey_bytes: [u8; 16] = hex_to_bytes(&cpukey).map_err(|_| "Invalid CPU Key format")?.try_into().map_err(|_| "CPU Key must be 16 bytes")?;
+        let cpukey_bytes = cpukey;
 
         // 2. Extract and Parse NandHeader (always at 0x0)
         // Header is raw at the start, we unecc it to be sure
@@ -322,8 +330,8 @@ impl NandSkeleton {
             .map_err(|_| "Failed to parse primary NAND header")?;
 
         // Capture Power-on cause / boot triggers from the hacked header area (0x4E/0x4F)
-        let power_on_cause_a = raw_header[0x4E];
-        let power_on_cause_b = raw_header[0x4F];
+        let _power_on_cause_a = raw_header[0x4E];
+        let _power_on_cause_b = raw_header[0x4F];
 
         // 3. Extract Bootchain stages individually with their spare data
         let mut bootloaders = NandBootloaders {
@@ -379,7 +387,7 @@ impl NandSkeleton {
         let mut p_next_offset = p_cb_offset + p_cb_size;
 
         // Helper to peek and slice the next stage
-        let mut extract_next = |offset: &mut usize, expected_type: XenonBlType| -> Result<Vec<u8>, String> {
+        let extract_next = |offset: &mut usize, _expected_type: XenonBlType| -> Result<Vec<u8>, String> {
             if *offset + 0x100 > raw_image.len() {
                 return Err("Offset out of bounds during chain walk".to_string());
             }
@@ -645,7 +653,7 @@ impl NandSkeleton {
 
         let cg_1_data = self.update.cg_1.serialize();
         logical_image[current_offset..current_offset + cg_1_data.len()].copy_from_slice(&cg_1_data);
-        current_offset += (cg_1_data.len() + 0xF) & 0xFFFFFFF0;
+        let _ = (cg_1_data.len() + 0xF) & 0xFFFFFFF0;
 
         // 6. Final Header Sync & Write
         header.header.entrypoint.set(bootchain_start as u32);
@@ -669,11 +677,8 @@ impl NandSkeleton {
 
     /// Reconstructs a full physical NAND image from the skeleton.
     /// This follows the J-Runner logic: Logical Assembly -> Physical Distribution (skipping bad blocks).
-    pub fn build(&self, cpukey: String) -> Result<Vec<u8>, String> {
-        let cpukey_bytes: [u8; 16] = hex_to_bytes(&cpukey)
-            .map_err(|_| "Invalid CPU Key format")?
-            .try_into()
-            .map_err(|_| "CPU Key must be 16 bytes")?;
+    pub fn build(&self, cpukey: [u8; 16]) -> Result<Vec<u8>, String> {
+        let cpukey_bytes = cpukey;
 
         // 1. Prepare an Encrypted Clone
         let mut skeleton = self.clone();

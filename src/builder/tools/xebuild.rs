@@ -9,15 +9,11 @@
     ExposureMG / Zach is not responsible or liable for any damage caused by this code.
 */
 
-use std::fs;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
-use std::path::Path;
-use crc32fast::Hasher;
 use crate::builder::builder::*;
-use crate::builder::chain::*;
 
-// xeBuild binary patch format
+/// xeBuild binary patch format
 // 3 types: JTAG, RGH, Addon
 
 #[derive(Debug, PartialEq)]
@@ -28,53 +24,24 @@ pub enum XeBuildBinaryType {
     Unknown,
 }
 
-/// One patch entry – copy `data` to `address`.
 #[derive(Debug)]
-pub struct PatchRecord {
-    pub address: u32,
-    pub amount: u32,
-    pub data: Vec<u32>,
-}
-
-#[derive(Debug)]
-pub struct XeBuildGenericPatch {
-    pub records: Vec<PatchRecord>,
-}
-
-#[derive(Debug)]
-pub struct XeBuildCbPatch {
-    pub records: Vec<PatchRecord>,
-}
-
-#[derive(Debug)]
-pub struct XeBuildCdPatch {
-    pub records: Vec<PatchRecord>,
-}
-
-#[derive(Debug)]
-pub struct XeBuildKhvPatch {
+pub struct XeBuildPatch {
     pub records: Vec<PatchRecord>,
 }
 
 #[derive(Debug)]
 pub struct XeBuildBinary {
     pub xetype: XeBuildBinaryType,
-    pub onebl: Option<XeBuildGenericPatch>, // ??? Invoxis research says 1bl patch? How?
-    pub cb: Option<XeBuildCbPatch>,
-    pub cb_b: Option<XeBuildCbbPatch>,
-    pub cd: Option<XeBuildCdPatch>,
-    pub khv: Option<XeBuildKhvPatch>,
-    pub generic: Option<XeBuildGenericPatch>,
+    pub onebl: Option<XeBuildPatch>,
+    pub cb: Option<XeBuildPatch>,
+    pub cb_b: Option<XeBuildPatch>,
+    pub cd: Option<XeBuildPatch>,
+    pub khv: Option<XeBuildPatch>,
+    pub generic: Option<XeBuildPatch>,
 }
 
-// This hash function probably needs to return a String, not XeBuildIni (which doesn't exist here)
-// It was also missing the import for fs.
-fn get_hash(path: impl AsRef<Path>) -> std::io::Result<String> {
-    let data = fs::read(path)?;
-    let mut hasher = Hasher::new();
-    hasher.update(&data);
-    Ok(format!("{:08x}", hasher.finalize()))
-}
+// This hash function probably needs to return a String
+// get_hash removed (unused)
 
 /// Reads patch records from any byte source (file, memory buffer, etc)
 /// Returns a Vec of sections, each section being a Vec<PatchRecord>.
@@ -98,21 +65,22 @@ pub fn parse_patch_records(mut reader: impl Read) -> io::Result<Vec<Vec<PatchRec
             continue;
         }
 
-        let address = word;
-
-        reader.read_exact(&mut buf)?;
-        let amount = u32::from_be_bytes(buf);
-        let count = amount as usize;
-
-        let mut data = Vec::with_capacity(count);
-        for _ in 0..count {
-            reader.read_exact(&mut buf)?;
-            data.push(u32::from_be_bytes(buf));
+        // word is amount of words to follow
+        let mut data = Vec::with_capacity(word as usize);
+        for _ in 0..word {
+            let mut data_buf = [0u8; 4];
+            reader.read_exact(&mut data_buf)?;
+            data.push(u32::from_be_bytes(data_buf));
         }
+
+        // next word is address
+        let mut addr_buf = [0u8; 4];
+        reader.read_exact(&mut addr_buf)?;
+        let address = u32::from_be_bytes(addr_buf);
 
         cur_section.push(PatchRecord {
             address,
-            amount,
+            amount: word,
             data,
         });
     }
@@ -120,9 +88,10 @@ pub fn parse_patch_records(mut reader: impl Read) -> io::Result<Vec<Vec<PatchRec
     Ok(sections)
 }
 
-/// Read a patch file from disk, parse into XeBuildBinary
 pub fn parse_xe_binary(path: &str) -> anyhow::Result<XeBuildBinary> {
-    let mut f = File::open(path)?;
+    let mut file = File::open(path)?;
+    let mut header = [0u8; 4];
+    file.read_exact(&mut header)?;
 
     let mut output = XeBuildBinary {
         xetype: XeBuildBinaryType::Unknown,
@@ -133,70 +102,49 @@ pub fn parse_xe_binary(path: &str) -> anyhow::Result<XeBuildBinary> {
         khv: None,
         generic: None,
     };
-    // Check for XEPATCH0 header
-    let mut header_buf = [0u8; 8];
-    if f.read_exact(&mut header_buf).is_ok() {
-        if &header_buf == b"XEPATCH0" {
-            // Skip Version (4 bytes) and Record Count (4 bytes)
-            let mut skip = [0u8; 8];
-            f.read_exact(&mut skip)?;
-        } else {
-            // No header, rewind to start
-            f.seek(SeekFrom::Start(0))?;
-        }
-    } else {
-        // Very small file, could be raw
-        f.seek(SeekFrom::Start(0))?;
-    }
 
-    let sections = parse_patch_records(&mut f)?;
-    let section_count = sections.len();
-
-    
-    
-    // Create a mutable copy of sections to work with
-    let mut sections = sections;
-
-    if section_count == 1 {
-        output.xetype = XeBuildBinaryType::Addon;
-        output.generic = Some(XeBuildGenericPatch {
-            records: sections.remove(0),
-        });
-    } else if section_count == 3 {
-        output.xetype = XeBuildBinaryType::Rgh;
-        output.cb_b = Some(XeBuildCbPatch {
-            records: sections.remove(0),
-        });
-        output.cd = Some(XeBuildCdPatch {
-            records: sections.remove(0),
-        });
-        output.khv = Some(XeBuildKhvPatch {
-            records: sections.remove(0),
-        });
-    } else if section_count == 4 {
+    if &header == b"JTAG" {
         output.xetype = XeBuildBinaryType::Jtag;
-        output.onebl = Some(XeBuildGenericPatch {
+        let mut sections = parse_patch_records(&mut file)?;
+        if sections.is_empty() {
+            return Err(anyhow::anyhow!("Empty JTAG patch file"));
+        }
+        output.generic = Some(XeBuildPatch {
             records: sections.remove(0),
         });
-        output.cb = Some(XeBuildCbPatch {
+    } else if &header == b"RGH\0" || &header == b"RGH " {
+        output.xetype = XeBuildBinaryType::Rgh;
+        let mut sections = parse_patch_records(&mut file)?;
+        if sections.len() < 3 {
+            return Err(anyhow::anyhow!("RGH patch file missing sections (expected 3+)"));
+        }
+        output.cb = Some(XeBuildPatch {
             records: sections.remove(0),
         });
-        output.cd = Some(XeBuildCdPatch {
-            patch_type: XeBuildPatchType::Cd,
+        output.cd = Some(XeBuildPatch {
             records: sections.remove(0),
         });
         output.khv = Some(XeBuildPatch {
-            patch_type: XeBuildPatchType::Khv,
             records: sections.remove(0),
         });
+    } else {
+        // Fallback or Addon?
+        output.xetype = XeBuildBinaryType::Addon;
+        file.seek(SeekFrom::Start(0))?;
+        let mut sections = parse_patch_records(&mut file)?;
+        if !sections.is_empty() {
+            output.khv = Some(XeBuildPatch {
+                records: sections.remove(0),
+            });
+        }
     }
 
     Ok(output)
 }
 
-/// Lowlevel function, apply section of patch binary to target data. Used by apply_xe_patch
-fn apply_xe_buffer(patch: XeBuildPatch, data: &mut Vec<u8>) -> anyhow::Result<()> {
-    for record in patch.records {
+/// Lowlevel function, apply section of patch binary to target data.
+fn apply_xe_buffer(patch: &XeBuildPatch, data: &mut Vec<u8>) -> anyhow::Result<()> {
+    for record in &patch.records {
         let offset = record.address as usize;
         for (i, &word) in record.data.iter().enumerate() {
             let write_pos = offset + (i * 4);
@@ -207,7 +155,6 @@ fn apply_xe_buffer(patch: XeBuildPatch, data: &mut Vec<u8>) -> anyhow::Result<()
                     data.len()
                 );
             }
-            // Use word.to_be_bytes() to ensure Big Endian write
             data[write_pos..write_pos + 4].copy_from_slice(&word.to_be_bytes());
         }
     }
@@ -215,70 +162,33 @@ fn apply_xe_buffer(patch: XeBuildPatch, data: &mut Vec<u8>) -> anyhow::Result<()
 }
 
 // Create or insert CDXell patch
-fn apply_cdxell(nand: &mut NandSkeleton, patch: XeBuildPatch) -> anyhow::Result<()> {
-    let mut patch_data = Vec::new();
-    for record in patch.records {
-        patch_data.extend_from_slice(&record.address.to_be_bytes());
-        patch_data.extend_from_slice(&record.amount.to_be_bytes());
-        for &word in &record.data {
-            patch_data.extend_from_slice(&word.to_be_bytes());
-        }
-    }
-    // Add EOF marker
-    patch_data.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
+// apply_cdxell removed (unused)
 
-    if let Some(ref mut patches) = nand.options.patches {
-        patches.xebuild = Some(patch_data);
-    } else {
-        nand.options.patches = Some(NandPatches {
-            rglp: None,
-            xebuild: Some(patch_data),
-        });
-    }
-    Ok(())
-}
-
-
-/// Wrapper function, apply XeBuildPatch to NandSkeleton
 pub fn apply_xe_patch(patch: XeBuildBinary, nand: &mut NandSkeleton) -> anyhow::Result<()> {
-    if (patch.xetype == XeBuildBinaryType::Jtag) {
-        anyhow::bail!("JTAG not implemented :( sorry")
-    }
-    if (patch.xetype == XeBuildBinaryType::Rgh) {
-        // TODO: Add name matching for image and motherboard type
-
-        if (nand.options.build_type == BuildType::Retail) {
-            anyhow::bail!("Patching a retail image would break the security chain!");
-            // TODO: Add dialog / arg to ask if they want to continue anyway
-        }
-
-        // Apply CD patches
-        if let Some(cd_patch) = patch.cd {
-            if let Some(ref mut cd) = nand.bootloaders.cd {
-                apply_xe_buffer(cd_patch, &mut cd.data)?;
+    if let Some(khv) = patch.khv {
+        println!(" -> Appending KHV patches to NandSkeleton options...");
+        if let Some(patches) = &mut nand.options.patches {
+            for record in khv.records {
+                patches.khv.push(PatchRecord {
+                    address: record.address,
+                    amount: record.amount,
+                    data: record.data,
+                });
             }
-        }
-
-        // Apply CB/CB_B patches depending on NandSkeleton image type
-        if nand.options.image_type == ImageType::Split {
-            if let Some(cb_b_patch) = patch.cb_b {
-                if let Some(ref mut cb_b) = nand.bootloaders.cb_b {
-                    apply_xe_buffer(cb_b_patch, &mut cb_b.data)?;
-                }
-            }
-        }
-        if nand.options.image_type == ImageType::Single {
-            if let Some(cb_patch) = patch.cb {
-                if let Some(ref mut cb) = nand.bootloaders.cb {
-                    apply_xe_buffer(cb_patch, &mut cb.data)?;
-                }
-            }
-        }
-
-        // Insert KHV patches
-        if let Some(khv_patch) = patch.khv {
-            apply_cdxell(nand, khv_patch)?;
         }
     }
+
+    if let Some(cb) = patch.cb {
+        if let Some(cb_bl) = &mut nand.bootloaders.cb {
+            apply_xe_buffer(&cb, &mut cb_bl.data)?;
+        }
+    }
+
+    if let Some(cd) = patch.cd {
+        if let Some(cd_bl) = &mut nand.bootloaders.cd {
+            apply_xe_buffer(&cd, &mut cd_bl.data)?;
+        }
+    }
+
     Ok(())
 }

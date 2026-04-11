@@ -5,35 +5,33 @@
 - Assemble-Shadow = Assemble Shadowboot image
 - Assemble-Xell = Assemble XeLL image
 
-- Identify-Patch function
-
-- Blocks line 25
-
-Update ImageType:
-- Single
-- Split
-- Devkit
-- Devgl
-- Rgbuild
-- Xdkbuild
-- Onef
-- Twof
-
-Make FlashFS parse and build optional for BB and 4G
-
-
 
 Weak Files:
 kv.rs
 flashfs.rs
 smc.rs
 
+- Upgraded Build System
+
+Enable / Disable:
+- xeBuild CLI
+- FFI
+- Python
+- TUI
+
+Compilers:
+- MSVC
+- Clang
+- GCC
+
+Targets:
+x86, x64, arm64
+windows, linux, mac
 
 Next Release:
 
 General:
 - Python Scripting
-- Upgraded Build System
 - LZX Recompression
 - Error Handler / Saftey net
 

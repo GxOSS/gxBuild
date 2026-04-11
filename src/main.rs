@@ -15,6 +15,12 @@
 pub mod builder;
 pub mod core;
 
+#[cfg(feature = "cli")]
 fn main() {
-    core::adapters::cli::ggx_cli();
+    crate::core::interface::xebuild::ggx_cli();
+}
+
+#[cfg(not(feature = "cli"))]
+fn main() {
+    println!("ggxbuild successfully compiled (CLI feature disabled).");
 }

@@ -1,4 +1,4 @@
-use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
+use zerocopy::IntoBytes;
 
 #[repr(C)]
 #[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Default, Copy, Clone)]

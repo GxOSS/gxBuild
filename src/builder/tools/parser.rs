@@ -1,22 +1,12 @@
 /*
-    parser.rs - Multi file type parser and identifier
-    Copyright 2024 Emma https://ipg.gay/
+    parser.rs - Basic NAND component parsers
     
-    Modified in 2026 by Exposure / Zach for GGX
+    This file was wrote by ExposureMG / Zach for the Public Domain.
 
-    This file has been taken from xenon-bltool and modified, and therefore retains the original
-    License.
+    You may freely distribute, modify, and use this code for any purpose,
+    commercial or non-commercial, on the terms that it comes with No Warranty.
 
-    xenon-bltool is free software: you can redistribute it and/or modify it under the terms of
-    the GNU General Public License as published by the Free Software Foundation, version 2 of
-    the License.
-
-    xenon-bltool is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
-    without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-    See the GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License along with xenon-bltool.
-    If not, see <https://www.gnu.org/licenses/>.
+    ExposureMG / Zach is not responsible or liable for any damage caused by this code.
 */
 
 use crate::builder::chain::cf::BootloaderCf;
@@ -63,13 +53,4 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
     }
 
     Ok((cf, cg))
-}
-
-pub enum PatchType {
-    XeBuild = 0,
-    Update = 1,
-}
-
-pub fn parse_patch(patch_bytes: &[u8]) -> Result<(PatchType, Vec<u8>), String> {
-    
 }

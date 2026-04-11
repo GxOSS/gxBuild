@@ -4,6 +4,18 @@ fn main() {
     let xenia_path = "src/builder/deps/xenia";
     let bltool_path = "src/builder/deps/xenon_bltool";
 
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+
+    // Determine SIMD flags
+    let is_msvc = target_env == "msvc";
+    let is_x86 = target_arch == "x86" || target_arch == "x86_64";
+    let is_arm64 = target_arch == "aarch64" || target_arch == "arm64";
+
+    let use_maes = !is_msvc && is_x86;
+    let use_neon_crypto = !is_msvc && is_arm64;
+
     // C Source files
     let mut build_c = cc::Build::new();
     build_c.files([
@@ -31,7 +43,14 @@ fn main() {
     build_c.include(mspack_path);
     build_c.include(xenia_path);
     build_c.include(bltool_path);
-    build_c.flag("-maes");
+    
+    if use_maes {
+        build_c.flag("-maes");
+    }
+    if use_neon_crypto {
+        build_c.flag("-march=armv8-a+crypto");
+    }
+    
     build_c.warnings(false);
     build_c.compile("gx_crypto_c");
 
@@ -51,12 +70,19 @@ fn main() {
     build_cpp.include(mspack_path);
     build_cpp.include(xenia_path);
     build_cpp.include(bltool_path);
-    build_cpp.flag("-maes");
+    
+    if use_maes {
+        build_cpp.flag("-maes");
+    }
+    if use_neon_crypto {
+        build_cpp.flag("-march=armv8-a+crypto");
+    }
+    
     build_cpp.warnings(false);
     build_cpp.compile("gx_crypto_cpp");
 
     // Link Windows Cryptography Next Generation (CNG) for RSA support
-    if std::env::var("CARGO_CFG_WINDOWS").is_ok() {
+    if target_os == "windows" {
         println!("cargo:rustc-link-lib=bcrypt");
     }
 

@@ -19,8 +19,8 @@
     If not, see <https://www.gnu.org/licenses/>.
 */
 
-use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
-use zerocopy::byteorder::{U16, U32, BigEndian};
+use zerocopy::{FromBytes, IntoBytes};
+use zerocopy::byteorder::{U16, BigEndian};
 use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
 

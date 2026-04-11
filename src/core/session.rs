@@ -15,12 +15,14 @@ use std::path::{Path, PathBuf};
 
 use crate::builder::builder::NandSkeleton;
 use std::fs;
+#[cfg(feature = "python")]
 use crate::core::interface::python::{python_interpreter, python_shell, python_script};
 use crate::builder::tools::xebuild::{parse_xe_binary, apply_xe_patch};
+#[derive(Debug)]
 pub enum InternalCommand { 
     ParseIni { content: String, target: String, ini_base: PathBuf, common: PathBuf },
     ParseImage { path: PathBuf, key: Option<[u8; 16]> },
-    ParseKey { key: String },
+    ParseKey { key: [u8; 16] },
     ParseKeybin { key: Option<[u8; 16]> },
     ParseFlashfs { path: PathBuf },
     ParsePatch { path: PathBuf },
@@ -40,7 +42,9 @@ pub enum InternalCommand {
     SessionDelete { id: u8 },
     SessionClear,
     SessionRun,
+    #[cfg(feature = "python")]
     PythonShell,
+    #[cfg(feature = "python")]
     RunPythonScript { path: PathBuf },
     CreateImage { layout: crate::builder::tools::blocks::NandLayout },
 }
@@ -71,7 +75,9 @@ impl InternalCommand {
             Self::Clear => 84,
             Self::ApplyPatch { .. } => 79,
             Self::Compress => 78,
+            #[cfg(feature = "python")]
             Self::RunPythonScript { .. } => 2,
+            #[cfg(feature = "python")]
             Self::PythonShell => 1,
             Self::Build { .. } => 0,
         }
@@ -128,7 +134,7 @@ impl Session {
         }
     }
 
-    fn enqueue(&mut self, command: InternalCommand) {
+    pub fn enqueue(&mut self, command: InternalCommand) {
         self.queue.push(QueuedCommand {
             sequence_id: self.next_seq_id,
             command,
@@ -160,7 +166,7 @@ impl Session {
         self.enqueue(InternalCommand::ParseImage { path, key });
     }
 
-    pub fn parse_key(&mut self, key: String) {
+    pub fn parse_key(&mut self, key: [u8; 16]) {
         self.enqueue(InternalCommand::ParseKey { key });
     }
 
@@ -224,12 +230,12 @@ impl Session {
         self.enqueue(InternalCommand::SessionRun);
     }
 
-    pub fn session_run_once(&mut self, id: u8) {
-        self.enqueue(InternalCommand::SessionRunOnce { id });
+    pub fn session_run_once(&mut self, _id: u8) {
+        self.enqueue(InternalCommand::SessionRun);
     }
 
     pub fn session_close(&mut self) {
-        self.enqueue(InternalCommand::SessionClose);
+        self.enqueue(InternalCommand::SessionClear);
     }
 
     pub fn parse_ini(&mut self, content: String, target: String, ini_base: impl AsRef<Path>, common: impl AsRef<Path>) {
@@ -241,10 +247,12 @@ impl Session {
         });
     }
 
+    #[cfg(feature = "python")]
     pub fn run_python_script(&mut self, path: impl AsRef<Path>) {
         self.enqueue(InternalCommand::RunPythonScript { path: path.as_ref().to_path_buf() });
     }
 
+    #[cfg(feature = "python")]
     pub fn open_python_shell(&mut self) {
         self.enqueue(InternalCommand::PythonShell);
     }
@@ -316,10 +324,10 @@ impl Session {
                         eprintln!(" -> No active NAND loaded. Cannot extract {}.", id);
                     }
                 }
-                InternalCommand::Build { output, target } => {
-                    println!(" -> Building image to {:?} with target {}...", output, target);
+                InternalCommand::Build { output, target: _target } => {
+                    println!(" -> Building image to {:?}...", output);
                     if let Some(nand) = &self.active_nand {
-                        let cpukey = nand.cpukey.clone().unwrap_or_else(|| String::from("00000000000000000000000000000000"));
+                        let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
                         match nand.build(cpukey) {
                             Ok(bytes) => {
                                 if let Err(e) = std::fs::write(&output, bytes) {
@@ -384,12 +392,14 @@ impl Session {
                         eprintln!(" -> No active NAND skeleton active to apply INI map onto!");
                     }
                 }
+                #[cfg(feature = "python")]
                 InternalCommand::RunPythonScript { path } => {
                     let interp = python_interpreter();
                     if let Err(e) = python_script(&interp, &path) {
                         eprintln!(" -> Python Execution Error: {}", e);
                     }
                 }
+                #[cfg(feature = "python")]
                 InternalCommand::PythonShell => {
                     let interp = python_interpreter();
                     if let Err(e) = python_shell(&interp) {
@@ -398,8 +408,7 @@ impl Session {
                 }
                 InternalCommand::ParseImage { path, key } => {
                     println!(" -> Parsing image {:?}...", path);
-                    let key_str = key.map(|k| k.iter().map(|b| format!("{:02X}", b)).collect::<String>()).unwrap_or_default();
-                    match NandSkeleton::parse_nand(&path, key_str) {
+                    match NandSkeleton::parse_nand(&path, key.unwrap_or([0u8; 16])) {
                         Ok(nand) => {
                             self.active_nand = Some(nand);
                             println!(" -> Successfully parsed NAND from {:?}", path);
@@ -409,18 +418,17 @@ impl Session {
                 }
                 InternalCommand::ParseKey { key } => {
                     if let Some(nand) = &mut self.active_nand {
-                        nand.cpukey = Some(key.clone());
-                        println!(" -> CPU Key set to: {}", key);
+                        nand.cpukey = Some(key);
+                        println!(" -> CPU Key set (16 bytes).");
                     } else {
                         eprintln!(" -> No active NAND image to assign key to.");
                     }
                 }
                 InternalCommand::ParseKeybin { key } => {
                     if let Some(k) = key {
-                        let key_str = k.iter().map(|b| format!("{:02X}", b)).collect::<String>();
                         if let Some(nand) = &mut self.active_nand {
-                            nand.cpukey = Some(key_str);
-                            println!(" -> CPU Keybin parsed and assigned.");
+                            nand.cpukey = Some(k);
+                            println!(" -> CPU Keybin assigned.");
                         } else {
                             eprintln!(" -> No active NAND image to assign keybin to.");
                         }

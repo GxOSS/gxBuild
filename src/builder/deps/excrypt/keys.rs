@@ -1,5 +1,5 @@
 use std::sync::Mutex;
-use super::{Result, CryptoError, ExCryptRsa, ExCryptSig, ExCryptRsaPub1024};
+use super::{Result, CryptoError, ExCryptRsa};
 
 #[repr(u32)]
 #[derive(Debug, Clone, Copy)]

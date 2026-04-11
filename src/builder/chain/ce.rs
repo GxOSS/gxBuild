@@ -24,7 +24,7 @@ use crate::builder::deps::excrypt::{self, Rc4};
 use crate::builder::deps::xenia;
 use crate::builder::chain::cf::BootloaderCf;
 use crate::builder::chain::cg::BootloaderCg;
-use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
+use zerocopy::{FromBytes, IntoBytes};
 use zerocopy::byteorder::{U16, U32, U64, BigEndian};
 
 #[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]

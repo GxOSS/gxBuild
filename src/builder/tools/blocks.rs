@@ -1,5 +1,4 @@
-use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
-use zerocopy::byteorder::BigEndian;
+use zerocopy::FromBytes;
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum NandLayout {
@@ -303,10 +302,10 @@ impl BlockMap {
     pub fn new(image: &[u8]) -> Option<Self> {
         let layout = NandLayout::detect(image).ok()?;
         let mut bad_blocks = Vec::new();
-        let total_blocks = layout.total_blocks(image.image.len());
+        let total_blocks = layout.total_blocks(image.len());
 
         for block in 0..total_blocks {
-            if is_bad_block(&image.image, block, &layout) {
+            if is_bad_block(image, block, &layout) {
                 bad_blocks.push(BadBlock {
                     block,
                     target: block,

@@ -9,6 +9,8 @@
     ExposureMG / Zach is not responsible or liable for any damage caused by this code.
 */
 
+#![cfg(feature = "python")]
+
 
 
 /// rust-python embedded interpreter
@@ -20,14 +22,16 @@
 
 use std::path::Path;
 use std::fs;
-use thiserror::Error;
 use rustpython_vm::{Interpreter, Settings};
+
+#[cfg(feature = "tui")]
 use rustyline::DefaultEditor;
 
 pub fn python_interpreter() -> Interpreter {
     Interpreter::without_stdlib(Default::default())
 }
 
+#[cfg(feature = "tui")]
 pub fn python_shell(interpreter: &Interpreter) -> anyhow::Result<()> {
     let mut rl = DefaultEditor::new().unwrap();
     println!("[PyGG] Entering PyGG Shell (Ctrl+D to exit)");

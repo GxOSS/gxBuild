@@ -4,7 +4,7 @@
     Modified for GGX by Exposure / Zach
 */
 
-use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
+use zerocopy::FromBytes;
 use zerocopy::byteorder::{U16, BigEndian};
 use crate::builder::deps::excrypt::{self, Rc4};
 

@@ -5,10 +5,6 @@
 #include <cstdio>
 #include <cstring>
 
-#ifndef _MSC_VER
-#define _byteswap_ulong(x) __builtin_bswap32(x)
-#endif
-
 #include "excrypt.h"
 
 std::map<uint32_t, std::tuple<uint32_t, uint32_t>> kExKeyProperties = {

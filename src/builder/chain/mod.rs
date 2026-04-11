@@ -8,7 +8,7 @@ pub mod smc;
 pub mod flashfs;
 pub mod kv;
 
-use zerocopy::{FromBytes, IntoBytes, Immutable};
+use zerocopy::FromBytes;
 use zerocopy::byteorder::{U16, U32, BigEndian};
 use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa, sha};
 use crate::builder::chain::smc::RawSmc;

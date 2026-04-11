@@ -1,3 +1,3 @@
-pub mod cli;
-pub mod pygg;
+pub mod python;
+pub mod xebuild;
 pub mod ffi;

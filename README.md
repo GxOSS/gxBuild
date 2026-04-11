@@ -45,9 +45,7 @@ And these are the people who deserve credit either way:
 
 - c0z for his work on xeBuild patches
 - Ikari for his work on FreeBoot
-- team xeBuild
-- team fbBuild
-- team ggBuild
+- team xeBuild / fbBuild / ggBuild
 
 ## Developer Info
 

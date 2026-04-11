@@ -19,7 +19,7 @@
     If not, see <https://www.gnu.org/licenses/>.
 */
 
-use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
+use zerocopy::{FromBytes, IntoBytes};
 use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
 
