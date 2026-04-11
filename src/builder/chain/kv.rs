@@ -17,7 +17,7 @@ pub struct KeyvaultRecord {
     pub unused1: [u8; 0x92],        // 0x1E -> 0xB0
     pub serial: [u8; 12],           // 0xB0
     pub unused2: [u8; 0x06],        // 0xBC -> 0xC2
-    pub console_id: [u8; 5],        // 0xC2 (Matches current builder.rs layout, though J-Runner says 0x9CA)
+    pub console_id: [u8; 5],        // 0x9CA
     pub unused3: [u8; 0x01],        // 0xC7
     pub region: [u8; 2],            // 0xC8
     pub unused4: [u8; 0x36],        // 0xCA -> 0x100

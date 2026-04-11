@@ -9,14 +9,10 @@
     ExposureMG / Zach is not responsible or liable for any damage caused by this code.
 */
 
-
-// Session and queue manager
-
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::path::{Path, PathBuf};
 
-// External module commands
 use crate::core::commands::{extract, extract_all};
 use crate::builder::builder::NandSkeleton;
 use crate::core::commands::pygg::{python_interpreter, python_shell, python_script};
@@ -24,20 +20,35 @@ use crate::core::commands::xeini::{parse_xe_ini, apply_xe_ini};
 
 
 #[derive(Debug, Clone)]
-pub enum InternalCommand {
-    // 100
+pub enum InternalCommand { 
     ParseIni { content: String, target: String, ini_base: PathBuf, common: PathBuf },
-    // 90
-    RunPythonScript { path: PathBuf },
-    // 80
-    ExtractAll,
+    ParseImage { path: PathBuf, key: Option<[u8; 16]> },
+    ParseKey { key: String },
+    ParseKeybin { key: Option<[u8; 16]> },
+    ParseFlashfs { path: PathBuf },
+
+    ParsePatch { path: PathBuf },
+    ApplyPatch { path: PathBuf, ptype: u8, target: Option<u8> },
+
     Extract { id: String },
-    // 50
-    Build,
-    // 40
-    Update,
-    // 10
-    PythonShell,
+    ExtractAll,
+    Replace { id: u8, path: PathBuf },
+    List,
+    Delete { id: u8 },
+    Clear,
+
+    Compress,
+    Decompress,
+    Update { path: PathBuf },
+
+    Build { output: PathBuf, target: u8 },
+
+    SessionInit { base: Option<PathBuf>, common: Option<PathBuf> },
+    SessionList,
+    SessionDelete,
+    SessionClear,
+    SessionRun,
+    SessionClose,
 }
 
 impl InternalCommand {

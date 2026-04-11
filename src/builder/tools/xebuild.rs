@@ -28,16 +28,6 @@ pub enum XeBuildBinaryType {
     Unknown,
 }
 
-#[derive(Debug, PartialEq)]
-pub enum XeBuildPatchType {
-    Onebl,
-    Cb,
-    CbB,
-    Cd,
-    Khv,
-    Generic,
-}
-
 /// One patch entry – copy `data` to `address`.
 #[derive(Debug)]
 pub struct PatchRecord {
@@ -47,20 +37,34 @@ pub struct PatchRecord {
 }
 
 #[derive(Debug)]
-pub struct XeBuildPatch {
-    pub patch_type: XeBuildPatchType,
+pub struct XeBuildGenericPatch {
+    pub records: Vec<PatchRecord>,
+}
+
+#[derive(Debug)]
+pub struct XeBuildCbPatch {
+    pub records: Vec<PatchRecord>,
+}
+
+#[derive(Debug)]
+pub struct XeBuildCdPatch {
+    pub records: Vec<PatchRecord>,
+}
+
+#[derive(Debug)]
+pub struct XeBuildKhvPatch {
     pub records: Vec<PatchRecord>,
 }
 
 #[derive(Debug)]
 pub struct XeBuildBinary {
     pub xetype: XeBuildBinaryType,
-    pub onebl: Option<XeBuildPatch>,
-    pub cb: Option<XeBuildPatch>,
-    pub cb_b: Option<XeBuildPatch>,
-    pub cd: Option<XeBuildPatch>,
-    pub khv: Option<XeBuildPatch>,
-    pub generic: Option<XeBuildPatch>,
+    pub onebl: Option<XeBuildGenericPatch>, // ??? Invoxis research says 1bl patch? How?
+    pub cb: Option<XeBuildCbPatch>,
+    pub cb_b: Option<XeBuildCbbPatch>,
+    pub cd: Option<XeBuildCdPatch>,
+    pub khv: Option<XeBuildKhvPatch>,
+    pub generic: Option<XeBuildGenericPatch>,
 }
 
 // This hash function probably needs to return a String, not XeBuildIni (which doesn't exist here)
@@ -155,35 +159,29 @@ pub fn parse_xe_binary(path: &str) -> anyhow::Result<XeBuildBinary> {
 
     if section_count == 1 {
         output.xetype = XeBuildBinaryType::Addon;
-        output.generic = Some(XeBuildPatch {
-            patch_type: XeBuildPatchType::Generic,
+        output.generic = Some(XeBuildGenericPatch {
             records: sections.remove(0),
         });
     } else if section_count == 3 {
         output.xetype = XeBuildBinaryType::Rgh;
-        output.cb_b = Some(XeBuildPatch {
-            patch_type: XeBuildPatchType::CbB,
+        output.cb_b = Some(XeBuildCbPatch {
             records: sections.remove(0),
         });
-        output.cd = Some(XeBuildPatch {
-            patch_type: XeBuildPatchType::Cd,
+        output.cd = Some(XeBuildCdPatch {
             records: sections.remove(0),
         });
-        output.khv = Some(XeBuildPatch {
-            patch_type: XeBuildPatchType::Khv,
+        output.khv = Some(XeBuildKhvPatch {
             records: sections.remove(0),
         });
     } else if section_count == 4 {
         output.xetype = XeBuildBinaryType::Jtag;
-        output.onebl = Some(XeBuildPatch {
-            patch_type: XeBuildPatchType::Onebl,
+        output.onebl = Some(XeBuildGenericPatch {
             records: sections.remove(0),
         });
-        output.cb = Some(XeBuildPatch {
-            patch_type: XeBuildPatchType::Cb,
+        output.cb = Some(XeBuildCbPatch {
             records: sections.remove(0),
         });
-        output.cd = Some(XeBuildPatch {
+        output.cd = Some(XeBuildCdPatch {
             patch_type: XeBuildPatchType::Cd,
             records: sections.remove(0),
         });

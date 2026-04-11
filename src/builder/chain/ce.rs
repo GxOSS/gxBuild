@@ -125,7 +125,6 @@ impl BootloaderCe {
         }
     }
 
-    /// Native Rust implementation of get_full_compressed_buffer logic
     fn get_full_compressed_buffer(
         &self,
         in_buf: &[u8],
