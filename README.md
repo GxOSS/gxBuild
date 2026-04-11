@@ -1,6 +1,6 @@
 # gxBuild
 
-A Rust Xbox 360 NAND, Shadowboot and XeLL image builder and patcher.
+A Rust Xbox 360 NAND image builder and patcher.
 
 Uses the fbBuild/ggBuild/xeBuild CLI and INI style.
 
