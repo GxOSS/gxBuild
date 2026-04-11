@@ -24,8 +24,8 @@ use std::path::Path;
 use std::fs;
 use crc32fast::Hasher;
 use thiserror::Error;
-use crate::core::commands::NandSkeleton;
-
+use crate::builder::builder::NandSkeleton;
+use crate::builder::chain::flashfs::FileSystemEntry;
 #[derive(Error, Debug)]
 pub enum IniError {
     #[error("[GGX] Ini section not found: {0}")]
@@ -146,6 +146,65 @@ pub fn parse_xe_ini(
     Ok(ini)
 }
 
-pub fn apply_xe_ini(nand: NandSkeleton, _ini: XeBuildIni) -> anyhow::Result<NandSkeleton> {
+pub fn apply_xe_ini(
+    mut nand: NandSkeleton,
+    ini: XeBuildIni,
+    ini_base: impl AsRef<Path>,
+    common_base: impl AsRef<Path>
+) -> anyhow::Result<NandSkeleton> {
+    
+    // 1. Process [main] bootloaders
+    for entry in &ini.main {
+        let filename = &entry[0];
+        let file_path = common_base.as_ref().join(filename);
+        let data = std::fs::read(&file_path)?;
+        
+        let lower = filename.to_lowercase();
+        if lower.starts_with("cba_") {
+            nand.bootloaders.cb_a = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+        } else if lower.starts_with("cbb_") {
+            nand.bootloaders.cb_b = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+        } else if lower.starts_with("cb_") {
+            nand.bootloaders.cb = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+        } else if lower.starts_with("cd_") {
+            nand.bootloaders.cd = Some(crate::builder::chain::cd::BootloaderCd::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+        } else if lower.starts_with("ce_") {
+            nand.bootloaders.ce = Some(crate::builder::chain::ce::BootloaderCe::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+        } else if lower.starts_with("cf_") {
+            nand.update.cf_0 = crate::builder::chain::cf::BootloaderCf::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?;
+        } else if lower.starts_with("cg_") {
+            nand.update.cg_0 = crate::builder::chain::cg::BootloaderCg::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?;
+        }
+    }
+
+    // Process File Entries (Security & FlashFS)
+    let mut file_entries = ini.security.clone();
+    for (name, _) in &ini.flashfs {
+        file_entries.push(name.clone());
+    }
+
+    // 2. Map and bind into FlashFS
+    for filename in &file_entries {
+        let file_path = if filename.starts_with("..\\") || filename.starts_with("../") {
+            ini_base.as_ref().parent().unwrap_or(ini_base.as_ref()).join(&filename[3..])
+        } else {
+            ini_base.as_ref().join(filename)
+        };
+        
+        let file_content = std::fs::read(&file_path)?;
+        let basen = Path::new(filename).file_name().unwrap_or_default().to_string_lossy().to_string();
+
+        if basen.to_lowercase() == "fcrt.bin" {
+            nand.extra.fcrt = Some(file_content.clone());
+        }
+
+        let mut entry = FileSystemEntry::new(0);
+        entry.file_name = basen;
+        nand.flashfs.root.set_entry_data(&mut nand.image, &nand.layout, &mut entry, &file_content);
+        nand.flashfs.root.entries.push(entry);
+    }
+    
+    nand.flashfs.root.write(&mut nand.image, &nand.layout);
+
     Ok(nand)
 }

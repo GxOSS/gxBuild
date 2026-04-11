@@ -314,10 +314,54 @@ impl Session {
                     }
                 }
                 InternalCommand::Update { path } => {
-                    println!(" -> Updating patches from {:?}...", path);
+                    println!(" -> Resolving xboxupd updates from {:?}...", path);
+                    if let Some(nand) = &mut self.active_nand {
+                        if let Ok(bytes) = fs::read(&path) {
+                            match crate::builder::tools::parser::parse_xboxupd(&bytes) {
+                                Ok((cf, cg)) => {
+                                    nand.update.cf_0 = cf;
+                                    nand.update.cg_0 = cg;
+                                    if let Some(ce) = &mut nand.bootloaders.ce {
+                                        match ce.apply_update(&nand.update.cf_0, &nand.update.cg_0) {
+                                            Ok(_) => println!(" -> CE update cleanly patched natively."),
+                                            Err(e) => eprintln!(" -> CE patch application failed: {}", e)
+                                        }
+                                    } else {
+                                        eprintln!(" -> No CE bootloader found in active NAND trace to patch against!");
+                                    }
+                                }
+                                Err(e) => eprintln!(" -> Failed to interpret xboxupd binary buffer: {}", e)
+                            }
+                        } else {
+                            eprintln!(" -> Binary {:?} was unreadable or didn't exist.", path);
+                        }
+                    } else {
+                         eprintln!(" -> No active NAND loaded. Cannot inject updates.");
+                    }
                 }
                 InternalCommand::ParseIni { content, target, ini_base, common } => {
-                     println!(" -> [STUB] Parse INI (Target: {})", target);
+                    println!(" -> Parsing INI for target {}...", target);
+                    if let Some(nand) = self.active_nand.take() {
+                        match crate::core::data::xeini::parse_xe_ini(&content, &target, &ini_base, &common) {
+                            Ok(parsed_cfg) => {
+                                match crate::core::data::xeini::apply_xe_ini(nand, parsed_cfg, &ini_base, &common) {
+                                    Ok(updated_nand) => {
+                                        self.active_nand = Some(updated_nand);
+                                        println!(" -> INI Bootloaders and FlashFS mappings applied natively!");
+                                    }
+                                    Err(e) => {
+                                        eprintln!(" -> Applied INI data failed due to bindings error: {}", e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                self.active_nand = Some(nand);
+                                eprintln!(" -> Failed parsing INI descriptors: {}", e);
+                            }
+                        }
+                    } else {
+                        eprintln!(" -> No active NAND skeleton active to apply INI map onto!");
+                    }
                 }
                 InternalCommand::RunPythonScript { path } => {
                     let interp = python_interpreter();
@@ -442,7 +486,24 @@ impl Session {
                     println!(" -> Compress logic hooks to mspack / xenia (Not Yet Invoked)");
                 }
                 InternalCommand::Decompress => {
-                    println!(" -> Decompress logic hooks to mspack / xenia (Not Yet Invoked)");
+                    println!(" -> Decompressing CE Base Kernel payload...");
+                    if let Some(nand) = &mut self.active_nand {
+                        if let Some(ce) = &mut nand.bootloaders.ce {
+                            match ce.decompress() {
+                                Ok(kernel_payload) => {
+                                    ce.data_kernel = Some(kernel_payload.clone());
+                                    // Optionally dump to verification file locally
+                                    let _ = std::fs::write("Kernel-Decompressed.bin", &kernel_payload);
+                                    println!(" -> CE Base Kernel successfully decompressed! (0x{:X} bytes)", kernel_payload.len());
+                                }
+                                Err(e) => eprintln!(" -> CE decompression failed: {}", e),
+                            }
+                        } else {
+                            eprintln!(" -> Active NAND does not contain a CE bootloader to decompress.");
+                        }
+                    } else {
+                        eprintln!(" -> No active NAND loaded. Cannot run Decompress.");
+                    }
                 }
                 InternalCommand::SessionInit { base, common } => {
                     println!(" -> Initializing session with base {:?} and common {:?}", base, common);

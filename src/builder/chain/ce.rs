@@ -22,6 +22,8 @@
 use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, Rc4};
 use crate::builder::deps::xenia;
+use crate::builder::chain::cf::BootloaderCf;
+use crate::builder::chain::cg::BootloaderCg;
 use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
 use zerocopy::byteorder::{U16, U32, U64, BigEndian};
 
@@ -190,6 +192,25 @@ impl BootloaderCe {
         ).map_err(|e| format!("lzx_decompress returned error code {}", e))?;
 
         Ok(decompressed)
+    }
+
+    pub fn apply_update(&mut self, cf: &BootloaderCf, cg: &BootloaderCg) -> Result<(), String> {
+        if cf.header.base_ver.get() != self.header.header.version.get() {
+            return Err(format!(
+                "Mismatching base kernel version (CE is {}, CF expects {})",
+                self.header.header.version.get(),
+                cf.header.base_ver.get()
+            ));
+        }
+
+        let base_kernel = self.data_kernel.as_ref()
+            .ok_or("CE Base Kernel has not been decompressed yet. Cannot apply patch.")?;
+
+        let patched_kernel = cg.apply_patch(base_kernel)?;
+        
+        self.data_kernel = Some(patched_kernel);
+        
+        Ok(())
     }
 
     /// Split Decompressed CE into Kernel and Hypervisor
