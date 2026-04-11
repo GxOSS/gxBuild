@@ -139,6 +139,22 @@ fn parse_key_val(s: &str) -> Result<(String, String), String> {
 }
 
 pub fn ggx_cli() {
+    if std::env::args().count() == 1 {
+        let help_path = "c:\\Users\\Exposure\\Documents\\References\\xeBuild\\help.txt";
+        if let Ok(content) = std::fs::read_to_string(help_path) {
+            println!("{}", content);
+        } else {
+            // Fallback if the reference file is missing
+            println!("gxbuild [mode] -t <type> [<switch> [<switch>...]] <out.bin>");
+            println!("(Help reference missing at {})", help_path);
+        }
+        
+        println!("\nPress Enter to exit...");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).ok();
+        return;
+    }
+
     let args = GgxArgs::parse();
     let mut session = Session::new();
 

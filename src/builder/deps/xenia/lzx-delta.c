@@ -98,10 +98,23 @@ struct mspack_system* mspack_memory_sys_create() {
 
 void mspack_memory_sys_destroy(struct mspack_system* sys) { free(sys); }
 
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
+
 bool bit_scan_forward(uint32_t v, uint32_t* out_first_set_index) {
-  int i = __builtin_ffs(v);
-  *out_first_set_index = i - 1;
-  return i != 0;
+#ifdef _MSC_VER
+    unsigned long index;
+    if (_BitScanForward(&index, v)) {
+        *out_first_set_index = (uint32_t)index;
+        return true;
+    }
+    return false;
+#else
+    int i = __builtin_ffs(v);
+    *out_first_set_index = i - 1;
+    return i != 0;
+#endif
 }
 
 int lzx_decompress(const void* lzx_data, size_t lzx_len, void* dest,
