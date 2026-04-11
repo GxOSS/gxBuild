@@ -165,6 +165,25 @@ pub fn ggx_cli() {
 
     if let Err(e) = session.run() {
         eprintln!("\n[GGX] Session failed: {}", e);
+    } else if let Some(GgxMode::Build { .. }) | None = args.mode {
+        // Build succeeded, calculate SHA-1 if requested
+        let output_path = args.output.clone().unwrap_or_else(|| PathBuf::from("updflash.bin"));
+        if output_path.exists() {
+            if let Ok(data) = std::fs::read(&output_path) {
+                if let Ok(hash) = crate::builder::deps::excrypt::sha(&[&data]) {
+                    let sha_str = hash.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                    println!(" -> Image SHA-1: {}", sha_str);
+                    
+                    if let Some(sha_p) = args.sha_file {
+                        if let Err(e) = std::fs::write(&sha_p, &sha_str) {
+                            eprintln!("[GGX] Warning: Failed to write SHA-1 to {:?}: {}", sha_p, e);
+                        } else {
+                            println!(" -> SHA-1 written to {:?}", sha_p);
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -220,12 +239,41 @@ fn handle_build(args: GgxArgs, session: &mut Session) {
     if let Some(key) = args.cpu_key {
         session.set_cpukey(key);
     }
+
+    if args.bl_key.is_some() {
+        println!("[GGX] Warning: Overriding the 1BL key (-b) is currently not implemented. Using default retail key.");
+    }
     
     if args.verbose {
         session.set_verbose(true);
     }
+    
+    // 4. Addon patches
+    for addon in &args.addons {
+        let addon_path = if PathBuf::from(addon).is_absolute() {
+            PathBuf::from(addon)
+        } else {
+            let fw_path = fw_dir.join(addon);
+            if fw_path.exists() {
+                fw_path
+            } else {
+                data_dir.join(addon)
+            }
+        };
+        
+        if addon_path.exists() {
+            session.enqueue(crate::core::session::InternalCommand::ApplyPatch { 
+                path: addon_path, 
+                ptype: 2, // Addon
+                target: None 
+            });
+        } else {
+            eprintln!("[GGX] Warning: Addon patch not found: {}", addon);
+        }
+    }
 
-    session.build();
+    let output_path = args.output.clone().unwrap_or_else(|| PathBuf::from("updflash.bin"));
+    session.build(output_path, 0); // Target 0 for now
     
     if !args.no_enter {
         println!("\nPress Enter to exit...");

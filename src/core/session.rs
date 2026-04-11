@@ -275,34 +275,45 @@ impl Session {
         match command {
                 InternalCommand::ExtractAll => {
                     println!(" -> Extracting all components...");
-                    if let Some(nand) = &self.active_nand {
-                        let _ = fs::write("SMC.bin", &nand.extra.smc);
-                        let _ = fs::write("KV.bin", &nand.extra.keyvault);
-                        if let Some(cb) = &nand.bootloaders.cb { let _ = fs::write("CB.bin", cb.serialize()); }
-                        if let Some(cb_a) = &nand.bootloaders.cb_a { let _ = fs::write("CB_A.bin", cb_a.serialize()); }
-                        if let Some(cb_b) = &nand.bootloaders.cb_b { let _ = fs::write("CB_B.bin", cb_b.serialize()); }
-                        if let Some(cd) = &nand.bootloaders.cd { let _ = fs::write("CD.bin", cd.serialize()); }
-                        if let Some(ce) = &nand.bootloaders.ce { let _ = fs::write("CE.bin", ce.serialize()); }
-                        let _ = fs::write("CF_0.bin", nand.update.cf_0.serialize());
-                        let _ = fs::write("CG_0.bin", nand.update.cg_0.serialize());
-                        println!(" -> Components extracted to current directory.");
-                    } else {
-                        eprintln!(" -> No active NAND loaded.");
+                    let ids = vec!["smc", "kv", "fcrt", "cb", "cba", "cbb", "sc", "cd", "ce", "cf0", "cg0", "cf1", "cg1"];
+                    for id in ids {
+                        let _ = self.execute_command(InternalCommand::Extract { id: id.to_string() });
                     }
+                    println!(" -> Extraction complete.");
                 }
                 InternalCommand::Extract { id } => {
-                    println!(" -> Extracting {}...", id);
                     if let Some(nand) = &self.active_nand {
-                        match id.to_lowercase().as_str() {
-                            "smc" => { let _ = fs::write("SMC.bin", &nand.extra.smc); }
-                            "kv" => { let _ = fs::write("KV.bin", &nand.extra.keyvault); }
-                            "cb" => if let Some(cb) = &nand.bootloaders.cb { let _ = fs::write("CB.bin", cb.serialize()); }
-                            "cd" => if let Some(cd) = &nand.bootloaders.cd { let _ = fs::write("CD.bin", cd.serialize()); }
-                            "ce" => if let Some(ce) = &nand.bootloaders.ce { let _ = fs::write("CE.bin", ce.serialize()); }
-                            _ => eprintln!(" -> Unknown component ID to extract: {}", id)
+                        let (filename, data) = match id.to_lowercase().as_str() {
+                            "smc" => ("SMC.bin", Some(nand.extra.smc.clone())),
+                            "smcc" => ("SMCC.bin", Some(nand.extra.smc_config.clone())),
+                            "kv" => ("KV.bin", Some(nand.extra.keyvault.clone())),
+                            "fcrt" => ("FCRT.bin", nand.extra.fcrt.clone()),
+                            "cb" => ("CB.bin", nand.bootloaders.cb.as_ref().map(|b| b.serialize())),
+                            "cba" | "cb_a" => ("CBA.bin", nand.bootloaders.cb_a.as_ref().map(|b| b.serialize())),
+                            "cbb" | "cb_b" => ("CBB.bin", nand.bootloaders.cb_b.as_ref().map(|b| b.serialize())),
+                            "sc" => ("SC.bin", nand.bootloaders.sc.as_ref().map(|b| b.serialize())),
+                            "cd" => ("CD.bin", nand.bootloaders.cd.as_ref().map(|b| b.serialize())),
+                            "ce" => ("CE.bin", nand.bootloaders.ce.as_ref().map(|b| b.serialize())),
+                            "cf0" | "cf_0" => ("CF_0.bin", Some(nand.update.cf_0.serialize())),
+                            "cg0" | "cg_0" => ("CG_0.bin", Some(nand.update.cg_0.serialize())),
+                            "cf1" | "cf_1" => ("CF_1.bin", Some(nand.update.cf_1.serialize())),
+                            "cg1" | "cg_1" => ("CG_1.bin", Some(nand.update.cg_1.serialize())),
+                            "header" | "nandhdr" => ("NandHeader.bin", Some(zerocopy::IntoBytes::as_bytes(&nand.header).to_vec())),
+                            _ => {
+                                eprintln!(" -> Unknown component ID to extract: {}", id);
+                                return Ok(());
+                            }
+                        };
+
+                        if let Some(bytes) = data {
+                            if let Err(e) = fs::write(filename, bytes) {
+                                eprintln!(" -> Failed to extract {}: {}", id, e);
+                            } else {
+                                println!(" -> Extracted {} to {}", id, filename);
+                            }
                         }
                     } else {
-                        eprintln!(" -> No active NAND loaded.");
+                        eprintln!(" -> No active NAND loaded. Cannot extract {}.", id);
                     }
                 }
                 InternalCommand::Build { output, target } => {
@@ -433,17 +444,25 @@ impl Session {
                     }
                 }
                 InternalCommand::ParsePatch { path } => {
-                    println!(" -> Parsing patch from {:?}...", path);
+                    println!(" -> Parsing patch binary from {:?}...", path);
+                    match parse_xe_binary(path.to_str().unwrap_or_default()) {
+                        Ok(xe_patch) => {
+                            println!(" -> Successfully parsed patch: Type {:?}, {} KHV records", 
+                                     xe_patch.xetype, 
+                                     xe_patch.khv.as_ref().map(|k| k.records.len()).unwrap_or(0));
+                        }
+                        Err(e) => eprintln!(" -> Failed to parse patch binary: {}", e),
+                    }
                 }
                 InternalCommand::ApplyPatch { path, ptype, target } => {
-                    println!(" -> Applying patch {:?} (type {}) to target {:?}...", path, ptype, target);
+                    println!(" -> Applying patch {:?} (type {}, target {:?})...", path, ptype, target);
                     if let Some(nand) = &mut self.active_nand {
                         match parse_xe_binary(path.to_str().unwrap_or_default()) {
                             Ok(xe_patch) => {
                                 if let Err(e) = apply_xe_patch(xe_patch, nand) {
                                     eprintln!(" -> Failed to apply patch: {}", e);
                                 } else {
-                                    println!(" -> Successfully applied patch.");
+                                    println!(" -> Successfully applied patch and routed KHV to NAND options.");
                                 }
                             }
                             Err(e) => eprintln!(" -> Failed to parse xePatch binary: {}", e),

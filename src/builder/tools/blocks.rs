@@ -22,15 +22,6 @@ pub struct BadBlock {
     pub target: usize,
 }
 
-pub struct RawImage {
-    pub image: Vec<u8>,
-}
-
-impl RawImage {
-    pub fn new(data: Vec<u8>) -> Self {
-        Self { image: data }
-    }
-}
 
 impl NandLayout {
     pub fn block_size(&self) -> usize {
@@ -309,8 +300,8 @@ impl BlockMap {
     }
 
     /// Parse a raw image-with-spare into a BlockMap.
-    pub fn new(image: &RawImage) -> Option<Self> {
-        let layout = NandLayout::detect(&image.image).ok()?;
+    pub fn new(image: &[u8]) -> Option<Self> {
+        let layout = NandLayout::detect(image).ok()?;
         let mut bad_blocks = Vec::new();
         let total_blocks = layout.total_blocks(image.image.len());
 
