@@ -185,10 +185,15 @@ impl MotherboardType {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum ImageType { // Base image type
-    Single, // CB -> CD
-    Split,  // CB_A -> CB_B -> CD
-    Devkit, // SB (=CB) -> SC -> SD (=CD)
+pub enum ImageType {
+    Single,
+    Split,
+    Devkit,
+    Devgl,
+    Rgbuild,
+    Xdkbuild,
+    Onef,
+    Twof,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -227,6 +232,68 @@ pub struct NandSkeleton {
     pub flashfs: FlashFS,
     pub layout: NandLayout,
     pub total_blocks: usize,
+}
+
+impl NandSkeleton {
+    pub fn new_blank(layout: NandLayout) -> Self {
+        let size = match layout {
+            NandLayout::Xsb => 0x1080000, // 16MB
+            NandLayout::Sb => 0x4200000,  // 64MB
+            NandLayout::Bb => 0x4200000,  // Default to 64MB for blank BB
+            NandLayout::Emmc => 0x3000000, // 48MB as requested
+        };
+
+        let mut image = vec![0u8; size];
+        
+        // Initialize basic header magic so it's technically valid
+        image[0] = 0xFF;
+        image[1] = 0x4F;
+
+        Self {
+            cpukey: None,
+            image,
+            block_map: Some(BlockMap { blocks: Vec::new(), layout }),
+            options: BuildOptions {
+                layout,
+                block_map: BlockMap { blocks: Vec::new(), layout },
+                image_type: ImageType::Single,
+                build_type: BuildType::Retail,
+                motherboard: MotherboardType::Unknown,
+                bigonsmall: false,
+                shadowboot: false,
+                mfg: false,
+                patches: None,
+            },
+            header: unsafe { std::mem::zeroed() }, // Will be patched during build
+            extra: NandExtra {
+                smc: Vec::new(),
+                smc_config: Vec::new(),
+                keyvault: Vec::new(),
+                fcrt: None,
+                power_on_cause_a: 0,
+                power_on_cause_b: 0,
+            },
+            bootloaders: NandBootloaders {
+                cb: None,
+                cb_a: None,
+                cb_b: None,
+                sc: None,
+                cd: None,
+                ce: None,
+            },
+            update: NandUpdate {
+                cf_0: BootloaderCf { header: unsafe { std::mem::zeroed() }, data: Vec::new() },
+                cg_0: BootloaderCg { header: unsafe { std::mem::zeroed() }, data: Vec::new() },
+                cf_1: BootloaderCf { header: unsafe { std::mem::zeroed() }, data: Vec::new() },
+                cg_1: BootloaderCg { header: unsafe { std::mem::zeroed() }, data: Vec::new() },
+            },
+            flashfs: FlashFS {
+                root: crate::builder::chain::flashfs::FileSystemRoot::new(),
+            },
+            layout,
+            total_blocks: layout.total_blocks(size),
+        }
+    }
 }
 
 impl NandSkeleton {
@@ -586,10 +653,15 @@ impl NandSkeleton {
         logical_image[..header_bytes.len()].copy_from_slice(header_bytes);
 
         // 7. FlashFS (Usually at 0x100000)
-        let fs_blob = self.flashfs.root.clone().serialize_logical(layout);
-        let fs_anchor = 0x100000;
-        if fs_anchor + fs_blob.len() <= logical_image.len() {
-            logical_image[fs_anchor..fs_anchor + fs_blob.len()].copy_from_slice(&fs_blob);
+        // Optional for Big Block and eMMC/4G
+        let skip_fs = matches!(layout, NandLayout::Bb | NandLayout::Emmc) && self.flashfs.root.entries.is_empty();
+        
+        if !skip_fs {
+            let fs_blob = self.flashfs.root.clone().serialize_logical(layout);
+            let fs_anchor = 0x100000;
+            if fs_anchor + fs_blob.len() <= logical_image.len() {
+                logical_image[fs_anchor..fs_anchor + fs_blob.len()].copy_from_slice(&fs_blob);
+            }
         }
 
         Ok(logical_image)

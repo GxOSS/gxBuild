@@ -6,7 +6,22 @@
 - Assemble-Xell = Assemble XeLL image
 
 - Identify-Patch function
-- Load-Ini function
+
+- Blocks line 25
+
+Update ImageType:
+- Single
+- Split
+- Devkit
+- Devgl
+- Rgbuild
+- Xdkbuild
+- Onef
+- Twof
+
+Make FlashFS parse and build optional for BB and 4G
+
+
 
 Weak Files:
 kv.rs

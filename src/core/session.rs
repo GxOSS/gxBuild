@@ -40,10 +40,9 @@ pub enum InternalCommand {
     SessionDelete { id: u8 },
     SessionClear,
     SessionRun,
-    SessionRunOnce { id: u8 }, // Run a single command in the queue.
-    SessionClose,
     PythonShell,
     RunPythonScript { path: PathBuf },
+    CreateImage { layout: crate::builder::tools::blocks::NandLayout },
 }
 
 impl InternalCommand {
@@ -55,8 +54,7 @@ impl InternalCommand {
             Self::SessionDelete { .. } => 100,
             Self::SessionClear => 100,
             Self::SessionRun => 100,
-            Self::SessionRunOnce { .. } => 100,
-            Self::SessionClose => 100,
+            Self::CreateImage { .. } => 100,
             Self::ParseIni { .. } => 100,
             Self::ParseImage { .. } => 100,
             Self::ParseKey { .. } => 100,
@@ -262,7 +260,19 @@ impl Session {
             println!("[Session] Executing (PriorityScore: {}, Seq: {}): {:?}", 
                      priority, queued_cmd.sequence_id, queued_cmd.command);
                      
-            match queued_cmd.command {
+            self.execute_command(queued_cmd.command)?;
+        }
+        println!("[Session] Finished priority queue batch.");
+        Ok(())
+    }
+
+    pub fn run_once(&mut self, command: InternalCommand) -> Result<(), String> {
+        println!("[Session] Running executed command actively out of queue...");
+        self.execute_command(command)
+    }
+
+    pub fn execute_command(&mut self, command: InternalCommand) -> Result<(), String> {
+        match command {
                 InternalCommand::ExtractAll => {
                     println!(" -> Extracting all components...");
                     if let Some(nand) = &self.active_nand {
@@ -540,15 +550,12 @@ impl Session {
                     // This is inherently a no-op loop trigger since `run()` is already running.
                     println!(" -> SessionRun triggered.");
                 }
-                InternalCommand::SessionRunOnce { id } => {
-                    println!(" -> Running session command {} once...", id);
-                }
-                InternalCommand::SessionClose => {
-                    println!(" -> Closing session...");
+                InternalCommand::CreateImage { layout } => {
+                    println!(" -> Creating blank NAND image with layout {:?}...", layout);
+                    self.active_nand = Some(NandSkeleton::new_blank(layout));
                 }
             }
-        }
-        println!("[Session] Finished priority queue batch.");
+        
         Ok(())
     }
 }

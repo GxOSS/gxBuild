@@ -179,7 +179,8 @@ fn handle_build(args: GgxArgs, session: &mut Session) {
     // but in a real scenario we'd look in all subfolders or a config.
     let version = "17559"; // TODO: make this configurable or scanned
     let build_type_str = format!("{:?}", args.build_type).to_lowercase();
-    let console_str = args.console.map(|c| format!("{:?}", c).to_lowercase()).unwrap_or_else(|| "xenon".to_string());
+    let console_type = args.console.unwrap_or(CliConsoleType::xenon);
+    let console_str = format!("{:?}", console_type).to_lowercase();
 
     let ini_filename = format!("_{}.ini", build_type_str);
     let ini_path = fw_dir.join(version).join(ini_filename);
@@ -189,6 +190,25 @@ fn handle_build(args: GgxArgs, session: &mut Session) {
     println!("Console:   {}", console_str);
     println!("INI Path:  {:?}", ini_path);
     println!("-------------------------------\n");
+
+    // Determine layout from console type
+    let layout = match console_type {
+        CliConsoleType::xenon => crate::builder::tools::blocks::NandLayout::Xsb,
+        CliConsoleType::zephyr | CliConsoleType::falcon | CliConsoleType::jasper => {
+            crate::builder::tools::blocks::NandLayout::Sb
+        }
+        CliConsoleType::jasper256 | CliConsoleType::jasper512 | CliConsoleType::jasperbb | CliConsoleType::jasperbigffs => {
+            crate::builder::tools::blocks::NandLayout::Bb
+        }
+        CliConsoleType::trinity => crate::builder::tools::blocks::NandLayout::Sb,
+        CliConsoleType::trinitybigffs => crate::builder::tools::blocks::NandLayout::Bb,
+        CliConsoleType::corona => crate::builder::tools::blocks::NandLayout::Sb,
+        CliConsoleType::corona4g | CliConsoleType::winchester => crate::builder::tools::blocks::NandLayout::Emmc,
+        _ => crate::builder::tools::blocks::NandLayout::Sb,
+    };
+
+    // 3. Initialize NAND (Blank synthesis)
+    session.enqueue(crate::core::session::InternalCommand::CreateImage { layout });
 
     if let Ok(content) = std::fs::read_to_string(&ini_path) {
         // We use the console string as the target section in the INI
