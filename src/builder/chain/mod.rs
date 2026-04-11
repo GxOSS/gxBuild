@@ -8,7 +8,6 @@ pub mod smc;
 pub mod flashfs;
 pub mod kv;
 
-use zerocopy::FromBytes;
 use zerocopy::byteorder::{U16, U32, BigEndian};
 use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa, sha};
 use crate::builder::chain::smc::RawSmc;
@@ -205,7 +204,7 @@ pub fn decrypt_chain(
     ce: &mut ce::BootloaderCe,
     cf: &mut cf::BootloaderCf,
     cg: &mut cg::BootloaderCg,
-    cpukey: &[u8; 16],
+    _cpukey: &[u8; 16],
 ) -> Result<(), String> {
     // 1. Decrypt CB using 1BL Key or CPU Key (depending on RGH)
     // For simplicity, we assume retail 1BL key here; caller handles RGH variants

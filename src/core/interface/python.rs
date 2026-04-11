@@ -22,7 +22,7 @@
 
 use std::path::Path;
 use std::fs;
-use rustpython_vm::{Interpreter, Settings};
+use rustpython_vm::Interpreter;
 
 #[cfg(feature = "tui")]
 use rustyline::DefaultEditor;

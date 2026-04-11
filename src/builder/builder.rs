@@ -484,8 +484,8 @@ impl NandSkeleton {
         }
 
         // 5. Run decryption chain using the mandatory CPU Key
-        let mut cf_final = cf_0.as_mut().ok_or("CF_0 stage not found in NAND image")?;
-        let mut cg_final = cg_0.as_mut().ok_or("CG_0 stage not found in NAND image")?;
+        let cf_final = cf_0.as_mut().ok_or("CF_0 stage not found in NAND image")?;
+        let cg_final = cg_0.as_mut().ok_or("CG_0 stage not found in NAND image")?;
 
         decrypt_chain(
             bootloaders.cb.as_mut().or(bootloaders.cb_a.as_mut()).ok_or("CB stage missing")?,

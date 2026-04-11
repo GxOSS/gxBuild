@@ -1,4 +1,3 @@
-use zerocopy::FromBytes;
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum NandLayout {
@@ -154,7 +153,7 @@ pub fn unecc(image: &[u8]) -> Vec<u8> {
 /// Expands a 0x200-byte chunked image into a 0x210-byte aligned image with proper spare layouts.
 pub fn add_spare(image: &[u8], layout: NandLayout, blockstart: usize) -> Vec<u8> {
     let page_size = 0x200;
-    let spare_size = 0x10;
+    let _spare_size = 0x10;
     let page_with_spare_size = 0x210;
 
     let total_pages = (image.len() + page_size - 1) / page_size;

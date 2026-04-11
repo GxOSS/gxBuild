@@ -121,7 +121,7 @@ impl BootloaderCg {
     ) -> Result<Vec<u8>, String> {
         let original_size = self.header.original_size.get() as usize;
         let new_size = self.header.new_size.get() as usize;
-        let size_of_compressed = self.header.header.size.get() as usize - std::mem::size_of::<BootloaderCgHeader>();
+        let _size_of_compressed = self.header.header.size.get() as usize - std::mem::size_of::<BootloaderCgHeader>();
 
         if base_data.len() < original_size {
             return Err("Base data provided is smaller than original_size".into());

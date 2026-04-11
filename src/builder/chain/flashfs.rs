@@ -357,7 +357,7 @@ impl FileSystemRoot {
             
             // Write payload chunk
             let mut chunk = vec![0u8; 0x200];
-            let read_bytes = data_cursor.read(&mut chunk).unwrap_or(0);
+            let _read_bytes = data_cursor.read(&mut chunk).unwrap_or(0);
             image[page_offset..page_offset + 0x200].copy_from_slice(&chunk);
         }
     }
