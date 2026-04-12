@@ -15,7 +15,7 @@ use crate::builder::chain::smc::RawSmc;
 
 pub const ONEBL_KEY: [u8; 16] = [
     0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7,
-    0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0x47,
+    0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA,
 ];
 
 #[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
@@ -226,11 +226,19 @@ pub fn decrypt_chain(
     cg_1: Option<&mut cg::BootloaderCg>,
     _cpukey: &[u8; 16],
 ) -> Result<(), String> {
-    // 1. Decrypt CB using 1BL Key or CPU Key (depending on RGH)
+    // Capture nonce BEFORE decrypt: xenon-bltool cb_decrypt writes the derived RC4 key
+    // back into hdr->key in-place, so cb.data[0..16] is overwritten after decrypt().
+    let mut cb_nonce = [0u8; 16];
+    if cb.data.len() >= 16 {
+        cb_nonce.copy_from_slice(&cb.data[0..16]);
+    }
+
+    // 1. Decrypt CB using 1BL Key.
     cb.decrypt(&ONEBL_KEY);
-    
-    // 2. Derive CB Key (used for CD, CE)
-    let derived = excrypt::hmac_sha(&ONEBL_KEY, &[&cb.data[0..16]])
+
+    // 2. Derive CB Key from the original nonce (not the overwritten key).
+    //    ExCryptHmacSha(onebl_key, nonce) → cb_key.
+    let derived = excrypt::hmac_sha(&ONEBL_KEY, &[&cb_nonce])
         .map_err(|e| format!("CB key derivation failed: {}", e))?;
     let mut cb_key = [0u8; 16];
     cb_key.copy_from_slice(&derived[..16]);
@@ -242,11 +250,11 @@ pub fn decrypt_chain(
     if let Some(cb_b_bl) = cb_b {
         cb_b_bl.decrypt_v1(&cb_key, _cpukey);
     }
- 
+
     // 3. Decrypt the rest of the chain
     cd.decrypt(&cb_key, None);
     ce.decrypt(&cb_key);
-    
+
     // Decrypt Updates (Slot 0 and Slot 1)
     if let (Some(cf), Some(cg)) = (cf_0, cg_0) {
         cf.decrypt(&ONEBL_KEY);
@@ -265,7 +273,7 @@ pub fn decrypt_chain(
             cg.decrypt(&cg_hmac);
         }
     }
- 
+
     Ok(())
 }
 
@@ -283,20 +291,25 @@ pub fn encrypt_chain(
     smc: &mut RawSmc,
     cpukey: &[u8; 16],
 ) -> Result<(), String> {
-    // RC4 is symmetric, so we reuse the decrypt methods
-    
-    // 1. Calculate and apply FixPerBoxDigest to SMC if needed
-    let derived = excrypt::hmac_sha(&ONEBL_KEY, &[&cb.data[0..16]])
+    // RC4 is symmetric, so we reuse the decrypt methods.
+    // When encrypting, the chain is in DECRYPTED state, so cb.data[0..16] is still
+    // the original nonce (not yet overwritten by decrypt). Capture it for cb_key derivation.
+    let mut cb_nonce = [0u8; 16];
+    if cb.data.len() >= 16 {
+        cb_nonce.copy_from_slice(&cb.data[0..16]);
+    }
+
+    let derived = excrypt::hmac_sha(&ONEBL_KEY, &[&cb_nonce])
         .map_err(|e| format!("CB key derivation failed: {}", e))?;
     let mut cb_key = [0u8; 16];
     cb_key.copy_from_slice(&derived[..16]);
- 
+
     let digest = fix_per_box_digest(&smc.data, &cb.header, &cb.data, &cb_key, cpukey)?;
     if cb.data.len() >= 0x20 {
         cb.data[0x10..0x20].copy_from_slice(&digest);
     }
- 
-    // 2. Encrypt in order
+
+    // Encrypt in reverse order (innermost first).
     // Slot 1
     if let (Some(cf), Some(cg)) = (cf_1, cg_1) {
         if cf.data.len() >= 0x20 {
@@ -316,9 +329,8 @@ pub fn encrypt_chain(
         }
         cf.decrypt(&ONEBL_KEY);
     }
-    
+
     ce.decrypt(&cb_key);
-    // 2. Encrypt CB_X/CB_B using derived key
     if let Some(cb_x_bl) = cb_x {
         cb_x_bl.decrypt_v1(&cb_key, &[0u8; 16]);
     }
@@ -328,6 +340,6 @@ pub fn encrypt_chain(
     cd.decrypt(&cb_key, None);
 
     cb.decrypt(&ONEBL_KEY);
- 
+
     Ok(())
 }

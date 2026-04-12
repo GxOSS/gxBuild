@@ -1,5 +1,6 @@
 /target
 /standalone
+/scratch
 Cargo.lock
 errors.log
 Cargo_errors.txt

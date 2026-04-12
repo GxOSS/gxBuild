@@ -47,7 +47,7 @@ pub enum InternalCommand {
     PythonShell,
     #[cfg(feature = "python")]
     RunPythonScript { path: PathBuf },
-    CreateImage { layout: crate::builder::tools::blocks::NandLayout },
+    CreateImage { layout: crate::core::data::blocks::NandLayout },
     ExtractStfs { path: PathBuf, target_dir: PathBuf },
 }
 
@@ -339,9 +339,11 @@ impl Session {
                     println!(" -> Building image to {:?}...", output);
                     if let Some(nand) = &self.active_nand {
                         let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
+                        let layout = nand.layout;
                         match nand.build(cpukey) {
-                            Ok(bytes) => {
-                                if let Err(e) = std::fs::write(&output, bytes) {
+                            Ok(clean_bytes) => {
+                                let finalized_bytes = crate::core::data::blocks::NandProcessor::finalize_nand(&clean_bytes, layout);
+                                if let Err(e) = std::fs::write(&output, finalized_bytes) {
                                     eprintln!(" -> Failed to write build output: {}", e);
                                 } else {
                                     println!(" -> Build completed successfully.");
@@ -405,12 +407,29 @@ impl Session {
                 }
                 InternalCommand::ParseImage { path, key } => {
                     println!(" -> Parsing image {:?}...", path);
-                    match NandSkeleton::parse_nand(&path, key.unwrap_or([0u8; 16])) {
-                        Ok(nand) => {
-                            self.active_nand = Some(nand);
-                            println!(" -> Successfully parsed NAND from {:?}", path);
+                    match fs::read(&path) {
+                        Ok(raw_data) => {
+                            if let Ok(layout) = crate::core::data::blocks::NandLayout::detect(&raw_data) {
+                                // Scan FlashFS from RAW image before preprocessing
+                                let flashfs = crate::builder::chain::flashfs::FlashFS::scan_physical(&raw_data, &layout);
+                                
+                                match crate::core::data::blocks::NandProcessor::preprocess_nand(&raw_data) {
+                                    Ok((clean_data, layout)) => {
+                                        match NandSkeleton::parse_clean(clean_data, layout, key.unwrap_or([0u8; 16]), flashfs) {
+                                            Ok(nand) => {
+                                                self.active_nand = Some(nand);
+                                                println!(" -> Successfully parsed NAND from {:?} (Layout: {:?})", path, layout);
+                                            }
+                                            Err(e) => eprintln!(" -> Failed to interpret clean NAND: {}", e),
+                                        }
+                                    }
+                                    Err(e) => eprintln!(" -> Failed to pre-process NAND image: {}", e),
+                                }
+                            } else {
+                                eprintln!(" -> Failed to detect NAND layout for {:?}", path);
+                            }
                         }
-                        Err(e) => eprintln!(" -> Failed to parse NAND: {}", e),
+                        Err(e) => eprintln!(" -> Failed to read image file: {}", e),
                     }
                 }
                 InternalCommand::ParseKey { key } => {
@@ -436,10 +455,10 @@ impl Session {
                 InternalCommand::ParseFlashfs { path } => {
                     println!(" -> Preparing to build flashfs from folder {:?}...", path);
                     if let Some(nand) = &mut self.active_nand {
-                        if matches!(nand.layout, crate::builder::tools::blocks::NandLayout::Emmc) {
+                        if matches!(nand.layout, crate::core::data::blocks::NandLayout::Emmc) {
                             return Err("eMMC FlashFS building/injection is not yet implemented (different metadata structure).".to_string());
                         }
-                        let fs_start = match nand.layout { crate::builder::tools::blocks::NandLayout::Bb => 0x1E0, _ => 0x4E };
+                        let fs_start = match nand.layout { crate::core::data::blocks::NandLayout::Bb => 0x1E0, _ => 0x4E };
                         match crate::builder::chain::flashfs::FileSystemRoot::build_from_folder(&mut nand.image, &nand.layout, &path, fs_start) {
                             Ok(new_root) => {
                                 nand.flashfs.root = new_root;
@@ -664,7 +683,7 @@ impl Session {
                     if !self.pending_assets.is_empty() {
                         println!(" -> Finalizing FlashFS with {} collected assets...", self.pending_assets.len());
                         if let Some(nand) = &mut self.active_nand {
-                            let fs_start = match nand.layout { crate::builder::tools::blocks::NandLayout::Bb => 0x1E0, _ => 0x4E };
+                            let fs_start = match nand.layout { crate::core::data::blocks::NandLayout::Bb => 0x1E0, _ => 0x4E };
                             match crate::builder::chain::flashfs::FileSystemRoot::build_from_memory(&mut nand.image, &nand.layout, &self.pending_assets, fs_start) {
                                 Ok(new_root) => {
                                     nand.flashfs.root = new_root;

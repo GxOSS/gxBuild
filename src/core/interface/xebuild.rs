@@ -347,17 +347,17 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
 
     // Determine layout from console type
     let layout = match console_type {
-        CliConsoleType::xenon => crate::builder::tools::blocks::NandLayout::Xsb,
+        CliConsoleType::xenon => crate::core::data::blocks::NandLayout::Xsb,
         CliConsoleType::zephyr | CliConsoleType::falcon | CliConsoleType::jasper => {
-            crate::builder::tools::blocks::NandLayout::Sb
+            crate::core::data::blocks::NandLayout::Sb
         }
         CliConsoleType::jasper256 | CliConsoleType::jasper512 | CliConsoleType::jasperbb | CliConsoleType::jasperbigffs => {
-            crate::builder::tools::blocks::NandLayout::Bb
+            crate::core::data::blocks::NandLayout::Bb
         }
-        CliConsoleType::trinity => crate::builder::tools::blocks::NandLayout::Sb,
-        CliConsoleType::trinitybigffs => crate::builder::tools::blocks::NandLayout::Bb,
-        CliConsoleType::corona => crate::builder::tools::blocks::NandLayout::Sb,
-        CliConsoleType::corona4g | CliConsoleType::winchester => crate::builder::tools::blocks::NandLayout::Emmc,
+        CliConsoleType::trinity => crate::core::data::blocks::NandLayout::Sb,
+        CliConsoleType::trinitybigffs => crate::core::data::blocks::NandLayout::Bb,
+        CliConsoleType::corona => crate::core::data::blocks::NandLayout::Sb,
+        CliConsoleType::corona4g | CliConsoleType::winchester => crate::core::data::blocks::NandLayout::Emmc,
     };
 
     // 3. Initialize NAND (Parse from source or create blank)
@@ -372,6 +372,12 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         let discovery_targets = [
             data_dir.join("nanddump.bin"),
             fw_dir.join("nanddump.bin"),
+            data_dir.join("nanddump1.bin"),
+            fw_dir.join("nanddump1.bin"),
+            data_dir.join("nanddump2.bin"),
+            fw_dir.join("nanddump2.bin"),
+            data_dir.join("nanddump"),
+            fw_dir.join("nanddump"),
             data_dir.join("updflash.bin"),
             fw_dir.join("updflash.bin"),
         ];

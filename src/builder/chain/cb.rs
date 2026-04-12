@@ -164,10 +164,13 @@ impl BootloaderCb {
 
         if self.data.len() < payload_len { return; }
 
+        // C: ExCryptHmacSha(onebl_key, ..., hdr->key, ..., hdr->key, ...)
+        // The derived key is written back into hdr->key (data[0..16]) in-place.
         if let Ok(derived_key) = excrypt::hmac_sha(onebl_key, &[&self.data[0..16]]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
-            
+            // Write back in-place, matching xenon-bltool cb_decrypt behaviour.
+            self.data[0..16].copy_from_slice(&decrypt_key);
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }
@@ -181,10 +184,11 @@ impl BootloaderCb {
 
         if self.data.len() < payload_len { return; }
 
+        // C: ExCryptHmacSha(cb_a_key, cb_b_key, cpu_key, ..., cb_b_key) — writes back in-place.
         if let Ok(derived_key) = excrypt::hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
-            
+            self.data[0..16].copy_from_slice(&decrypt_key);
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }
