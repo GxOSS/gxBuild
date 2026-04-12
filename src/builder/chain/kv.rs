@@ -8,23 +8,20 @@ use zerocopy::FromBytes;
 use zerocopy::byteorder::{U16, BigEndian};
 use crate::builder::deps::excrypt::{self, Rc4};
 
+/// Keyvault record header — covers the first 0x110 bytes.
+/// All offsets confirmed against J-Runner Nand.cs lines 674-682.
+/// Fields beyond 0x110 (console_id @ 0x9CA, osig @ 0xC92, mfdate @ 0x9E4)
+/// live far outside this struct and are accessed via sparse accessors below.
 #[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy, Debug)]
 #[repr(C)]
 pub struct KeyvaultRecord {
-    pub hmac: [u8; 0x10],           // 0x00
-    pub unused0: [u8; 0x0C],        // 0x10
-    pub version: U16<BigEndian>,    // 0x1C
-    pub unused1: [u8; 0x92],        // 0x1E -> 0xB0
-    pub serial: [u8; 12],           // 0xB0
-    pub unused2: [u8; 0x06],        // 0xBC -> 0xC2
-    pub console_id: [u8; 5],        // 0x9CA
-    pub unused3: [u8; 0x01],        // 0xC7
-    pub region: [u8; 2],            // 0xC8
-    pub unused4: [u8; 0x36],        // 0xCA -> 0x100
-    pub dvd_key: [u8; 16],          // 0x100
-    // OSIG and other fields are at much higher offsets (0x9CA, 0xC92)
-    // We'll use accessors for those to keep this struct from being 4KB+ if possible, 
-    // or just defined the whole 16KB if we want to be pure.
+    pub hmac: [u8; 0x10],           // 0x000 - HMAC-SHA1 nonce (RC4 seed)
+    pub unused0: [u8; 0x0C],        // 0x010
+    pub version: U16<BigEndian>,    // 0x01C
+    pub unused1: [u8; 0x92],        // 0x01E..0x0B0
+    pub serial: [u8; 12],           // 0x0B0 - Console serial number (ASCII)
+    pub unused2: [u8; 0x50],        // 0x0BC..0x10C
+    pub dvd_key: [u8; 16],          // 0x100 - DVD encryption key
 }
 
 #[derive(Clone)]

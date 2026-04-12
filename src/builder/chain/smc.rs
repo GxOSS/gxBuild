@@ -26,8 +26,14 @@ use crate::builder::deps::excrypt::{self, ExCryptRsa};
 
 #[derive(Clone, Debug)]
 pub struct SmcMetadata {
-    pub version: u8,
-    pub motherboard_id: u8,
+    /// Console type nibble: (SMC[0x100] >> 4) & 0xF
+    /// 1=Xenon 2=Zephyr 3=Falcon 4=Jasper 5=Trinity 6=Corona 7=Winchester
+    /// (matches J-Runner patch_SMC console_types array)
+    pub console_type: u8,
+    /// Full SMC[0x100] byte (console type + lower nibble flags)
+    pub type_byte: u8,
+    pub major_version: u8,   // SMC[0x101]
+    pub minor_version: u8,   // SMC[0x102]
 }
 
 #[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
@@ -58,11 +64,14 @@ impl Smc {
     }
 
     pub fn populate_metadata(&mut self) {
-        if self.data.len() < 0x102 { return; }
-        // Standard SMC layout: offset 0x100 is motherboard ID, 0x101 is version
+        if self.data.len() < 0x103 { return; }
+        // J-Runner patch_SMC: smctype = (SMC[0x100] >> 4) & 0xF
+        // SMC[0x101] = major version, SMC[0x102] = minor version
         self.metadata = Some(SmcMetadata {
-            motherboard_id: self.data[0x100],
-            version: self.data[0x101],
+            console_type: (self.data[0x100] >> 4) & 0xF,
+            type_byte: self.data[0x100],
+            major_version: self.data[0x101],
+            minor_version: self.data[0x102],
         });
     }
 
@@ -122,10 +131,12 @@ impl RawSmc {
     }
 
     pub fn populate_metadata(&mut self) {
-        if self.data.len() < 0x102 { return; }
+        if self.data.len() < 0x103 { return; }
         self.metadata = Some(SmcMetadata {
-            motherboard_id: self.data[0x100],
-            version: self.data[0x101],
+            console_type: (self.data[0x100] >> 4) & 0xF,
+            type_byte: self.data[0x100],
+            major_version: self.data[0x101],
+            minor_version: self.data[0x102],
         });
     }
 
