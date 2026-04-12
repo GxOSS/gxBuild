@@ -19,7 +19,6 @@ General:
 - Error Handler / Saftey net
 
 Parsing:
-- STFS PIRS
 - Shadowboot
 - XDK Recovery
 

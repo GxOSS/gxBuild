@@ -8,7 +8,8 @@ pub mod smc;
 pub mod flashfs;
 pub mod kv;
 
-use zerocopy::byteorder::{U16, U32, BigEndian};
+use zerocopy::byteorder::{BigEndian as ZBigEndian, U16, U32};
+    
 use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
 use crate::builder::chain::smc::RawSmc;
 
@@ -20,13 +21,12 @@ pub const ONEBL_KEY: [u8; 16] = [
 #[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
 #[repr(C)]
 pub struct BootloaderHeader {
-    pub magic: U16<BigEndian>,
-    pub version: U16<BigEndian>,
-    pub pairing: U16<BigEndian>,
-    pub flags: U16<BigEndian>,
-    pub entrypoint: U32<BigEndian>,
-    pub size: U32<BigEndian>,
-    pub salt: [u8; 16],
+    pub magic: U16<ZBigEndian>,
+    pub version: U16<ZBigEndian>,
+    pub pairing: U16<ZBigEndian>,
+    pub flags: U16<ZBigEndian>,
+    pub entrypoint: U32<ZBigEndian>,
+    pub size: U32<ZBigEndian>,
 }
 
 impl BootloaderHeader {
@@ -89,11 +89,16 @@ impl BootloaderGeneric {
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
+        let payload_len = size_aligned as usize - std::mem::size_of::<BootloaderHeader>();
 
-        // Size minus the Generic Header is the hashable payload
+        if self.data.len() < payload_len { return; }
+
+        // HMAC key/salt is at data[0..16]
+        // Rotsum processes header (16) + payload skipping key and signature
+        // For Generic (SC/CD/CE), that's usually header + data[0x110..]
         if let Ok(hash) = excrypt::rot_sum_sha(
-            unsafe { std::slice::from_raw_parts(&self.header as *const _ as *const u8, 0x10) },
-            &self.data[..(size_aligned as usize - std::mem::size_of::<BootloaderGenericHeader>())],
+            &zerocopy::IntoBytes::as_bytes(&self.header.header)[..0x10],
+            &self.data[0x110..payload_len], 
         ) {
             sha_out.copy_from_slice(&hash);
         }
@@ -103,21 +108,27 @@ impl BootloaderGeneric {
         let mut bl_hash = [0u8; 0x14];
         self.calculate_rotsum(&mut bl_hash);
 
-        excrypt::verify_signature(&self.header.signature, &bl_hash, salt, pubkey).unwrap_or(false)
+        if self.data.len() < 0x110 { return false; }
+        let signature: &[u8; 256] = self.data[0x10..0x110].try_into().expect("Slice to array conversion failed");
+
+        excrypt::verify_signature(signature, &bl_hash, salt, pubkey).unwrap_or(false)
     }
 
     pub fn decrypt(&mut self, dec_key: &[u8; 16]) {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
-        let payload_size = size_aligned as usize - std::mem::size_of::<BootloaderGenericHeader>();
+        let payload_size = size_aligned as usize - std::mem::size_of::<BootloaderHeader>();
 
-        // High-level HMAC-SHA and RC4
-        if let Ok(derived_key) = excrypt::hmac_sha(dec_key, &[&self.header.header.salt]) {
+        if self.data.len() < payload_size { return; }
+
+        // Salt/Key is at the start of the payload data[0..16]
+        if let Ok(derived_key) = excrypt::hmac_sha(dec_key, &[&self.data[0..16]]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
             
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
-                let _ = rc4.crypt(&mut self.data[..payload_size]);
+                // Decryption starts after the key
+                let _ = rc4.crypt(&mut self.data[0x10..payload_size]);
             }
         }
     }
@@ -172,21 +183,25 @@ impl Xell {
 /// This matches J-Runner's FixPerBoxDigest implementation.
 pub fn fix_per_box_digest(
     smc_data: &[u8],
-    cb_dec: &[u8],
+    _cb_header: &BootloaderHeader,
+    cb_payload: &[u8],
     cb_key: &[u8; 16],
     cpukey: &[u8; 16],
 ) -> Result<[u8; 16], String> {
     let mut digest = [0u8; 0x30];
     
+    if cb_payload.len() < 0x20 {
+        return Err("CB payload too small for digest calculation".into());
+    }
+
     // 1. Calculate SMC Hash (of the raw/encrypted SMC data)
-    // Matches J-Runner/RGBuild CalculateSMCHash
     let smc_hash = excrypt::calculate_smc_hash(smc_data);
     
     // 2. Build the 0x30-byte digest
     digest[0x0..0x10].copy_from_slice(cb_key);
-    digest[0x10..0x13].copy_from_slice(&cb_dec[0x20..0x23]); // Pairing Data (at offset 0x20 of CB)
-    digest[0x13] = cb_dec[0x23]; // LDV
-    digest[0x14..0x20].copy_from_slice(&cb_dec[0x24..0x30]); // Reserved
+    digest[0x10..0x13].copy_from_slice(&cb_payload[0..3]); // Pairing Data
+    digest[0x13] = cb_payload[3]; // LDV
+    digest[0x14..0x20].copy_from_slice(&cb_payload[4..16]); // Reserved (12 bytes)
     digest[0x20..0x30].copy_from_slice(&smc_hash);           // SMC Hash (16 bytes)
     
     // 3. HMAC-SHA1(CPUKey, Digest)
@@ -200,70 +215,119 @@ pub fn fix_per_box_digest(
 
 pub fn decrypt_chain(
     cb: &mut cb::BootloaderCb,
-    sc: Option<&mut sc::BootloaderSc>,
+    cb_x: Option<&mut cb::BootloaderCb>,
+    cb_b: Option<&mut cb::BootloaderCb>,
+    _sc: Option<&mut sc::BootloaderSc>,
     cd: &mut cd::BootloaderCd,
     ce: &mut ce::BootloaderCe,
-    cf: &mut cf::BootloaderCf,
-    cg: &mut cg::BootloaderCg,
+    cf_0: Option<&mut cf::BootloaderCf>,
+    cg_0: Option<&mut cg::BootloaderCg>,
+    cf_1: Option<&mut cf::BootloaderCf>,
+    cg_1: Option<&mut cg::BootloaderCg>,
     _cpukey: &[u8; 16],
 ) -> Result<(), String> {
     // 1. Decrypt CB using 1BL Key or CPU Key (depending on RGH)
-    // For simplicity, we assume retail 1BL key here; caller handles RGH variants
     cb.decrypt(&ONEBL_KEY);
     
-    // 2. Derive CB Key (used for CD, CE, and FixPerBoxDigest)
-    let derived = excrypt::hmac_sha(&ONEBL_KEY, &[&cb.header.header.salt])
+    // 2. Derive CB Key (used for CD, CE)
+    let derived = excrypt::hmac_sha(&ONEBL_KEY, &[&cb.data[0..16]])
         .map_err(|e| format!("CB key derivation failed: {}", e))?;
     let mut cb_key = [0u8; 16];
     cb_key.copy_from_slice(&derived[..16]);
 
-    // 3. Decrypt the rest of the chain
-    if let Some(sc_bl) = sc {
-        sc_bl.decrypt(&ONEBL_KEY);
+    // Handle CB_X / CB_B if present
+    if let Some(cb_x_bl) = cb_x {
+        cb_x_bl.decrypt_v1(&cb_key, &[0u8; 16]); // RGH3 CB_X uses zeroed CPU key
     }
-    
+    if let Some(cb_b_bl) = cb_b {
+        cb_b_bl.decrypt_v1(&cb_key, _cpukey);
+    }
+ 
+    // 3. Decrypt the rest of the chain
     cd.decrypt(&cb_key, None);
     ce.decrypt(&cb_key);
-    cf.decrypt(&ONEBL_KEY);
-    cg.decrypt(&cf.header.cg_hmac); // CG uses CF's HMAC key
+    
+    // Decrypt Updates (Slot 0 and Slot 1)
+    if let (Some(cf), Some(cg)) = (cf_0, cg_0) {
+        cf.decrypt(&ONEBL_KEY);
+        if cf.data.len() >= 0x20 {
+            let mut cg_hmac = [0u8; 16];
+            cg_hmac.copy_from_slice(&cf.data[0x10..0x20]);
+            cg.decrypt(&cg_hmac);
+        }
+    }
 
+    if let (Some(cf), Some(cg)) = (cf_1, cg_1) {
+        cf.decrypt(&ONEBL_KEY);
+        if cf.data.len() >= 0x20 {
+            let mut cg_hmac = [0u8; 16];
+            cg_hmac.copy_from_slice(&cf.data[0x10..0x20]);
+            cg.decrypt(&cg_hmac);
+        }
+    }
+ 
     Ok(())
 }
 
 pub fn encrypt_chain(
     cb: &mut cb::BootloaderCb,
-    sc: Option<&mut sc::BootloaderSc>,
+    cb_x: Option<&mut cb::BootloaderCb>,
+    cb_b: Option<&mut cb::BootloaderCb>,
+    _sc: Option<&mut sc::BootloaderSc>,
     cd: &mut cd::BootloaderCd,
     ce: &mut ce::BootloaderCe,
-    cf: &mut cf::BootloaderCf,
-    cg: &mut cg::BootloaderCg,
+    cf_0: Option<&mut cf::BootloaderCf>,
+    cg_0: Option<&mut cg::BootloaderCg>,
+    cf_1: Option<&mut cf::BootloaderCf>,
+    cg_1: Option<&mut cg::BootloaderCg>,
     smc: &mut RawSmc,
     cpukey: &[u8; 16],
 ) -> Result<(), String> {
     // RC4 is symmetric, so we reuse the decrypt methods
     
     // 1. Calculate and apply FixPerBoxDigest to SMC if needed
-    // In many RGH builds, the digest is stored in the decrypted CB or SMC
-    // Here we derive the key same as decryption
-    let derived = excrypt::hmac_sha(&ONEBL_KEY, &[&cb.header.header.salt])
+    let derived = excrypt::hmac_sha(&ONEBL_KEY, &[&cb.data[0..16]])
         .map_err(|e| format!("CB key derivation failed: {}", e))?;
     let mut cb_key = [0u8; 16];
     cb_key.copy_from_slice(&derived[..16]);
-
-    let cb_hdr_bytes = zerocopy::IntoBytes::as_bytes(&cb.header);
-    let digest = fix_per_box_digest(&smc.data, cb_hdr_bytes, &cb_key, cpukey)?;
-    cb.header.padding_or_args[0x10..0x20].copy_from_slice(&digest);
-
-    // 2. Encrypt in order
-    cg.decrypt(&cf.header.cg_hmac);
-    cf.decrypt(&ONEBL_KEY);
-    ce.decrypt(&cb_key);
-    cd.decrypt(&cb_key, None);
-    if let Some(sc_bl) = sc {
-        sc_bl.decrypt(&ONEBL_KEY);
+ 
+    let digest = fix_per_box_digest(&smc.data, &cb.header, &cb.data, &cb_key, cpukey)?;
+    if cb.data.len() >= 0x20 {
+        cb.data[0x10..0x20].copy_from_slice(&digest);
     }
-    cb.decrypt(&ONEBL_KEY);
+ 
+    // 2. Encrypt in order
+    // Slot 1
+    if let (Some(cf), Some(cg)) = (cf_1, cg_1) {
+        if cf.data.len() >= 0x20 {
+            let mut cg_hmac = [0u8; 16];
+            cg_hmac.copy_from_slice(&cf.data[0x10..0x20]);
+            cg.decrypt(&cg_hmac);
+        }
+        cf.decrypt(&ONEBL_KEY);
+    }
 
+    // Slot 0
+    if let (Some(cf), Some(cg)) = (cf_0, cg_0) {
+        if cf.data.len() >= 0x20 {
+            let mut cg_hmac = [0u8; 16];
+            cg_hmac.copy_from_slice(&cf.data[0x10..0x20]);
+            cg.decrypt(&cg_hmac);
+        }
+        cf.decrypt(&ONEBL_KEY);
+    }
+    
+    ce.decrypt(&cb_key);
+    // 2. Encrypt CB_X/CB_B using derived key
+    if let Some(cb_x_bl) = cb_x {
+        cb_x_bl.decrypt_v1(&cb_key, &[0u8; 16]);
+    }
+    if let Some(cb_b_bl) = cb_b {
+        cb_b_bl.decrypt_v1(&cb_key, cpukey);
+    }
+    cd.decrypt(&cb_key, None);
+
+    cb.decrypt(&ONEBL_KEY);
+ 
     Ok(())
 }
-

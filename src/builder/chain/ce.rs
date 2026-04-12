@@ -26,6 +26,13 @@ use crate::builder::chain::cf::BootloaderCf;
 use crate::builder::chain::cg::BootloaderCg;
 use zerocopy::{FromBytes, IntoBytes};
 use zerocopy::byteorder::{U16, U32, U64, BigEndian};
+use byteorder::{BigEndian as RealBigEndian, ByteOrder};
+
+#[derive(Clone, Debug)]
+pub struct CeMetadata {
+    pub target_address: u64,
+    pub uncompressed_size: u32,
+}
 
 #[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
 #[repr(C)]
@@ -45,8 +52,9 @@ struct BootloaderCompressionBlock {
 
 #[derive(Clone)]
 pub struct BootloaderCe {
-    pub header: BootloaderCeHeader,
+    pub header: BootloaderHeader,
     pub data: Vec<u8>,
+    pub metadata: Option<CeMetadata>,
     pub data_ce: Option<Vec<u8>>,
     pub data_kernel: Option<Vec<u8>>,
     pub data_hv: Option<Vec<u8>>,
@@ -54,52 +62,74 @@ pub struct BootloaderCe {
 
 impl BootloaderCe {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload) = BootloaderCeHeader::read_from_prefix(data)
+        let (header, payload) = BootloaderHeader::read_from_prefix(data)
             .map_err(|_| "Failed to parse CE header")?;
         Ok(Self {
             header: header.clone(),
             data: payload.to_vec(),
+            metadata: None,
             data_ce: None,
             data_kernel: None,
             data_hv: None,
         })
     }
 
+    pub fn populate_metadata(&mut self) {
+        if !self.is_decrypted() || self.data.len() < 0x20 { return; }
+
+        let target_address = RealBigEndian::read_u64(&self.data[0x10..0x18]);
+        let uncompressed_size = RealBigEndian::read_u32(&self.data[0x18..0x1C]);
+
+        self.metadata = Some(CeMetadata {
+            target_address,
+            uncompressed_size,
+        });
+    }
+
     pub fn is_decrypted(&self) -> bool {
-        self.header.unknown.get() == 0x00000000
+        if self.data.len() < 0x20 { return false; }
+        // 'unknown' field is at offset 0x1C into payload (absolute 0x2C)
+        &self.data[0x1C..0x20] == &[0, 0, 0, 0]
     }
 
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
-        let size = self.header.header.size.get();
+        let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
+        let payload_len = (size_aligned - 0x10) as usize; // data after header
+
+        if self.data.len() < payload_len { return; }
 
         if let Ok(hash) = excrypt::rot_sum_sha(
-            &IntoBytes::as_bytes(&self.header.header)[..0x10],
-            unsafe { std::slice::from_raw_parts(&self.header.target_address as *const _ as *const u8, (size_aligned - 0x20) as usize) },
+            &IntoBytes::as_bytes(&self.header)[..0x10],
+            &self.data[0x10..payload_len], // Skip key, start at target_address (0x10 rel)
         ) {
             sha_out.copy_from_slice(&hash);
         }
     }
 
     pub fn print_info(&self) {
-        let indicator = if (self.header.header.magic.get() & 0xF000) == 0x5000 {
+        let indicator = if (self.header.magic.get() & 0xF000) == 0x5000 {
             "SE"
         } else {
             "CE"
         };
-        println!("{} version: {}", indicator, self.header.header.version.get());
-        println!("{} size: 0x{:x}", indicator, self.header.header.size.get());
+        println!("{} version: {}", indicator, self.header.version.get());
+        println!("{} size: 0x{:x}", indicator, self.header.size.get());
 
         if self.is_decrypted() {
+            // Decrypted fields: target_address at 0x10, uncompressed_size at 0x18 (rel payload)
+            let target_address = RealBigEndian::read_u64(&self.data[0x10..0x18]);
+            let uncompressed_size = RealBigEndian::read_u32(&self.data[0x18..0x1C]);
+
             println!(
                 "{} decompressed size: 0x{:x}",
                 indicator,
-                self.header.uncompressed_size.get()
+                uncompressed_size
             );
             println!(
                 "{} load address: 0x{:x}",
                 indicator,
-                self.header.target_address.get()
+                target_address
             );
         } else {
             println!("{} is encrypted", indicator);
@@ -107,24 +137,30 @@ impl BootloaderCe {
     }
 
     pub fn decrypt(&mut self, cd_key: &[u8; 16]) {
-        let size = self.header.header.size.get();
+        let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
-        let payload_size = (size_aligned - 0x20) as usize;
+        let payload_size = (size_aligned - 0x10) as usize;
 
-        if let Ok(derived_key) = excrypt::hmac_sha(cd_key, &[&self.header.header.salt]) {
+        if self.data.len() < payload_size { return; }
+
+        if let Ok(derived_key) = excrypt::hmac_sha(cd_key, &[&self.data[0..16]]) {
             let mut final_key = [0u8; 16];
             final_key.copy_from_slice(&derived_key[..16]);
 
             if let Ok(mut rc4) = Rc4::new(&final_key) {
-                let encrypted_payload_slice = unsafe { 
-                    std::slice::from_raw_parts_mut(
-                        &mut self.header.target_address as *mut _ as *mut u8, 
-                        payload_size
-                    ) 
-                };
-                let _ = rc4.crypt(encrypted_payload_slice);
+                // Encryption starts at target_address, which is 0x10 rel into payload (absolute 0x20)
+                let _ = rc4.crypt(&mut self.data[0x10..payload_size]);
             }
         }
+        
+        // After decryption, the payload after the CE header metadata is the LZX compressed buffer
+        // Metadata in CE payload after the key: target_address(8), uncompressed_size(4), unknown(4) = 16 bytes (0x10)
+        // Total plain/metadata before compressed data: 0x20 (key + target info)
+        if self.data.len() >= 0x20 {
+            self.data_ce = Some(self.data[0x20..payload_size].to_vec());
+        }
+
+        self.populate_metadata();
     }
 
     fn get_full_compressed_buffer(
@@ -172,9 +208,9 @@ impl BootloaderCe {
     }
 
     pub fn decompress(&self) -> Result<Vec<u8>, String> {
-        let size = self.header.header.size.get();
-        let _size_aligned = (size + 0xF) & 0xFFFFFFF0;
-        let uncompressed_size = self.header.uncompressed_size.get();
+        let _size = self.header.size.get();
+        if self.data.len() < 0x1C { return Err("Payload too small to read decompression size".to_string()); }
+        let uncompressed_size = RealBigEndian::read_u32(&self.data[0x18..0x1C]);
 
         let data = self.data_ce.as_ref().ok_or("No CE data available")?;
 
@@ -195,11 +231,12 @@ impl BootloaderCe {
     }
 
     pub fn apply_update(&mut self, cf: &BootloaderCf, cg: &BootloaderCg) -> Result<(), String> {
-        if cf.header.base_ver.get() != self.header.header.version.get() {
+        let cf_meta = cf.metadata.as_ref().ok_or("CF metadata missing")?;
+        if cf_meta.base_version != self.header.version.get() {
             return Err(format!(
                 "Mismatching base kernel version (CE is {}, CF expects {})",
-                self.header.header.version.get(),
-                cf.header.base_ver.get()
+                self.header.version.get(),
+                cf_meta.base_version
             ));
         }
 

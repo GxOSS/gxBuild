@@ -32,13 +32,13 @@ pub struct BootloaderScHeader {
 
 #[derive(Clone)]
 pub struct BootloaderSc {
-    pub header: BootloaderScHeader,
+    pub header: BootloaderHeader,
     pub data: Vec<u8>,
 }
 
 impl BootloaderSc {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload) = BootloaderScHeader::read_from_prefix(data)
+        let (header, payload) = BootloaderHeader::read_from_prefix(data)
             .map_err(|_| "Failed to parse SC header")?;
         Ok(Self {
             header: header.clone(),
@@ -47,13 +47,15 @@ impl BootloaderSc {
     }
 
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
-        let size = self.header.header.size.get();
+        let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
+        let payload_len = (size_aligned - 0x10) as usize; // data after header
 
-        // Signature is excluded from the hash
+        if self.data.len() < payload_len { return; }
+
         if let Ok(hash) = excrypt::rot_sum_sha(
-            &IntoBytes::as_bytes(&self.header.header)[..0x10],
-            &self.data[..(size_aligned as usize - std::mem::size_of::<BootloaderScHeader>())],
+            &IntoBytes::as_bytes(&self.header)[..0x10],
+            &self.data[0x110..payload_len], // Skip key (16) and signature (256), start at payload (0x110 rel)
         ) {
             sha_out.copy_from_slice(&hash);
         }
@@ -63,20 +65,26 @@ impl BootloaderSc {
         let mut bl_hash = [0u8; 0x14];
         self.calculate_rotsum(&mut bl_hash);
 
-        excrypt::verify_signature(&self.header.signature, &bl_hash, salt, pubkey).unwrap_or(false)
+        if self.data.len() < 0x110 { return false; }
+        let signature: &[u8; 256] = self.data[0x10..0x110].try_into().unwrap();
+
+        excrypt::verify_signature(signature, &bl_hash, salt, pubkey).unwrap_or(false)
     }
 
     pub fn decrypt(&mut self, dec_key: &[u8; 16]) {
-        let size = self.header.header.size.get();
+        let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
-        let payload_size = size_aligned as usize - std::mem::size_of::<BootloaderScHeader>();
+        let payload_size = (size_aligned - 0x10) as usize;
 
-        if let Ok(derived_key) = excrypt::hmac_sha(dec_key, &[&self.header.header.salt]) {
+        if self.data.len() < payload_size { return; }
+
+        if let Ok(derived_key) = excrypt::hmac_sha(dec_key, &[&self.data[0..16]]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
             
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
-                let _ = rc4.crypt(&mut self.data[..payload_size]);
+                // Encryption starts at signature, which is 0x10 rel into payload (absolute 0x20)
+                let _ = rc4.crypt(&mut self.data[0x10..payload_size]);
             }
         }
     }

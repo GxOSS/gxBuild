@@ -19,59 +19,87 @@
     If not, see <https://www.gnu.org/licenses/>.
 */
 
+    
+
 use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
 use zerocopy::{FromBytes, IntoBytes};
 
-#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
-#[repr(C)]
-pub struct BootloaderCbHeader {
-    pub header: BootloaderHeader,
-    pub padding_or_args: [u8; 32], // 4 * sizeof(uint64_t)
-    pub signature: [u8; 0x100],    // EXCRYPT_SIG
-    pub globals: [u8; 0x128],
-    pub devkit_pubkey: [u8; 0x110], // EXCRYPT_RSAPUB_2048
-    pub sc_key: [u8; 0x10],
-    pub sc_salt: [u8; 10],
-    pub sd_salt: [u8; 10],
+#[derive(Clone, Debug)]
+pub struct CbMetadata {
+    pub ldv: u8,
+    pub b_flags: u16,         // Often unused in v2
+    pub signature: [u8; 0x100],
     pub cd_cbb_hash: [u8; 0x14],
-    pub more_globals: [u8; 0x10],
-}
-
-impl BootloaderCbHeader {
-    pub fn new(_bytes: &[u8]) -> Self {
-        todo!()
-    }
 }
 
 #[derive(Clone)]
-#[repr(C)]
 pub struct BootloaderCb {
-    pub header: BootloaderCbHeader,
+    pub header: BootloaderHeader,
     pub data: Vec<u8>,
+    pub metadata: Option<CbMetadata>,
 }
 
 impl BootloaderCb {
+    pub fn new(_bytes: &[u8]) -> Self {
+        todo!()
+    }
+
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload) = BootloaderCbHeader::read_from_prefix(data)
+        let (header, payload) = BootloaderHeader::read_from_prefix(data)
             .map_err(|_| "Failed to parse CB header")?;
-        Ok(Self {
+        let mut cb = Self {
             header: header.clone(),
             data: payload.to_vec(),
-        })
+            metadata: None,
+        };
+        // Attempt to populate metadata if the size looks like a decrypted or valid CB
+        cb.populate_metadata();
+        Ok(cb)
+    }
+
+    pub fn populate_metadata(&mut self) {
+        if !self.is_decrypted() || self.data.len() < 0x3B6 { return; }
+
+        let mut signature = [0u8; 0x100];
+        // signature is after header (16), key (16), padding (32) = 64 bytes (Absolute 0x40)
+        // 0x40 - 0x10 (pay start) = 0x30 relative
+        signature.copy_from_slice(&self.data[0x30..0x130]); 
+
+        let mut next_hash = [0u8; 0x14];
+        // cd_cbb_hash is at Absolute 0x39C. Rel = 0x38C
+        next_hash.copy_from_slice(&self.data[0x38C..0x3A0]); 
+
+        // more_globals[1] (LDV) is at Absolute 0x3B1. Rel = 0x3A1
+        let ldv = self.data[0x3A1];
+
+        self.metadata = Some(CbMetadata {
+            ldv,
+            b_flags: 0, 
+            signature,
+            cd_cbb_hash: next_hash,
+        });
     }
 
     pub fn is_decrypted(&self) -> bool {
-        self.header.globals[0x110] == 0x80
+        if self.data.len() < 0x241 { return false; }
+        // globals[0x110] is at Absolute 0x250. 
+        // Payload (data) starts at 0x10, so 0x250 - 0x10 = 0x240
+        self.data[0x240] == 0x80
     }
 
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
-        let size = self.header.header.size.get();
+        let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
+        let payload_len = size_aligned as usize - 0x10;
 
+        if self.data.len() < payload_len { return; }
+
+        // rotsum covers first 0x10 bytes (header)
+        // and everything from globals (0x130 rel / 0x140 abs) to the end
         if let Ok(hash) = excrypt::rot_sum_sha(
-            &IntoBytes::as_bytes(&self.header.header)[..0x10],
-            &self.header.globals[..(size_aligned as usize - 0x140)],
+            &IntoBytes::as_bytes(&self.header)[..0x10],
+            &self.data[0x130..payload_len], 
         ) {
             sha_out.copy_from_slice(&hash);
         }
@@ -81,38 +109,47 @@ impl BootloaderCb {
         let mut cb_hash = [0u8; 0x14];
         self.calculate_rotsum(&mut cb_hash);
 
-        let expected_salt = b"XBOX_ROM_B\0";
-        excrypt::verify_signature(&self.header.signature, &cb_hash, expected_salt, rsa_1bl).unwrap_or(false)
+        if self.data.len() < 0x130 { return false; }
+        let signature: &[u8; 256] = self.data[0x30..0x130].try_into().unwrap(); // Absolute 0x40
+
+        let expected_salt = b"XBOX_ROM_2\0";
+        excrypt::verify_signature(signature, &cb_hash, expected_salt, rsa_1bl).unwrap_or(false)
     }
 
     pub fn print_info(&self) {
-        let magic = self.header.header.magic.get();
+        let magic = self.header.magic.get();
         let mut indicator = if (magic & 0xF000) == 0x5000 {
             "SB"
         } else {
             "CB"
         };
 
-        if (self.header.header.flags.get() & 0x800) == 0x800 {
+        if (self.header.flags.get() & 0x800) == 0x800 {
             indicator = "CB_A";
         }
 
-        if self.header.signature[0] == 0 {
+        if self.data.len() >= 0x30 && self.data[0x30] == 0 { // absolute 0x40
             indicator = "CB_B";
         }
 
-        println!("{} version: {}", indicator, self.header.header.version.get());
-        println!("{} size: 0x{:x}", indicator, self.header.header.size.get());
+        println!("{} version: {}", indicator, self.header.version.get());
+        println!("{} size: 0x{:x}", indicator, self.header.size.get());
         println!(
             "{} entrypoint: 0x{:x}",
             indicator,
-            self.header.header.entrypoint.get()
+            self.header.entrypoint.get()
         );
 
         if self.is_decrypted() {
-            println!("{} LDV: {}", indicator, self.header.more_globals[1]);
-            println!("{} next hash: {:02x?}", indicator, self.header.cd_cbb_hash);
-            if self.header.signature[0] != 0 {
+            if let Some(ref meta) = self.metadata {
+                println!("{} LDV: {}", indicator, meta.ldv);
+                println!("{} next hash: {:02x?}", indicator, meta.cd_cbb_hash);
+            } else {
+                // Fallback to raw indexing if metadata wasn't populated
+                println!("{} LDV: {}", indicator, self.data[0x391]);
+                println!("{} next hash: {:02x?}", indicator, &self.data[0x37C..0x390]);
+            }
+            if self.data.len() >= 0x30 && self.data[0x30] != 0 {
                 println!("{} signature: (requires keys to verify)", indicator);
             }
         } else {
@@ -121,50 +158,59 @@ impl BootloaderCb {
     }
 
     pub fn decrypt(&mut self, onebl_key: &[u8; 16]) {
-        let size = self.header.header.size.get();
+        let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
+        let payload_len = size_aligned as usize - 0x10;
 
-        if let Ok(derived_key) = excrypt::hmac_sha(onebl_key, &[&self.header.header.salt]) {
+        if self.data.len() < payload_len { return; }
+
+        if let Ok(derived_key) = excrypt::hmac_sha(onebl_key, &[&self.data[0..16]]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
             
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
-                let _ = rc4.crypt(&mut self.header.padding_or_args[..(size_aligned as usize - 0x20)]);
+                let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }
         }
     }
 
     pub fn decrypt_v1(&mut self, cb_a_key: &[u8; 16], cpu_key: &[u8; 16]) {
-        let size = self.header.header.size.get();
+        let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
+        let payload_len = size_aligned as usize - 0x10;
 
-        if let Ok(derived_key) = excrypt::hmac_sha(cb_a_key, &[&self.header.header.salt, cpu_key]) {
+        if self.data.len() < payload_len { return; }
+
+        if let Ok(derived_key) = excrypt::hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
             
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
-                let _ = rc4.crypt(&mut self.header.padding_or_args[..(size_aligned as usize - 0x20)]);
+                let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }
         }
     }
 
-    pub fn decrypt_v2(&mut self, cb_a_hdr: &BootloaderCbHeader, cpu_key: &[u8; 16]) {
-        let size = self.header.header.size.get();
+    pub fn decrypt_v2(&mut self, cb_a_hdr: &BootloaderHeader, cb_a_key: &[u8; 16], cpu_key: &[u8; 16]) {
+        let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
+        let payload_len = size_aligned as usize - 0x10;
+
+        if self.data.len() < payload_len { return; }
 
         // copy cb_a_hdr's BootloaderHeader and nullify flags
-        let mut cb_a_hdr_copy = cb_a_hdr.header;
+        let mut cb_a_hdr_copy = cb_a_hdr.clone();
         cb_a_hdr_copy.flags.set(0);
 
         if let Ok(derived_key) = excrypt::hmac_sha(
-            &cb_a_hdr.header.salt, 
-            &[&self.header.header.salt, cpu_key, &IntoBytes::as_bytes(&cb_a_hdr_copy)[..0x10]]
+            cb_a_key, 
+            &[&self.data[0..16], cpu_key, &IntoBytes::as_bytes(&cb_a_hdr_copy)[..0x10]]
         ) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
             
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
-                let _ = rc4.crypt(&mut self.header.padding_or_args[..(size_aligned as usize - 0x20)]);
+                let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }
         }
     }

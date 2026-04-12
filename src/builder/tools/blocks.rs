@@ -103,16 +103,23 @@ impl NandLayout {
     pub fn detect(image: &[u8]) -> Result<Self, String> {
         let len = image.len();
         match len {
-            len if len >= 0x1080000 && len <= 0x1080000 + 0x1000 => Ok(NandLayout::Xsb), // 16MB
-            len if len >= 0x4200000 && len <= 0x4200000 + 0x1000 => Ok(NandLayout::Sb),  // 64MB
-            len if len >= 0x10800000 && len <= 0x10800000 + 0x1000 => Ok(NandLayout::Bb), // 256MB
-            len if len >= 0x21000000 && len <= 0x21000000 + 0x1000 => Ok(NandLayout::Bb), // 512MB
+            // Physical Sizes (with spare)
+            len if len >= 0x1080000 && len <= 0x1080000 + 0x1000 => Ok(NandLayout::Xsb), // 16MB XSB/SB
+            len if len >= 0x4200000 && len <= 0x4200000 + 0x1000 => Ok(NandLayout::Bb),  // 64MB BB (Jasper)
+            len if len >= 0x10800000 && len <= 0x10800000 + 0x1000 => Ok(NandLayout::Bb), // 256MB BB
+            len if len >= 0x21000000 && len <= 0x21000000 + 0x1000 => Ok(NandLayout::Bb), // 512MB BB
+            
+            // Logical Sizes (no spare)
+            0x1000000 => Ok(NandLayout::Sb),   // 16MB Logical
+            0x4000000 => Ok(NandLayout::Bb),   // 64MB Logical
+            0x10000000 => Ok(NandLayout::Bb),  // 256MB Logical
+            0x20000000 => Ok(NandLayout::Bb),  // 512MB Logical
+            
+            // eMMC
+            0x3000000 => Ok(NandLayout::Emmc), // 48MB Corona 4G System
+            len if len >= 0x40000000 || (len >= 0x30000000 && len < 0x40000000) => Ok(NandLayout::Emmc), // 1GB - 4GB
             _ => {
-                if len > 0x40000000 { // 1GB+
-                    Ok(NandLayout::Emmc) // eMMC
-                } else {
-                    Err(format!("Could not detect NAND layout for size 0x{:x}", len))
-                }
+                Err(format!("Could not detect NAND layout for size 0x{:x}", len))
             }
         }
     }
@@ -159,9 +166,8 @@ pub fn unecc(image: &[u8]) -> Vec<u8> {
 
 /// Expands a 0x200-byte chunked image into a 0x210-byte aligned image with proper spare layouts.
 pub fn add_spare(image: &[u8], layout: NandLayout, blockstart: usize) -> Vec<u8> {
-    let page_size = 0x200;
-    let _spare_size = 0x10;
-    let page_with_spare_size = 0x210;
+    let page_size = layout.page_size();
+    let page_with_spare_size = layout.physical_page_size();
 
     let total_pages = (image.len() + page_size - 1) / page_size;
     let mut result = vec![0u8; total_pages * page_with_spare_size];
@@ -204,7 +210,11 @@ pub fn add_spare(image: &[u8], layout: NandLayout, blockstart: usize) -> Vec<u8>
         let write_offset = i * page_with_spare_size;
         let page_slice = &mut result[write_offset..write_offset + page_with_spare_size];
         page_slice[..page_size].copy_from_slice(&data_block);
-        page_slice[page_size..page_with_spare_size].copy_from_slice(&sparedata);
+        
+        if page_with_spare_size > page_size {
+            let spare_chunk = &sparedata[..page_with_spare_size - page_size];
+            page_slice[page_size..page_with_spare_size].copy_from_slice(spare_chunk);
+        }
 
         calculate_ecc(page_slice);
     }
@@ -212,44 +222,65 @@ pub fn add_spare(image: &[u8], layout: NandLayout, blockstart: usize) -> Vec<u8>
     result
 }
 
-/// Strips ECC/Spare data (0x10 bounds) dynamically to output clean 0x200 blocks. 
-/// Automatically handles Big Block (0x840 padding) when detected.
+/// Strips ECC/Spare data dynamically to output clean pages. 
+/// Automatically handles Big Block alignment when detected.
 pub fn remove_spare(image: &[u8]) -> Vec<u8> {
-    if image.len() >= 0x840 && image[0x800] == 0xFF && image[0x810] == 0xFF && image[0x820] == 0xFF {
-        let pages = image.len() / 0x840;
-        let mut result = vec![0u8; pages * 0x800];
-        for i in 0..pages {
-            result[i * 0x800..(i + 1) * 0x800].copy_from_slice(&image[i * 0x840..i * 0x840 + 0x800]);
-        }
-        return result;
+    let layout = match NandLayout::detect(image) {
+        Ok(l) => l,
+        Err(_) => return image.to_vec(),
+    };
+
+    if matches!(layout, NandLayout::Emmc) {
+        return image.to_vec();
+    }
+    
+    let physical_page = layout.physical_page_size();
+    let logical_page = layout.page_size();
+
+    if layout == NandLayout::Bb {
+         // Big Block often uses a redundant 0x840 (2112) layout check
+         let pages = image.len() / physical_page;
+         let mut result = vec![0u8; pages * logical_page];
+         for i in 0..pages {
+             result[i * logical_page..(i + 1) * logical_page].copy_from_slice(&image[i * physical_page..i * physical_page + logical_page]);
+         }
+         return result;
     }
 
-    let pages = image.len() / 0x210;
-    let mut result = vec![0u8; pages * 0x200];
+    let pages = image.len() / physical_page;
+    let mut result = vec![0u8; pages * logical_page];
     for i in 0..pages {
-        result[i * 0x200..(i + 1) * 0x200].copy_from_slice(&image[i * 0x210..i * 0x210 + 0x200]);
+        result[i * logical_page..(i + 1) * logical_page].copy_from_slice(&image[i * physical_page..i * physical_page + logical_page]);
     }
     result
 }
 
-/// Fetches precisely 16 bytes of metadata for a selected absolute page mapping
-pub fn get_page_spare(image: &[u8], page: usize) -> Option<[u8; 16]> {
-    let offset = (page * 0x210) + 0x200;
-    if offset + 16 <= image.len() {
-        let mut spare = [0u8; 16];
-        spare.copy_from_slice(&image[offset..offset + 16]);
-        Some(spare)
+/// Fetches precisely the spare metadata for a selected absolute page mapping
+pub fn get_page_spare(image: &[u8], page: usize, layout: &NandLayout) -> Option<Vec<u8>> {
+    let spare_size = layout.spare_size();
+    if spare_size == 0 { return None; }
+
+    let p_page_size = layout.physical_page_size();
+    let l_page_size = layout.page_size();
+
+    let offset = (page * p_page_size) + l_page_size;
+    if offset + spare_size <= image.len() {
+        Some(image[offset..offset + spare_size].to_vec())
     } else {
         None
     }
 }
 
 /// Helper explicitly verifying block type marker offset 0xC 
-pub fn get_block_type(image: &[u8], block: usize, pages_per_block: usize) -> Option<u8> {
+pub fn get_block_type(image: &[u8], block: usize, pages_per_block: usize, layout: &NandLayout) -> Option<u8> {
     let offset = block * pages_per_block;
-    let spare = get_page_spare(image, offset)?;
+    let spare = get_page_spare(image, offset, layout)?;
     // The Xbox 360 sets byte 0xC (12) of the spare block to hold the logical indicator (e.g. 0x2C for FileSystems)
-    Some(spare[0xC])
+    if spare.len() > 0xC {
+        Some(spare[0xC])
+    } else {
+        None
+    }
 }
 
 /// Checks if a physical block is marked as a Bad Block by inspecting its page marker.
@@ -266,13 +297,15 @@ pub fn is_bad_block(image: &[u8], block_number: usize, layout: &NandLayout) -> b
     let bigblock = matches!(layout, NandLayout::Bb);
 
     let mut i = 0;
-    while i + 0x210 <= block_size {
+    let p_page_size = layout.physical_page_size();
+    let l_page_size = layout.page_size();
+    while i + p_page_size <= block_size {
         let page_offset = offset + i;
-        if page_offset + 0x210 > image.len() {
+        if page_offset + p_page_size > image.len() {
             break;
         }
 
-        let spare = &image[page_offset + 0x200..page_offset + 0x210];
+        let spare = &image[page_offset + l_page_size..page_offset + p_page_size];
         if spare.iter().all(|&b| b == 0x00) {
             return true;
         }
@@ -287,7 +320,7 @@ pub fn is_bad_block(image: &[u8], block_number: usize, layout: &NandLayout) -> b
         }
 
         flag = true;
-        i += 0x210;
+        i += p_page_size;
     }
 
     false

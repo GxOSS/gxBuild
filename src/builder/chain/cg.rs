@@ -20,96 +20,139 @@
 */
 
 use zerocopy::{FromBytes, IntoBytes};
-use zerocopy::byteorder::{U32, BigEndian};
 use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, Rc4};
 use crate::builder::deps::xenia;
+use byteorder::{BigEndian, ByteOrder};
 
-#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
-#[repr(C)]
-pub struct BootloaderCgHeader {
-    pub header: BootloaderHeader,
-    pub original_size: U32<BigEndian>,
+#[derive(Clone, Debug)]
+pub struct CgMetadata {
+    pub original_size: u32,
     pub original_hash: [u8; 0x14],
-    pub new_size: U32<BigEndian>,
+    pub new_size: u32,
     pub new_hash: [u8; 0x14],
 }
 
 #[derive(Clone)]
 pub struct BootloaderCg {
-    pub header: BootloaderCgHeader,
+    pub header: BootloaderHeader,
     pub data: Vec<u8>,
+    pub metadata: Option<CgMetadata>,
 }
 
 impl BootloaderCg {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload) = BootloaderCgHeader::read_from_prefix(data)
+        let (header, payload): (BootloaderHeader, &[u8]) = BootloaderHeader::read_from_prefix(data)
             .map_err(|_| "Failed to parse CG header")?;
-        Ok(Self {
-            header: header.clone(),
+        let mut cg = Self {
+            header,
             data: payload.to_vec(),
-        })
+            metadata: None,
+        };
+        cg.populate_metadata();
+        Ok(cg)
+    }
+
+    pub fn populate_metadata(&mut self) {
+        if self.data.len() < 0x40 { return; } // metadata ends at 0x40 relative
+
+        let original_size = BigEndian::read_u32(&self.data[0x10..0x14]);
+        let mut original_hash = [0u8; 0x14];
+        original_hash.copy_from_slice(&self.data[0x14..0x28]);
+
+        let new_size = BigEndian::read_u32(&self.data[0x28..0x2C]);
+        let mut new_hash = [0u8; 0x14];
+        new_hash.copy_from_slice(&self.data[0x2C..0x40]);
+
+        self.metadata = Some(CgMetadata {
+            original_size,
+            original_hash,
+            new_size,
+            new_hash,
+        });
     }
 
     pub fn is_decrypted(&self) -> bool {
-        (self.header.original_size.get() & 0xFFF) == 0x000
+        if self.data.len() < 0x14 { return false; }
+        // original_size is at offset 0x10 into payload (absolute 0x20)
+        (BigEndian::read_u32(&self.data[0x10..0x14]) & 0xFFF) == 0x000
     }
 
     pub fn print_info(&self) {
-        let indicator = if (self.header.header.magic.get() & 0xF000) == 0x5000 {
+        let indicator = if (self.header.magic.get() & 0xF000) == 0x5000 {
             "SG"
         } else {
             "CG"
         };
-        println!("{} version: {}", indicator, self.header.header.version.get());
-        println!("{} size: 0x{:x}", indicator, self.header.header.size.get());
+        println!("{} version: {}", indicator, self.header.version.get());
+        println!("{} size: 0x{:x}", indicator, self.header.size.get());
 
         if self.is_decrypted() {
-            println!(
-                "{} base size: 0x{:x}",
-                indicator,
-                self.header.original_size.get()
-            );
-            println!("{}-G base hash: {:02x?}", indicator, self.header.original_hash);
-            println!(
-                "{} target size: 0x{:x}",
-                indicator,
-                self.header.new_size.get()
-            );
-            println!("{}-G target hash: {:02x?}", indicator, self.header.new_hash);
+            if let Some(ref meta) = self.metadata {
+                println!(
+                    "{} base size: 0x{:x}",
+                    indicator,
+                    meta.original_size
+                );
+                println!("{}-G base hash: {:02x?}", indicator, meta.original_hash);
+                println!(
+                    "{} target size: 0x{:x}",
+                    indicator,
+                    meta.new_size
+                );
+                println!("{}-G target hash: {:02x?}", indicator, meta.new_hash);
+            } else {
+                let original_size = BigEndian::read_u32(&self.data[0x10..0x14]);
+                let original_hash = &self.data[0x14..0x28];
+                let new_size = BigEndian::read_u32(&self.data[0x28..0x2C]);
+                let new_hash = &self.data[0x2C..0x40];
+
+                println!(
+                    "{} base size: 0x{:x}",
+                    indicator,
+                    original_size
+                );
+                println!("{}-G base hash: {:02x?}", indicator, original_hash);
+                println!(
+                    "{} target size: 0x{:x}",
+                    indicator,
+                    new_size
+                );
+                println!("{}-G target hash: {:02x?}", indicator, new_hash);
+            }
         } else {
             println!("{} is encrypted", indicator);
         }
     }
 
     pub fn decrypt(&mut self, cg_hmac: &[u8; 16]) {
-        let size = self.header.header.size.get();
+        let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
-        let payload_size = (size_aligned - 0x20) as usize;
+        let payload_size = (size_aligned - 0x10) as usize; // data after header
 
-        if let Ok(cg_key) = excrypt::hmac_sha(cg_hmac, &[&self.header.header.salt]) {
+        if self.data.len() < payload_size { return; }
+
+        if let Ok(cg_key) = excrypt::hmac_sha(cg_hmac, &[&self.data[0..16]]) {
             let mut final_key = [0u8; 16];
             final_key.copy_from_slice(&cg_key[..16]);
 
             if let Ok(mut rc4) = Rc4::new(&final_key) {
-                let encrypted_payload_slice = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        &mut self.header.original_size as *mut _ as *mut u8,
-                        payload_size
-                    )
-                };
-                let _ = rc4.crypt(encrypted_payload_slice);
+                // Encryption starts at original_size, which is 0x10 rel into payload (absolute 0x20)
+                let _ = rc4.crypt(&mut self.data[0x10..payload_size]);
             }
         }
     }
 
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
-        let size = self.header.header.size.get();
+        let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
+        let payload_len = (size_aligned - 0x10) as usize; // data after header
+
+        if self.data.len() < payload_len { return; }
 
         if let Ok(hash) = excrypt::rot_sum_sha(
-            &IntoBytes::as_bytes(&self.header.header)[..0x10],
-            unsafe { std::slice::from_raw_parts(&self.header.original_size as *const _ as *const u8, (size_aligned - 0x20) as usize) },
+            &IntoBytes::as_bytes(&self.header)[..0x10],
+            &self.data[0x10..payload_len], // Skip key, start at original_size (0x10 rel)
         ) {
             sha_out.copy_from_slice(&hash);
         }
@@ -119,16 +162,18 @@ impl BootloaderCg {
         &self,
         base_data: &[u8],
     ) -> Result<Vec<u8>, String> {
-        let original_size = self.header.original_size.get() as usize;
-        let new_size = self.header.new_size.get() as usize;
-        let _size_of_compressed = self.header.header.size.get() as usize - std::mem::size_of::<BootloaderCgHeader>();
+        if self.data.len() < 0x40 { return Err("CG data too small to read patch header".into()); }
+        let original_size = BigEndian::read_u32(&self.data[0x10..0x14]) as usize;
+        let original_hash = &self.data[0x14..0x28];
+        let new_size = BigEndian::read_u32(&self.data[0x28..0x2C]) as usize;
+        let new_hash = &self.data[0x2C..0x40];
 
         if base_data.len() < original_size {
             return Err("Base data provided is smaller than original_size".into());
         }
 
         if let Ok(base_kernel_hash) = excrypt::sha(&[base_data]) {
-            if base_kernel_hash != self.header.original_hash {
+            if base_kernel_hash != original_hash {
                 return Err("Base kernel hash did not match expected".into());
             }
         }
@@ -144,7 +189,7 @@ impl BootloaderCg {
         ).map_err(|e| format!("lzxdelta_apply_patch returned error code {}", e))?;
 
         if let Ok(updated_kernel_hash) = excrypt::sha(&[&output_buf]) {
-            if updated_kernel_hash != self.header.new_hash {
+            if updated_kernel_hash != new_hash {
                 return Err("Updated kernel hash did not match expected".into());
             }
         }

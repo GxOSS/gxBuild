@@ -20,82 +20,111 @@
 */
 
 use zerocopy::{FromBytes, IntoBytes};
-use zerocopy::byteorder::{U16, BigEndian};
+    
 use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
 
-#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
-#[repr(C)]
-pub struct BootloaderCdHeader {
-    pub header: BootloaderHeader,
-    pub signature: [u8; 0x100], // EXCRYPT_SIG
-    pub idk_yet: [u8; 0x120],
+#[derive(Clone, Debug)]
+pub struct CdMetadata {
     pub cf_salt: [u8; 10],
-    pub unused2: U16<BigEndian>,
     pub ce_hash: [u8; 0x14],
 }
 
 #[derive(Clone)]
 pub struct BootloaderCd {
-    pub header: BootloaderCdHeader,
+    pub header: BootloaderHeader,
     pub data: Vec<u8>,
+    pub metadata: Option<CdMetadata>,
 }
 
 impl BootloaderCd {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload) = BootloaderCdHeader::read_from_prefix(data)
+        let (header, payload) = BootloaderHeader::read_from_prefix(data)
             .map_err(|_| "Failed to parse CD header")?;
-        Ok(Self {
+        let mut cd = Self {
             header: header.clone(),
             data: payload.to_vec(),
-        })
+            metadata: None,
+        };
+        cd.populate_metadata();
+        Ok(cd)
+    }
+
+    pub fn populate_metadata(&mut self) {
+        if self.data.len() < 0x250 { return; } // ce_hash ends at 0x23C + 0x14 = 0x250 rel to 0x10
+
+        let mut cf_salt = [0u8; 10];
+        cf_salt.copy_from_slice(&self.data[0x230..0x23A]); // Absolute 0x240
+
+        let mut ce_hash = [0u8; 0x14];
+        ce_hash.copy_from_slice(&self.data[0x23C..0x250]); // Absolute 0x24C
+
+        self.metadata = Some(CdMetadata {
+            cf_salt,
+            ce_hash,
+        });
     }
 
     pub fn is_decrypted(&self) -> bool {
-        self.header.idk_yet[0] == 0x00
+        if self.data.len() < 0x111 { return false; }
+        // idk_yet[0] is at offset 0x110 into payload (absolute 0x120)
+        self.data[0x110] == 0x00
     }
 
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
-        let size = self.header.header.size.get();
+        let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
+        let payload_len = (size_aligned - 0x10) as usize; // data after header
+
+        if self.data.len() < payload_len { return; }
 
         if let Ok(hash) = excrypt::rot_sum_sha(
-            &IntoBytes::as_bytes(&self.header.header)[..0x10],
-            &self.header.idk_yet[..(size_aligned as usize - 0x120)],
+            &IntoBytes::as_bytes(&self.header)[..0x10],
+            &self.data[0x110..payload_len], // Skip key and signature, start at idk_yet (0x110 rel)
         ) {
             sha_out.copy_from_slice(&hash);
         }
     }
 
     pub fn print_info(&self) {
-        let indicator = if (self.header.header.magic.get() & 0xF000) == 0x5000 {
+        let indicator = if (self.header.magic.get() & 0xF000) == 0x5000 {
             "SD"
         } else {
             "CD"
         };
-        println!("{} version: {}", indicator, self.header.header.version.get());
-        println!("{} size: 0x{:x}", indicator, self.header.header.size.get());
-        println!("{} entrypoint: 0x{:x}", indicator, self.header.header.entrypoint.get());
-        println!(
-            "{} cfsalt: {}",
-            indicator,
-            String::from_utf8_lossy(&self.header.cf_salt)
-        );
+        println!("{} version: {}", indicator, self.header.version.get());
+        println!("{} size: 0x{:x}", indicator, self.header.size.get());
+        println!("{} entrypoint: 0x{:x}", indicator, self.header.entrypoint.get());
+
+        if self.data.len() >= 0x23A {
+            println!(
+                "{} cfsalt: {}",
+                indicator,
+                String::from_utf8_lossy(&self.data[0x230..0x23A])
+            );
+        }
 
         if self.is_decrypted() {
-            println!("{}-E hash: {:02x?}", indicator, self.header.ce_hash);
+            if let Some(ref meta) = self.metadata {
+                println!("{}-E hash: {:02x?}", indicator, meta.ce_hash);
+            } else {
+                // Fallback to raw indexing if metadata wasn't populated
+                println!("{}-E hash: {:02x?}", indicator, &self.data[0x23C..0x250]);
+            }
         } else {
             println!("{} is encrypted", indicator);
         }
     }
 
     pub fn decrypt(&mut self, cbb_key: &[u8; 16], cpu_key: Option<&[u8; 16]>) {
-        let size = self.header.header.size.get();
+        let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
-        let payload_size = size_aligned as usize - 0x20;
+        let payload_size = (size_aligned - 0x10) as usize;
 
-        // Derived key starts with CBB key
-        if let Ok(derived_key) = excrypt::hmac_sha(cbb_key, &[&self.header.header.salt]) {
+        if self.data.len() < payload_size { return; }
+
+        // Derived key starts with CBB key and Absolute 0x10 key
+        if let Ok(derived_key) = excrypt::hmac_sha(cbb_key, &[&self.data[0..16]]) {
             let mut final_key = [0u8; 16];
             final_key.copy_from_slice(&derived_key[..16]);
 
@@ -107,7 +136,8 @@ impl BootloaderCd {
             }
 
             if let Ok(mut rc4) = Rc4::new(&final_key) {
-                let _ = rc4.crypt(&mut self.header.signature[..payload_size]);
+                // Encryption starts at signature, which is 0x10 rel into payload (absolute 0x20)
+                let _ = rc4.crypt(&mut self.data[0x10..payload_size]);
             }
         }
     }
@@ -116,8 +146,11 @@ impl BootloaderCd {
         let mut cd_hash = [0u8; 0x14];
         self.calculate_rotsum(&mut cd_hash);
 
+        if self.data.len() < 0x110 { return false; }
+        let signature: &[u8; 256] = self.data[0x10..0x110].try_into().unwrap(); // Absolute 0x20
+
         let expected_salt = b"XBOX_ROM_4\0";
-        excrypt::verify_signature(&self.header.signature, &cd_hash, expected_salt, pubkey).unwrap_or(false)
+        excrypt::verify_signature(signature, &cd_hash, expected_salt, pubkey).unwrap_or(false)
     }
 
     pub fn serialize(&self) -> Vec<u8> {

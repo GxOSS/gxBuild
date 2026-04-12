@@ -24,6 +24,12 @@ use zerocopy::{FromBytes, IntoBytes};
 use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, ExCryptRsa};
 
+#[derive(Clone, Debug)]
+pub struct SmcMetadata {
+    pub version: u8,
+    pub motherboard_id: u8,
+}
+
 #[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
 #[repr(C)]
 pub struct SmcHeader {
@@ -35,16 +41,29 @@ pub struct SmcHeader {
 pub struct Smc {
     pub header: SmcHeader,
     pub data: Vec<u8>,
+    pub metadata: Option<SmcMetadata>,
 }
 
 impl Smc {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
         let (header, payload) = SmcHeader::read_from_prefix(data)
             .map_err(|_| "Failed to parse SMC header")?;
-        Ok(Self {
+        let mut smc = Self {
             header: header.clone(),
             data: payload.to_vec(),
-        })
+            metadata: None,
+        };
+        smc.populate_metadata();
+        Ok(smc)
+    }
+
+    pub fn populate_metadata(&mut self) {
+        if self.data.len() < 0x102 { return; }
+        // Standard SMC layout: offset 0x100 is motherboard ID, 0x101 is version
+        self.metadata = Some(SmcMetadata {
+            motherboard_id: self.data[0x100],
+            version: self.data[0x101],
+        });
     }
 
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
@@ -71,6 +90,7 @@ impl Smc {
     /// Decrypts the SMC payload using the "SMC Hash" rolling-key cipher in-place.
     pub fn decrypt(&mut self) -> &mut Self {
         smc_crypt(&mut self.data, false);
+        self.populate_metadata();
         self
     }
 
@@ -91,16 +111,28 @@ impl Smc {
 #[derive(Clone)]
 pub struct RawSmc {
     pub data: Vec<u8>,
+    pub metadata: Option<SmcMetadata>,
 }
 
 impl RawSmc {
     pub fn new(data: Vec<u8>) -> Self {
-        Self { data }
+        let mut smc = Self { data, metadata: None };
+        smc.populate_metadata();
+        smc
+    }
+
+    pub fn populate_metadata(&mut self) {
+        if self.data.len() < 0x102 { return; }
+        self.metadata = Some(SmcMetadata {
+            motherboard_id: self.data[0x100],
+            version: self.data[0x101],
+        });
     }
 
     /// Decrypts the raw SMC payload in-place using the "BuNy" rolling-key cipher.
     pub fn decrypt(&mut self) {
         smc_crypt(&mut self.data, false);
+        self.populate_metadata();
     }
 
     /// Encrypts the raw SMC payload in-place using the "BuNy" rolling-key cipher.

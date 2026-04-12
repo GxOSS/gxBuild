@@ -1,4 +1,5 @@
 /target
+/standalone
 Cargo.lock
 errors.log
 Cargo_errors.txt

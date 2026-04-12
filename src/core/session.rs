@@ -10,7 +10,7 @@
 */
 
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashMap};
 use std::path::{Path, PathBuf};
 
 use crate::builder::builder::NandSkeleton;
@@ -37,6 +37,7 @@ pub enum InternalCommand {
     Decompress,
     Update { path: PathBuf },
     Build { output: PathBuf, target: u8 },
+    FinalizeFlashfs,
     SessionInit { base: Option<PathBuf>, common: Option<PathBuf> },
     SessionList,
     SessionDelete { id: u8 },
@@ -47,6 +48,7 @@ pub enum InternalCommand {
     #[cfg(feature = "python")]
     RunPythonScript { path: PathBuf },
     CreateImage { layout: crate::builder::tools::blocks::NandLayout },
+    ExtractStfs { path: PathBuf, target_dir: PathBuf },
 }
 
 impl InternalCommand {
@@ -58,15 +60,17 @@ impl InternalCommand {
             Self::SessionDelete { .. } => 100,
             Self::SessionClear => 100,
             Self::SessionRun => 100,
-            Self::CreateImage { .. } => 100,
+            Self::CreateImage { .. } => 150,
+            Self::ExtractStfs { .. } => 110,
+            Self::Update { .. } => 110,
             Self::ParseIni { .. } => 100,
-            Self::ParseImage { .. } => 100,
-            Self::ParseKey { .. } => 100,
-            Self::ParseKeybin { .. } => 100,
+            Self::ParseImage { .. } => 150,
+            Self::ParseKey { .. } => 150,
+            Self::ParseKeybin { .. } => 150,
             Self::ParseFlashfs { .. } => 100,
             Self::ParsePatch { .. } => 100,
             Self::Decompress => 99,
-            Self::Update { .. } => 98,
+            Self::FinalizeFlashfs => 90,
             Self::Extract { .. } => 89,
             Self::ExtractAll => 88,
             Self::Replace { .. } => 87,
@@ -121,6 +125,8 @@ impl Eq for QueuedCommand {}
 pub struct Session {
     queue: BinaryHeap<QueuedCommand>,
     next_seq_id: usize,
+    /// Assets gathered during discovery (Base Dir, flashfs/, STFS)
+    pub pending_assets: HashMap<String, Vec<u8>>,
     /// Dummy state object for passing over to extract commands
     pub active_nand: Option<NandSkeleton>,
 }
@@ -130,6 +136,7 @@ impl Session {
         Self {
             queue: BinaryHeap::new(),
             next_seq_id: 0,
+            pending_assets: HashMap::new(),
             active_nand: None,
         }
     }
@@ -257,6 +264,10 @@ impl Session {
         self.enqueue(InternalCommand::PythonShell);
     }
 
+    pub fn extract_stfs(&mut self, path: PathBuf, target_dir: PathBuf) {
+        self.enqueue(InternalCommand::ExtractStfs { path, target_dir });
+    }
+
     // ------------------------------------
     // Execution core
     // ------------------------------------
@@ -302,10 +313,10 @@ impl Session {
                             "sc" => ("SC.bin", nand.bootloaders.sc.as_ref().map(|b| b.serialize())),
                             "cd" => ("CD.bin", nand.bootloaders.cd.as_ref().map(|b| b.serialize())),
                             "ce" => ("CE.bin", nand.bootloaders.ce.as_ref().map(|b| b.serialize())),
-                            "cf0" | "cf_0" => ("CF_0.bin", Some(nand.update.cf_0.serialize())),
-                            "cg0" | "cg_0" => ("CG_0.bin", Some(nand.update.cg_0.serialize())),
-                            "cf1" | "cf_1" => ("CF_1.bin", Some(nand.update.cf_1.serialize())),
-                            "cg1" | "cg_1" => ("CG_1.bin", Some(nand.update.cg_1.serialize())),
+                            "cf0" | "cf_0" => ("CF_0.bin", nand.update.cf_0.as_ref().map(|b| b.serialize())),
+                            "cg0" | "cg_0" => ("CG_0.bin", nand.update.cg_0.as_ref().map(|b| b.serialize())),
+                            "cf1" | "cf_1" => ("CF_1.bin", nand.update.cf_1.as_ref().map(|b| b.serialize())),
+                            "cg1" | "cg_1" => ("CG_1.bin", nand.update.cg_1.as_ref().map(|b| b.serialize())),
                             "header" | "nandhdr" => ("NandHeader.bin", Some(zerocopy::IntoBytes::as_bytes(&nand.header).to_vec())),
                             _ => {
                                 eprintln!(" -> Unknown component ID to extract: {}", id);
@@ -342,41 +353,27 @@ impl Session {
                         eprintln!(" -> No active NAND loaded to build!");
                     }
                 }
-                InternalCommand::Update { path } => {
-                    println!(" -> Resolving xboxupd updates from {:?}...", path);
-                    if let Some(nand) = &mut self.active_nand {
-                        if let Ok(bytes) = fs::read(&path) {
-                            match crate::builder::tools::parser::parse_xboxupd(&bytes) {
-                                Ok((cf, cg)) => {
-                                    nand.update.cf_0 = cf;
-                                    nand.update.cg_0 = cg;
-                                    if let Some(ce) = &mut nand.bootloaders.ce {
-                                        match ce.apply_update(&nand.update.cf_0, &nand.update.cg_0) {
-                                            Ok(_) => println!(" -> CE update cleanly patched natively."),
-                                            Err(e) => eprintln!(" -> CE patch application failed: {}", e)
-                                        }
-                                    } else {
-                                        eprintln!(" -> No CE bootloader found in active NAND trace to patch against!");
-                                    }
-                                }
-                                Err(e) => eprintln!(" -> Failed to interpret xboxupd binary buffer: {}", e)
-                            }
-                        } else {
-                            eprintln!(" -> Binary {:?} was unreadable or didn't exist.", path);
-                        }
-                    } else {
-                         eprintln!(" -> No active NAND loaded. Cannot inject updates.");
-                    }
-                }
                 InternalCommand::ParseIni { content, target, ini_base, common } => {
                     println!(" -> Parsing INI for target {}...", target);
                     if let Some(nand) = self.active_nand.take() {
                         match crate::core::data::xeini::parse_xe_ini(&content, &target, &ini_base, &common) {
                             Ok(parsed_cfg) => {
-                                match crate::core::data::xeini::apply_xe_ini(nand, parsed_cfg) {
+                                // 1. Collect FlashFS/Security assets from INI
+                                let mut file_entries = parsed_cfg.security.clone();
+                                file_entries.extend(parsed_cfg.flashfs.clone());
+                                for entry in file_entries {
+                                    if let Ok(data) = fs::read(&entry.path) {
+                                        let name = entry.path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                                        println!(" -> INI Discovery: Asset {} from {:?}", name, entry.path);
+                                        self.pending_assets.entry(name).or_insert(data);
+                                    }
+                                }
+
+                                // 2. Apply bootloaders
+                                match crate::core::data::xeini::apply_xe_ini(nand, parsed_cfg, &self.pending_assets) {
                                     Ok(updated_nand) => {
                                         self.active_nand = Some(updated_nand);
-                                        println!(" -> INI Bootloaders and FlashFS mappings applied natively!");
+                                        println!(" -> INI Bootloaders applied natively!");
                                     }
                                     Err(e) => {
                                         return Err(format!("Applied INI data failed due to bindings error: {}", e));
@@ -437,8 +434,11 @@ impl Session {
                     }
                 }
                 InternalCommand::ParseFlashfs { path } => {
-                    println!(" -> Parsing flashfs from folder {:?}...", path);
+                    println!(" -> Preparing to build flashfs from folder {:?}...", path);
                     if let Some(nand) = &mut self.active_nand {
+                        if matches!(nand.layout, crate::builder::tools::blocks::NandLayout::Emmc) {
+                            return Err("eMMC FlashFS building/injection is not yet implemented (different metadata structure).".to_string());
+                        }
                         let fs_start = match nand.layout { crate::builder::tools::blocks::NandLayout::Bb => 0x1E0, _ => 0x4E };
                         match crate::builder::chain::flashfs::FileSystemRoot::build_from_folder(&mut nand.image, &nand.layout, &path, fs_start) {
                             Ok(new_root) => {
@@ -580,6 +580,117 @@ impl Session {
                 InternalCommand::CreateImage { layout } => {
                     println!(" -> Creating blank NAND image with layout {:?}...", layout);
                     self.active_nand = Some(NandSkeleton::new_blank(layout));
+                }
+                InternalCommand::Update { path } => {
+                    let data = fs::read(&path).map_err(|e| format!("Failed to read update file: {}", e))?;
+                    
+                    if crate::builder::tools::stfs::StfsContainer::new(&data).is_ok() {
+                        // 1. Process as STFS/PIRS container
+                        println!(" -> Discovery: System Update container detected at {:?}", path);
+                        let container = crate::builder::tools::stfs::StfsContainer::new(&data).unwrap();
+                        let files = container.extract_to_memory()?;
+                        
+                        // Process internal xboxupd.bin if present for CF/CG
+                        if let Some(upd_data) = files.get("xboxupd.bin") {
+                            println!(" -> Internal xboxupd.bin discovered. Parsing bootloaders...");
+                            match crate::builder::tools::stfs::parse_xboxupd(upd_data) {
+                                Ok((cf, cg)) => {
+                                    let cf_ver = cf.header.version.get();
+                                    let cg_ver = cg.header.version.get();
+                                    println!(" -> Discovery: Identified CF_{} and CG_{} in xboxupd.bin", cf_ver, cg_ver);
+
+                                    // Register versioned names in pending_assets to satisfy INI lookup
+                                    self.pending_assets.insert(format!("cf_{}.bin", cf_ver), cf.serialize());
+                                    self.pending_assets.insert(format!("cg_{}.bin", cg_ver), cg.serialize());
+                                    
+                                    if let Some(nand) = &mut self.active_nand {
+                                        nand.update.cf_0 = Some(cf);
+                                        nand.update.cg_0 = Some(cg);
+                                        
+                                        if let Some(ce) = &mut nand.bootloaders.ce {
+                                            if let (Some(cf), Some(cg)) = (&nand.update.cf_0, &nand.update.cg_0) {
+                                                let _ = ce.apply_update(cf, cg);
+                                            }
+                                        }
+                                        println!(" -> Discovery: Injected CF/CG from internal xboxupd.bin into active NAND");
+                                    }
+                                }
+                                Err(e) => eprintln!(" -> Warning: Failed to parse internal xboxupd: {}", e),
+                            }
+                        }
+
+                        // Add FlashFS assets
+                        for (name, content) in files {
+                            self.pending_assets.insert(name.to_lowercase(), content);
+                        }
+                    } else if path.file_name().and_then(|n| n.to_str()).map(|s| s.to_lowercase() == "xboxupd.bin").unwrap_or(false) {
+                        // 2. Process as standalone xboxupd.bin binary
+                        println!(" -> Discovery: Standalone update binary detected at {:?}", path);
+                        match crate::builder::tools::stfs::parse_xboxupd(&data) {
+                            Ok((cf, cg)) => {
+                                let cf_ver = cf.header.version.get();
+                                let cg_ver = cg.header.version.get();
+                                println!(" -> Discovery: Identified CF_{} and CG_{} in standalone xboxupd.bin", cf_ver, cg_ver);
+
+                                // Register versioned names in pending_assets to satisfy INI lookup
+                                self.pending_assets.insert(format!("cf_{}.bin", cf_ver).to_lowercase(), cf.serialize());
+                                self.pending_assets.insert(format!("cg_{}.bin", cg_ver).to_lowercase(), cg.serialize());
+
+                                if let Some(nand) = &mut self.active_nand {
+                                    nand.update.cf_0 = Some(cf);
+                                    nand.update.cg_0 = Some(cg);
+                                    
+                                    if let Some(ce) = &mut nand.bootloaders.ce {
+                                        if let (Some(cf), Some(cg)) = (&nand.update.cf_0, &nand.update.cg_0) {
+                                            let _ = ce.apply_update(cf, cg);
+                                        }
+                                    }
+                                    println!(" -> Discovery: Injected CF/CG from standalone xboxupd.bin into active NAND");
+                                }
+                            }
+                            Err(e) => return Err(format!("Update Parse Error: {}", e)),
+                        }
+                    } else {
+                        // 3. Process as loose FlashFS asset
+                        let filename = path.file_name().unwrap().to_string_lossy().to_string();
+                        let lower = filename.to_lowercase();
+                        if lower.ends_with(".xex") || lower.ends_with(".dll") || lower == "fcrt.bin" || lower == "xeconfig.bin" {
+                            println!(" -> Discovery: Loose FlashFS asset detected: {}", filename);
+                            self.pending_assets.entry(filename).or_insert(data);
+                        }
+                    }
+                }
+                InternalCommand::FinalizeFlashfs => {
+                    if !self.pending_assets.is_empty() {
+                        println!(" -> Finalizing FlashFS with {} collected assets...", self.pending_assets.len());
+                        if let Some(nand) = &mut self.active_nand {
+                            let fs_start = match nand.layout { crate::builder::tools::blocks::NandLayout::Bb => 0x1E0, _ => 0x4E };
+                            match crate::builder::chain::flashfs::FileSystemRoot::build_from_memory(&mut nand.image, &nand.layout, &self.pending_assets, fs_start) {
+                                Ok(new_root) => {
+                                    nand.flashfs.root = new_root;
+                                    println!(" -> FlashFS generation complete.");
+                                },
+                                Err(e) => return Err(format!("FlashFS Build Error: {}", e)),
+                            }
+                        }
+                    }
+                }
+                InternalCommand::ExtractStfs { path, target_dir } => {
+                    println!(" -> Extracting STFS container from {:?} to {:?}...", path, target_dir);
+                    match fs::read(&path) {
+                        Ok(data) => {
+                            match crate::builder::tools::stfs::StfsContainer::new(&data) {
+                                Ok(container) => {
+                                    if let Err(e) = container.extract_all(&target_dir) {
+                                        return Err(format!("STFS Extraction Error: {}", e));
+                                    }
+                                    println!(" -> STFS extraction complete.");
+                                }
+                                Err(e) => return Err(format!("STFS Format Error: {}", e)),
+                            }
+                        }
+                        Err(e) => return Err(format!("Failed to read STFS file: {}", e)),
+                    }
                 }
             }
         

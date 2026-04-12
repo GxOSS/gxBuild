@@ -20,53 +20,83 @@
 */
 
 use zerocopy::{FromBytes, IntoBytes};
-use zerocopy::byteorder::{U16, U32, BigEndian};
 use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
+use byteorder::{BigEndian, ByteOrder};
 
-#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
-#[repr(C)]
-pub struct BootloaderCfHeader {
-    pub header: BootloaderHeader,
-    pub base_ver: U16<BigEndian>,
-    pub base_flags: U16<BigEndian>,
-    pub target_ver: U16<BigEndian>,
-    pub target_flags: U16<BigEndian>,
-    pub unknown: U32<BigEndian>,
-    pub cg_size: U32<BigEndian>,
-    pub pairing: [u8; 0x200],
-    pub signature: [u8; 0x100], // EXCRYPT_SIG
-    pub cg_hmac: [u8; 0x10],
+#[derive(Clone, Debug)]
+pub struct CfMetadata {
+    pub base_version: u16,
+    pub target_version: u16,
+    pub cg_size: u32,
+    pub cg_hmac: [u8; 16],
     pub cg_hash: [u8; 0x14],
 }
 
 #[derive(Clone)]
 pub struct BootloaderCf {
-    pub header: BootloaderCfHeader,
+    pub header: BootloaderHeader,
     pub data: Vec<u8>,
+    pub metadata: Option<CfMetadata>,
 }
 
 impl BootloaderCf {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload) = BootloaderCfHeader::read_from_prefix(data)
+        let (header, payload) = BootloaderHeader::read_from_prefix(data)
             .map_err(|_| "Failed to parse CF header")?;
-        Ok(Self {
+        let mut cf = Self {
             header: header.clone(),
             data: payload.to_vec(),
-        })
+            metadata: None,
+        };
+        cf.populate_metadata();
+        Ok(cf)
+    }
+
+    pub fn populate_metadata(&mut self) {
+        if self.data.len() < 0x344 { return; } // Need enough for cg_hash at 0x330 + 0x14
+
+        let base_version = BigEndian::read_u16(&self.data[0x0..0x2]);
+        let target_version = BigEndian::read_u16(&self.data[0x4..0x6]);
+        let cg_size = BigEndian::read_u32(&self.data[0xC..0x10]);
+
+        let mut cg_hmac = [0u8; 16];
+        cg_hmac.copy_from_slice(&self.data[0x320..0x330]);
+
+        let mut cg_hash = [0u8; 0x14];
+        cg_hash.copy_from_slice(&self.data[0x330..0x344]);
+
+        self.metadata = Some(CfMetadata {
+            base_version,
+            target_version,
+            cg_size,
+            cg_hmac,
+            cg_hash,
+        });
     }
 
     pub fn is_decrypted(&self) -> bool {
-        self.header.pairing[0] == 0x00
+        if self.data.len() < 0x21 { return false; }
+        // pairing[0] is at offset 0x20 into payload (absolute 0x30)
+        self.data[0x20] == 0x00
     }
 
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
-        let size = self.header.header.size.get();
+        let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
+        let payload_len = size_aligned as usize - 0x10; // total payload size after 0x10 header
+
+        if self.data.len() < payload_len { return; }
+
+        // rotsum covers first 0x20 bytes (header + version info)
+        // and everything from cg_hmac (0x320 rel / 0x330 abs) to the end
+        let mut combined_header = [0u8; 0x20];
+        combined_header[..0x10].copy_from_slice(&IntoBytes::as_bytes(&self.header)[..0x10]);
+        combined_header[0x10..].copy_from_slice(&self.data[0x0..0x10]);
 
         if let Ok(hash) = excrypt::rot_sum_sha(
-            &IntoBytes::as_bytes(&self.header.header)[..0x10],
-            unsafe { std::slice::from_raw_parts(self.header.cg_hmac.as_ptr(), (size_aligned - 0x320) as usize) },
+            &combined_header,
+            &self.data[0x320..payload_len],
         ) {
             sha_out.copy_from_slice(&hash);
         }
@@ -76,26 +106,41 @@ impl BootloaderCf {
         let mut cf_hash = [0u8; 0x14];
         self.calculate_rotsum(&mut cf_hash);
 
+        if self.data.len() < 0x320 { return false; }
+        let signature: &[u8; 256] = self.data[0x220..0x320].try_into().unwrap();
+
         let expected_salt = b"XBOX_ROM_6\0";
-        excrypt::verify_signature(&self.header.signature, &cf_hash, expected_salt, rsa_1bl).unwrap_or(false)
+        excrypt::verify_signature(signature, &cf_hash, expected_salt, rsa_1bl).unwrap_or(false)
     }
 
     pub fn print_info(&self) {
-        let indicator = if (self.header.header.magic.get() & 0xF000) == 0x5000 {
+        let indicator = if (self.header.magic.get() & 0xF000) == 0x5000 {
             "SF"
         } else {
             "CF"
         };
-        println!("{} version: {}", indicator, self.header.header.version.get());
-        println!("{} size: 0x{:x}", indicator, self.header.header.size.get());
-        println!("{} entrypoint: 0x{:x}", indicator, self.header.header.entrypoint.get());
-        println!("{} base version: {}", indicator, self.header.base_ver.get());
-        println!("{} target version: {}", indicator, self.header.target_ver.get());
-        println!("{}-G size: 0x{:x}", indicator, self.header.cg_size.get());
+        println!("{} version: {}", indicator, self.header.version.get());
+        println!("{} size: 0x{:x}", indicator, self.header.size.get());
+        println!("{} entrypoint: 0x{:x}", indicator, self.header.entrypoint.get());
+
+        if self.data.len() >= 0x10 {
+            let base_ver = BigEndian::read_u16(&self.data[0x0..0x2]);
+            let target_ver = BigEndian::read_u16(&self.data[0x4..0x6]);
+            let cg_size = BigEndian::read_u32(&self.data[0xC..0x10]);
+
+            println!("{} base version: {}", indicator, base_ver);
+            println!("{} target version: {}", indicator, target_ver);
+            println!("{}-G size: 0x{:x}", indicator, cg_size);
+        }
 
         if self.is_decrypted() {
-            println!("{}-G key: {:02x?}", indicator, self.header.cg_hmac);
-            println!("{}-G checksum: {:02x?}", indicator, self.header.cg_hash);
+            if let Some(ref meta) = self.metadata {
+                println!("{}-G key: {:02x?}", indicator, meta.cg_hmac);
+                println!("{}-G checksum: {:02x?}", indicator, meta.cg_hash);
+            } else if self.data.len() >= 0x334 {
+                println!("{}-G key: {:02x?}", indicator, &self.data[0x310..0x320]);
+                println!("{}-G checksum: {:02x?}", indicator, &self.data[0x320..0x334]);
+            }
             println!("{} signature: (requires keys to verify)", indicator);
         } else {
             println!("{} is encrypted", indicator);
@@ -103,16 +148,20 @@ impl BootloaderCf {
     }
 
     pub fn decrypt(&mut self, onebl_key: &[u8; 16]) {
-        let size = self.header.header.size.get();
+        let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
-        let payload_size = (size_aligned - 0x20) as usize; // Adjusted for new header structure
+        let payload_size = (size_aligned - 0x10) as usize; // size of data after the header
 
-        if let Ok(derived_key) = excrypt::hmac_sha(onebl_key, &[&self.header.header.salt]) {
+        if self.data.len() < payload_size { return; }
+
+        // HMAC key for CF is at Absolute 0x20, which is data[0x10..0x20]
+        if let Ok(derived_key) = excrypt::hmac_sha(onebl_key, &[&self.data[0x10..0x20]]) {
             let mut final_key = [0u8; 16];
             final_key.copy_from_slice(&derived_key[..16]);
 
             if let Ok(mut rc4) = Rc4::new(&final_key) {
-                let _ = rc4.crypt(&mut self.header.pairing[..payload_size]);
+                // Encryption starts at pairing, which is 0x20 deep into the payload (0x30 deep into file)
+                let _ = rc4.crypt(&mut self.data[0x20..payload_size]);
             }
         }
     }

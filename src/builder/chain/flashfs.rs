@@ -10,6 +10,7 @@
 */
 
 use std::io::{Read, Write, Cursor};
+use std::collections::HashMap;
 use crate::builder::tools::blocks::*;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
@@ -42,7 +43,10 @@ pub struct FsSpareData {
 }
 
 impl FsSpareData {
-    pub fn parse(data: &[u8; 16], layout: &NandLayout) -> Self {
+    pub fn parse(data: &[u8], layout: &NandLayout) -> Self {
+        if data.len() < 16 {
+            return FsSpareData { block_id: 0, fs_sequence: 0, fs_size: 0, fs_page_count: 0, fs_block_type: 0, bad_block: false };
+        }
         match layout {
             NandLayout::Xsb | NandLayout::Sb => {
                 let block_id = u16::from_le_bytes([data[0], data[1] & 0xF]);
@@ -156,7 +160,7 @@ impl FileSystemRoot {
 
     pub fn read(&mut self, image: &[u8], layout: &NandLayout) {
         self.entries.clear();
-        let pages_per_block = layout.block_size() / 0x210;
+        let pages_per_block = layout.block_size() / layout.physical_page_size();
         let start_page = self.block_number as usize * pages_per_block;
         
         let mut block_map_pages = Vec::new();
@@ -175,7 +179,7 @@ impl FileSystemRoot {
 
         for page in file_name_pages {
             if break_files { break; }
-            let page_offset = page * 0x210;
+            let page_offset = page * layout.physical_page_size();
             if page_offset + 0x200 > image.len() { break; }
             
             for i in 0..entries_per_page {
@@ -201,7 +205,7 @@ impl FileSystemRoot {
         
         let mut j = 0;
         for page in block_map_pages {
-            let page_offset = page * 0x210;
+            let page_offset = page * layout.physical_page_size();
             if page_offset + 0x200 > image.len() { break; }
             
             let mut cursor = Cursor::new(&image[page_offset..page_offset + 0x200]);
@@ -272,6 +276,25 @@ impl FileSystemRoot {
         Ok(root)
     }
 
+    pub fn build_from_memory(image: &mut [u8], layout: &NandLayout, files: &HashMap<String, Vec<u8>>, fs_start_block: u16) -> std::io::Result<Self> {
+        let mut root = FileSystemRoot::new(-1, 0);
+        root.create_defaults(image.len(), layout, fs_start_block);
+
+        for (name, content) in files {
+            let mut new_entry = FileSystemEntry::new(0);
+            new_entry.file_name = name.clone();
+            root.set_entry_data(image, layout, &mut new_entry, content);
+            root.entries.push(new_entry);
+        }
+
+        if root.block_number == -1 {
+            root.block_number = root.allocate_new_block(image, layout, 1, fs_start_block) as i32;
+        }
+
+        root.write(image, layout);
+        Ok(root)
+    }
+
     pub fn get_block_chain(&self, start_block: u16, limit: usize) -> Vec<u16> {
         if start_block as usize >= self.block_map.len() {
             return Vec::new();
@@ -299,14 +322,14 @@ impl FileSystemRoot {
         let chain = self.get_block_chain(start_block, self.block_map.len());
         let mut data = Vec::new();
         let block_size = layout.block_size();
-        let pages_per_block = block_size / 0x210;
+        let pages_per_block = block_size / layout.physical_page_size();
         
         for cluster in chain {
             let start_offset = (cluster + self.block_offset) as usize * block_size;
             for p in 0..pages_per_block {
-                let page_offset = start_offset + (p * 0x210);
-                if page_offset + 0x200 <= image.len() {
-                    data.extend_from_slice(&image[page_offset..page_offset + 0x200]);
+                let page_offset = start_offset + (p * layout.physical_page_size());
+                if page_offset + layout.page_size() <= image.len() {
+                    data.extend_from_slice(&image[page_offset..page_offset + layout.page_size()]);
                 }
             }
         }
@@ -344,21 +367,27 @@ impl FileSystemRoot {
 
     pub fn set_block_data(&self, image: &mut [u8], layout: &NandLayout, block: u16, data: &[u8]) {
         let block_size = layout.block_size();
-        let pages_per_block = block_size / 0x210;
+        let pages_per_block = block_size / layout.physical_page_size();
         let start_offset = (block + self.block_offset) as usize * block_size;
         
         if start_offset + block_size > image.len() { return; }
 
         let mut data_cursor = Cursor::new(data);
         for p in 0..pages_per_block {
-            let page_offset = start_offset + (p * 0x210);
-            // Zero out spare block mapping info (FsSequence, FsSize) for block recreation natively
-            image[page_offset + 0x200..page_offset + 0x210].fill(0);
+            let page_offset = start_offset + (p * layout.physical_page_size());
             
             // Write payload chunk
-            let mut chunk = vec![0u8; 0x200];
+            let mut chunk = vec![0u8; layout.page_size()];
             let _read_bytes = data_cursor.read(&mut chunk).unwrap_or(0);
-            image[page_offset..page_offset + 0x200].copy_from_slice(&chunk);
+            
+            let page_slice = &mut image[page_offset..page_offset + layout.physical_page_size()];
+            page_slice[..layout.page_size()].copy_from_slice(&chunk);
+
+            if layout.spare_size() > 0 {
+                // Zero out spare block mapping info (FsSequence, FsSize) for block recreation natively
+                page_slice[layout.page_size()..layout.physical_page_size()].fill(0);
+                calculate_ecc(page_slice);
+            }
         }
     }
 
@@ -378,7 +407,7 @@ impl FileSystemRoot {
         }
         
         let current_chain = self.get_block_chain(start_block, self.block_map.len());
-        let logic_block_size = layout.block_size() / 0x210 * 0x200; // Raw payload span inside a block
+        let logic_block_size = (layout.block_size() / layout.physical_page_size()) * layout.page_size(); // Raw payload span inside a block
         let mut blocks_needed = actual_data.len() / logic_block_size;
         if actual_data.len() % logic_block_size > 0 {
             blocks_needed += 1;
@@ -421,7 +450,7 @@ impl FileSystemRoot {
 
     pub fn set_entry_data(&mut self, image: &mut [u8], layout: &NandLayout, entry: &mut FileSystemEntry, data: &[u8]) {
         if entry.block_number == 0 {
-            let logic_block_size = layout.block_size() / 0x210 * 0x200;
+            let logic_block_size = (layout.block_size() / layout.physical_page_size()) * layout.page_size();
             let needed = std::cmp::max(1, (data.len() + logic_block_size - 1) / logic_block_size);
             entry.block_number = self.allocate_new_block(image, layout, needed, 0);
         }
@@ -542,7 +571,7 @@ impl FlashFS {
             }
 
             // Peek first page spare
-            if let Some(spare) = get_page_spare(image, block * pages_per_block) {
+            if let Some(spare) = get_page_spare(image, block * pages_per_block, layout) {
                 let parsed = FsSpareData::parse(&spare, layout);
                 let btype = parsed.fs_block_type;
 

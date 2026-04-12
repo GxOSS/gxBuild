@@ -25,12 +25,12 @@ use std::fs;
 use crc32fast::Hasher;
 use thiserror::Error;
 use crate::builder::builder::NandSkeleton;
-use crate::builder::chain::flashfs::FileSystemEntry;
+
 #[derive(Error, Debug)]
 pub enum IniError {
     #[error("[GGX] Ini section not found: {0}")]
     SectionNotFound(String),
-    #[error("[GGX] Ini file not found: {0}")]
+    #[error("[GGX] File not found: {0}")]
     FileNotFound(String),
     #[error("[GGX] Ini CRC32 mismatch for {0}: expected {1}, got {2}")]
     HashMismatch(String, String, String),
@@ -103,20 +103,30 @@ pub fn parse_xe_ini(
         .cloned()
         .unwrap_or_default();
 
-    // Helper for validation and path resolution
-    let validate_and_resolve = |search_path: &Path, filename: &str, expected_hash: Option<&str>| -> Result<IniEntry, IniError> {
-        let full_path = if filename.starts_with("..\\") || filename.starts_with("../") {
-            search_path.parent().unwrap_or(search_path).join(&filename[3..])
-        } else {
-            search_path.join(filename)
-        };
-        
-        if !full_path.exists() {
-            return Err(IniError::FileNotFound(filename.to_string()));
+    // Helper for validation and path resolution: searches multiple paths in order
+    let validate_and_resolve = |search_paths: &[&Path], filename: &str, expected_hash: Option<&str>| -> Result<IniEntry, IniError> {
+        let mut full_path = None;
+
+        for base in search_paths {
+            let p = if filename.starts_with("..\\") || filename.starts_with("../") {
+                base.parent().unwrap_or(base).join(&filename[3..])
+            } else {
+                base.join(filename)
+            };
+            
+            if p.exists() {
+                full_path = Some(p);
+                break;
+            }
         }
+        
+        // If not found on disk, we revert to a best-guess path in the first search directory
+        // but mark it for targeted discovery.
+        let full_path = full_path.unwrap_or_else(|| search_paths[0].join(filename));
+
         let mut final_hash = None;
         if let Some(expected) = expected_hash {
-            if !expected.is_empty() {
+            if !expected.is_empty() && full_path.exists() {
                 let actual = get_hash(&full_path)?;
                 if actual.to_lowercase() != expected.to_lowercase() {
                     return Err(IniError::HashMismatch(filename.to_string(), expected.to_string(), actual));
@@ -133,22 +143,29 @@ pub fn parse_xe_ini(
 
     let mut main_entries = Vec::new();
     for entry in main_data_raw {
-        main_entries.push(validate_and_resolve(common_base, &entry[0], entry.get(1).map(|s| s.as_str()))?);
+        main_entries.push(validate_and_resolve(&[ini_base, common_base], &entry[0], entry.get(1).map(|s| s.as_str()))?);
     }
 
     let mut security_entries = Vec::new();
     for entry in security_data_raw {
         if !entry.is_empty() {
-            security_entries.push(validate_and_resolve(ini_base, &entry[0], None)?);
+            security_entries.push(validate_and_resolve(&[ini_base], &entry[0], None)?);
         }
     }
 
     let mut flashfs_entries = Vec::new();
+    let flashfs_subfolder = ini_base.join("flashfs");
+    let flashfs_paths = if flashfs_subfolder.exists() {
+        vec![ini_base, &flashfs_subfolder]
+    } else {
+        vec![ini_base]
+    };
+
     for entry in flashfs_data_raw {
         if entry.len() >= 2 {
-            flashfs_entries.push(validate_and_resolve(ini_base, &entry[0], Some(&entry[1]))?);
+            flashfs_entries.push(validate_and_resolve(&flashfs_paths, &entry[0], Some(&entry[1]))?);
         } else if entry.len() == 1 {
-            flashfs_entries.push(validate_and_resolve(ini_base, &entry[0], None)?);
+            flashfs_entries.push(validate_and_resolve(&flashfs_paths, &entry[0], None)?);
         }
     }
 
@@ -164,17 +181,36 @@ pub fn parse_xe_ini(
 
 pub fn apply_xe_ini(
     mut nand: NandSkeleton,
-    ini: XeBuildIni
+    ini: XeBuildIni,
+    pending_assets: &HashMap<String, Vec<u8>>,
 ) -> anyhow::Result<NandSkeleton> {
     
+    // DIAGNOSTIC: Print all pending assets
+    if !pending_assets.is_empty() {
+        println!(" -> Discovered assets in memory: {:?}", pending_assets.keys().collect::<Vec<_>>());
+    }
+
     // 1. Process [main] bootloaders
     for entry in &ini.main {
         let filename = &entry.filename;
-        let data = std::fs::read(&entry.path)?;
-        
         let lower = filename.to_lowercase();
+
+        // Load the data (In-memory discovery assets > Disk files)
+        let data = if let Some(mem_data) = pending_assets.get(&lower) {
+            mem_data.clone()
+        } else if let Ok(disk_data) = std::fs::read(&entry.path) {
+            disk_data
+        } else {
+            // If not in memory and not on disk, we only error if it's NOT already in the NAND.
+            // This allows us to keep baseline bootloaders if no replacement was found.
+            println!(" -> Note: {} not found on disk or in containers, keeping baseline if present.", filename);
+            continue;
+        };
+        
         if lower.starts_with("cba_") {
             nand.bootloaders.cb_a = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+        } else if lower.starts_with("cb_x_") || lower.starts_with("cbx_") {
+            nand.bootloaders.cb_x = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
         } else if lower.starts_with("cbb_") {
             nand.bootloaders.cb_b = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
         } else if lower.starts_with("cb_") {
@@ -184,9 +220,9 @@ pub fn apply_xe_ini(
         } else if lower.starts_with("ce_") {
             nand.bootloaders.ce = Some(crate::builder::chain::ce::BootloaderCe::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
         } else if lower.starts_with("cf_") {
-            nand.update.cf_0 = crate::builder::chain::cf::BootloaderCf::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?;
+            nand.update.cf_0 = Some(crate::builder::chain::cf::BootloaderCf::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
         } else if lower.starts_with("cg_") {
-            nand.update.cg_0 = crate::builder::chain::cg::BootloaderCg::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?;
+            nand.update.cg_0 = Some(crate::builder::chain::cg::BootloaderCg::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
         }
     }
 
@@ -194,22 +230,14 @@ pub fn apply_xe_ini(
     let mut file_entries = ini.security.clone();
     file_entries.extend(ini.flashfs.clone());
 
-    // 2. Map and bind into FlashFS
     for entry in &file_entries {
-        let file_content = std::fs::read(&entry.path)?;
         let basen = entry.path.file_name().unwrap_or_default().to_string_lossy().to_string();
-
         if basen.to_lowercase() == "fcrt.bin" {
-            nand.extra.fcrt = Some(file_content.clone());
+            if let Ok(file_content) = std::fs::read(&entry.path) {
+                nand.extra.fcrt = Some(file_content);
+            }
         }
-
-        let mut fs_entry = FileSystemEntry::new(0);
-        fs_entry.file_name = basen;
-        nand.flashfs.root.set_entry_data(&mut nand.image, &nand.layout, &mut fs_entry, &file_content);
-        nand.flashfs.root.entries.push(fs_entry);
     }
-    
-    nand.flashfs.root.write(&mut nand.image, &nand.layout);
 
     Ok(nand)
 }
