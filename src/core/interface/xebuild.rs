@@ -14,6 +14,8 @@
 use clap::{Parser, Subcommand, ValueEnum, CommandFactory};
 use std::path::PathBuf;
 use crate::core::session::{Session, InternalCommand};
+use crate::core::logger;
+use log::{info, error};
 
 /// xeBuild v1.21.810 clone - System image builder
 #[derive(Parser, Debug)]
@@ -161,8 +163,8 @@ This program has NO WARRANTY
 "#;
 
 pub fn ggx_cli() {
-    println!("{}", LICENSE_TEXT);
     if std::env::args().count() == 1 {
+        println!("{}", LICENSE_TEXT);
         let mut cmd = GgxArgs::command();
         cmd.print_help().unwrap();
         
@@ -173,12 +175,27 @@ pub fn ggx_cli() {
     }
 
     let args = GgxArgs::parse();
+
+    // Initialize logger
+    let mode_str = match &args.mode {
+        Some(GgxMode::Build { .. }) | None => "build",
+        Some(GgxMode::Extract) => "extract",
+        Some(GgxMode::Client) => "client",
+        Some(GgxMode::Update) => "update",
+    };
+
+    if let Err(e) = logger::init_logger(mode_str, args.verbose) {
+        eprintln!("[GGX] Failed to initialize logger: {}", e);
+    }
+
+    info!("{}", LICENSE_TEXT);
+    
     let mut session = Session::new();
 
     match args.mode.clone() {
         Some(GgxMode::Build { .. }) | None => {
             if let Err(e) = handle_build(&args, &mut session) {
-                eprintln!("\n[GGX] Build Setup Failed: {}", e);
+                error!("\n[GGX] Build Setup Failed: {}", e);
                 std::process::exit(1);
             }
         }
@@ -186,15 +203,15 @@ pub fn ggx_cli() {
             session.extract_all();
         }
         Some(GgxMode::Client) => {
-            println!("Client mode selected.");
+            info!("Client mode selected.");
         }
         Some(GgxMode::Update) => {
-            println!("Update mode not fully implemented yet.");
+            info!("Update mode not fully implemented yet.");
         }
     }
 
     if let Err(e) = session.run() {
-        eprintln!("\n[GGX] Session failed: {}", e);
+        error!("\n[GGX] Session failed: {}", e);
     } else if let Some(GgxMode::Build { .. }) | None = args.mode {
         // Build succeeded, calculate SHA-1 if requested
         let output_path = args.output.clone().unwrap_or_else(|| PathBuf::from("updflash.bin"));
@@ -202,13 +219,13 @@ pub fn ggx_cli() {
             if let Ok(data) = std::fs::read(&output_path) {
                 if let Ok(hash) = crate::builder::deps::excrypt::sha(&[&data]) {
                     let sha_str = hash.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-                    println!(" -> Image SHA-1: {}", sha_str);
+                    info!(" -> Image SHA-1: {}", sha_str);
                     
                     if let Some(sha_p) = args.sha_file {
                         if let Err(e) = std::fs::write(&sha_p, &sha_str) {
-                            eprintln!("[GGX] Warning: Failed to write SHA-1 to {:?}: {}", sha_p, e);
+                            error!("[GGX] Warning: Failed to write SHA-1 to {:?}: {}", sha_p, e);
                         } else {
-                            println!(" -> SHA-1 written to {:?}", sha_p);
+                            info!(" -> SHA-1 written to {:?}", sha_p);
                         }
                     }
                 }
@@ -266,7 +283,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     session.enqueue(InternalCommand::FinalizeFlashfs);
 
     // TIER 1: Base Directory Scan (Highest Priority)
-    println!("[GGX] TIER 1 Scanning Base Directory: {:?}", fw_dir);
+    info!("[GGX] TIER 1 Scanning Base Directory: {:?}", fw_dir);
     if let Ok(entries) = std::fs::read_dir(&fw_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -289,7 +306,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     for dir in &[Some(ini_dir), Some(&flashfs_dir)] {
         if let Some(d) = dir {
             if d.exists() && d.is_dir() {
-                println!("[GGX] TIER 2 Scanning Folder: {:?}", d);
+                info!("[GGX] TIER 2 Scanning Folder: {:?}", d);
                 if let Ok(entries) = std::fs::read_dir(d) {
                     for entry in entries.flatten() {
                         let path = entry.path();
@@ -306,7 +323,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     }
 
     // TIER 3: Common Directory
-    println!("[GGX] TIER 3 Scanning Common Directory: {:?}", resolved_common_dir);
+    info!("[GGX] TIER 3 Scanning Common Directory: {:?}", resolved_common_dir);
     if resolved_common_dir.exists() && resolved_common_dir.is_dir() {
         if let Ok(entries) = std::fs::read_dir(&resolved_common_dir) {
             for entry in entries.flatten() {
@@ -337,13 +354,13 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         }
     }
 
-    println!("\n--- GGX Build Configuration ---");
-    println!("Type:      {:?}", build_type);
-    println!("Console:   {}", console_base);
-    println!("Section:   {}", console_section);
-    println!("INI Path:  {:?}", ini_path);
-    println!("Common:    {:?}", resolved_common_dir);
-    println!("-------------------------------\n");
+    info!("\n--- GGX Build Configuration ---");
+    info!("Type:      {:?}", build_type);
+    info!("Console:   {}", console_base);
+    info!("Section:   {}", console_section);
+    info!("INI Path:  {:?}", ini_path);
+    info!("Common:    {:?}", resolved_common_dir);
+    info!("-------------------------------\n");
 
     // Determine layout from console type
     let layout = match console_type {
@@ -393,15 +410,16 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
 
     if nand_found {
         let path = parsed_nand_path.unwrap();
-        println!("[GGX] Auto-discovered source NAND image from {:?}", path);
+        info!("[GGX] Auto-discovered source NAND image from {:?}", path);
         session.enqueue(crate::core::session::InternalCommand::ParseImage { path, key: None });
     } else {
-        println!("[GGX] Synthesizing blank image from scratch.");
+        info!("[GGX] Synthesizing blank image from scratch.");
         session.enqueue(crate::core::session::InternalCommand::CreateImage { layout });
     }
 
     if let Ok(content) = std::fs::read_to_string(&ini_path) {
-        session.parse_ini(content, console_section, ini_path.parent().unwrap(), resolved_common_dir.clone());
+        let filename = ini_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        session.parse_ini(content, filename, console_section, ini_path.parent().unwrap(), resolved_common_dir.clone());
     } else {
         anyhow::bail!("Could not find or read INI at {:?}", ini_path);
     }
@@ -427,7 +445,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                             let mut key = [0u8; 16];
                             key.copy_from_slice(&bytes[..16]);
                             session.parse_keybin(Some(key));
-                            println!("[GGX] Auto-discovered CPU Key binary from {:?}", p);
+                            info!("[GGX] Auto-discovered CPU Key binary from {:?}", p);
                             key_found = true;
                             break;
                         }
@@ -437,7 +455,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                         let clean_key = text.trim();
                         if clean_key.len() >= 32 {
                             session.set_cpukey(clean_key.to_string());
-                            println!("[GGX] Auto-discovered CPU Key string from {:?}", p);
+                            info!("[GGX] Auto-discovered CPU Key string from {:?}", p);
                             key_found = true;
                             break;
                         }
@@ -452,7 +470,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     }
 
     if args.bl_key.is_some() {
-        println!("[GGX] Warning: Overriding the 1BL key (-b) is currently not implemented. Using default retail key.");
+        info!("[GGX] Warning: Overriding the 1BL key (-b) is currently not implemented. Using default retail key.");
     }
     
     if args.verbose {
@@ -482,7 +500,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     }
 
     if let Some(p) = update_path {
-        println!("[GGX] Auto-discovered system update from {:?}", p);
+        info!("[GGX] Auto-discovered system update from {:?}", p);
         session.update(p);
     }
 
@@ -506,7 +524,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                 target: None 
             });
         } else {
-            eprintln!("[GGX] Warning: Addon patch not found: {}", addon);
+            error!("[GGX] Warning: Addon patch not found: {}", addon);
         }
     }
 
@@ -523,10 +541,10 @@ impl Session {
             if let Ok(arr) = bytes.try_into() {
                 self.parse_key(arr);
             } else {
-                eprintln!("[Session] Error: CPU Key must be 32 hex characters (16 bytes).");
+                error!("[Session] Error: CPU Key must be 32 hex characters (16 bytes).");
             }
         } else {
-            eprintln!("[Session] Error: Invalid hex format for CPU Key.");
+            error!("[Session] Error: Invalid hex format for CPU Key.");
         }
     }
     pub fn set_verbose(&mut self, _v: bool) {

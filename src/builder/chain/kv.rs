@@ -7,6 +7,7 @@
 use zerocopy::FromBytes;
 use zerocopy::byteorder::{U16, BigEndian};
 use crate::builder::deps::excrypt::{self, Rc4};
+use log::info;
 
 /// Keyvault record header — covers the first 0x110 bytes.
 /// All offsets confirmed against J-Runner Nand.cs lines 674-682.
@@ -56,6 +57,7 @@ impl Keyvault {
         
         let mut decrypt_key = [0u8; 16];
         decrypt_key.copy_from_slice(&hmac_res[..16]);
+        info!(" -> Keyvault Decryption Key Derived: {:02x?}", decrypt_key);
 
         // 3. Decrypt the rest of the KV (0x10 to end) using RC4
         let mut rc4 = Rc4::new(&decrypt_key)
@@ -76,6 +78,7 @@ impl Keyvault {
             
             let salt = excrypt::hmac_sha(cpukey, &[&message])
                 .map_err(|e| format!("KV2 salt derivation failed: {}", e))?;
+            info!(" -> KV2 Hashed Salt calculated: {:02x?}", salt);
             
             // 2. Derive real RC4 key: HMAC-SHA1(CPUKey, Salt[0..16])
             let final_key = excrypt::hmac_sha(cpukey, &[&salt[..16]])

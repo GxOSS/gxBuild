@@ -18,9 +18,10 @@ use std::fs;
 #[cfg(feature = "python")]
 use crate::core::interface::python::{python_interpreter, python_shell, python_script};
 use crate::builder::tools::xebuild::{parse_xe_binary, apply_xe_patch};
+use log::{info, error};
 #[derive(Debug)]
 pub enum InternalCommand { 
-    ParseIni { content: String, target: String, ini_base: PathBuf, common: PathBuf },
+    ParseIni { content: String, filename: String, target: String, ini_base: PathBuf, common: PathBuf },
     ParseImage { path: PathBuf, key: Option<[u8; 16]> },
     ParseKey { key: [u8; 16] },
     ParseKeybin { key: Option<[u8; 16]> },
@@ -249,9 +250,10 @@ impl Session {
         self.next_seq_id = 0;
     }
 
-    pub fn parse_ini(&mut self, content: String, target: String, ini_base: impl AsRef<Path>, common: impl AsRef<Path>) {
+    pub fn parse_ini(&mut self, content: String, filename: String, target: String, ini_base: impl AsRef<Path>, common: impl AsRef<Path>) {
         self.enqueue(InternalCommand::ParseIni { 
             content, 
+            filename,
             target, 
             ini_base: ini_base.as_ref().to_path_buf(), 
             common: common.as_ref().to_path_buf() 
@@ -276,33 +278,41 @@ impl Session {
     // Execution core
     // ------------------------------------
     pub fn run(&mut self) -> Result<(), String> {
-        println!("[Session] Running {} queued commands...", self.queue.len());
+        info!("[Session] Running {} queued commands...", self.queue.len());
         
         while let Some(queued_cmd) = self.queue.pop() {
             let priority = queued_cmd.command.priority_score();
-            println!("[Session] Executing (PriorityScore: {}, Seq: {}): {:?}", 
-                     priority, queued_cmd.sequence_id, queued_cmd.command);
+            match &queued_cmd.command {
+                InternalCommand::ParseIni { filename, target, .. } => {
+                    info!("[Session] Executing (PriorityScore: {}, Seq: {}): ParseIni {{ filename: {:?}, target: {:?} }}", 
+                             priority, queued_cmd.sequence_id, filename, target);
+                }
+                cmd => {
+                    info!("[Session] Executing (PriorityScore: {}, Seq: {}): {:?}", 
+                             priority, queued_cmd.sequence_id, cmd);
+                }
+            }
                      
             self.execute_command(queued_cmd.command)?;
         }
-        println!("[Session] Finished priority queue batch.");
+        info!("[Session] Finished priority queue batch.");
         Ok(())
     }
 
     pub fn run_once(&mut self, command: InternalCommand) -> Result<(), String> {
-        println!("[Session] Running executed command actively out of queue...");
+        info!("[Session] Running executed command actively out of queue...");
         self.execute_command(command)
     }
 
     pub fn execute_command(&mut self, command: InternalCommand) -> Result<(), String> {
         match command {
                 InternalCommand::ExtractAll => {
-                    println!(" -> Extracting all components...");
+                    info!(" -> Extracting all components...");
                     let ids = vec!["smc", "kv", "fcrt", "cb", "cba", "cbb", "sc", "cd", "ce", "cf0", "cg0", "cf1", "cg1"];
                     for id in ids {
                         let _ = self.execute_command(InternalCommand::Extract { id: id.to_string() });
                     }
-                    println!(" -> Extraction complete.");
+                    info!(" -> Extraction complete.");
                 }
                 InternalCommand::Extract { id } => {
                     if let Some(nand) = &self.active_nand {
@@ -323,24 +333,24 @@ impl Session {
                             "cg1" | "cg_1" => ("CG_1.bin", nand.update.cg_1.as_ref().map(|b| b.serialize())),
                             "header" | "nandhdr" => ("NandHeader.bin", Some(zerocopy::IntoBytes::as_bytes(&nand.header).to_vec())),
                             _ => {
-                                eprintln!(" -> Unknown component ID to extract: {}", id);
+                                error!(" -> Unknown component ID to extract: {}", id);
                                 return Ok(());
                             }
                         };
 
                         if let Some(bytes) = data {
                             if let Err(e) = fs::write(filename, bytes) {
-                                eprintln!(" -> Failed to extract {}: {}", id, e);
+                                error!(" -> Failed to extract {}: {}", id, e);
                             } else {
-                                println!(" -> Extracted {} to {}", id, filename);
+                                info!(" -> Extracted {} to {}", id, filename);
                             }
                         }
                     } else {
-                        eprintln!(" -> No active NAND loaded. Cannot extract {}.", id);
+                        error!(" -> No active NAND loaded. Cannot extract {}.", id);
                     }
                 }
                 InternalCommand::Build { output, target: _target } => {
-                    println!(" -> Building image to {:?}...", output);
+                    info!(" -> Building image to {:?}...", output);
                     if let Some(nand) = &self.active_nand {
                         let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
                         let layout = nand.layout;
@@ -348,19 +358,19 @@ impl Session {
                             Ok(clean_bytes) => {
                                 let finalized_bytes = crate::core::data::blocks::NandProcessor::finalize_nand(&clean_bytes, layout);
                                 if let Err(e) = std::fs::write(&output, finalized_bytes) {
-                                    eprintln!(" -> Failed to write build output: {}", e);
+                                    error!(" -> Failed to write build output: {}", e);
                                 } else {
-                                    println!(" -> Build completed successfully.");
+                                    info!(" -> Build completed successfully.");
                                 }
                             }
-                            Err(e) => eprintln!(" -> Build failed: {}", e),
+                            Err(e) => error!(" -> Build failed: {}", e),
                         }
                     } else {
-                        eprintln!(" -> No active NAND loaded to build!");
+                        error!(" -> No active NAND loaded to build!");
                     }
                 }
-                InternalCommand::ParseIni { content, target, ini_base, common } => {
-                    println!(" -> Parsing INI for target {}...", target);
+                InternalCommand::ParseIni { content, filename, target, ini_base, common } => {
+                    info!(" -> Parsing INI {} for target {}...", filename, target);
                     if let Some(nand) = self.active_nand.take() {
                         match crate::core::data::xeini::parse_xe_ini(&content, &target, &ini_base, &common) {
                             Ok(parsed_cfg) => {
@@ -370,7 +380,7 @@ impl Session {
                                 for entry in file_entries {
                                     if let Ok(data) = fs::read(&entry.path) {
                                         let name = entry.path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                                        println!(" -> INI Discovery: Asset {} from {:?}", name, entry.path);
+                                        info!(" -> INI Discovery: Asset {} from {:?}", name, entry.path);
                                         self.pending_assets.entry(name).or_insert(data);
                                     }
                                 }
@@ -379,7 +389,7 @@ impl Session {
                                 match crate::core::data::xeini::apply_xe_ini(nand, parsed_cfg, &self.pending_assets) {
                                     Ok(updated_nand) => {
                                         self.active_nand = Some(updated_nand);
-                                        println!(" -> INI Bootloaders applied natively!");
+                                        info!(" -> INI Bootloaders applied natively!");
                                     }
                                     Err(e) => {
                                         return Err(format!("Applied INI data failed due to bindings error: {}", e));
@@ -399,18 +409,18 @@ impl Session {
                 InternalCommand::RunPythonScript { path } => {
                     let interp = python_interpreter();
                     if let Err(e) = python_script(&interp, &path) {
-                        eprintln!(" -> Python Execution Error: {}", e);
+                        error!(" -> Python Execution Error: {}", e);
                     }
                 }
                 #[cfg(feature = "python")]
                 InternalCommand::PythonShell => {
                     let interp = python_interpreter();
                     if let Err(e) = python_shell(&interp) {
-                        eprintln!(" -> Python Shell Error: {}", e);
+                        error!(" -> Python Shell Error: {}", e);
                     }
                 }
                 InternalCommand::ParseImage { path, key } => {
-                    println!(" -> Parsing image {:?}...", path);
+                    info!(" -> Parsing image {:?}...", path);
                     match fs::read(&path) {
                         Ok(raw_data) => {
                             match crate::core::data::blocks::NandProcessor::preprocess_nand(&raw_data) {
@@ -420,39 +430,39 @@ impl Session {
                                     match NandSkeleton::parse_clean(clean_data, layout, key.unwrap_or([0u8; 16]), flashfs) {
                                         Ok(nand) => {
                                             self.active_nand = Some(nand);
-                                            println!(" -> Successfully parsed NAND from {:?} (Layout: {:?})", path, layout);
+                                            info!(" -> Successfully parsed NAND from {:?} (Layout: {:?})", path, layout);
                                         }
-                                        Err(e) => eprintln!(" -> Failed to interpret clean NAND: {}", e),
+                                        Err(e) => error!(" -> Failed to interpret clean NAND: {}", e),
                                     }
                                 }
-                                Err(e) => eprintln!(" -> Failed to pre-process NAND image: {}", e),
+                                Err(e) => error!(" -> Failed to pre-process NAND image: {}", e),
                             }
                         }
-                        Err(e) => eprintln!(" -> Failed to read image file: {}", e),
+                        Err(e) => error!(" -> Failed to read image file: {}", e),
                     }
                 }
                 InternalCommand::ParseKey { key } => {
                     if let Some(nand) = &mut self.active_nand {
                         nand.cpukey = Some(key);
-                        println!(" -> CPU Key set (16 bytes).");
+                        info!(" -> CPU Key set (16 bytes).");
                     } else {
-                        eprintln!(" -> No active NAND image to assign key to.");
+                        error!(" -> No active NAND image to assign key to.");
                     }
                 }
                 InternalCommand::ParseKeybin { key } => {
                     if let Some(k) = key {
                         if let Some(nand) = &mut self.active_nand {
                             nand.cpukey = Some(k);
-                            println!(" -> CPU Keybin assigned.");
+                            info!(" -> CPU Keybin assigned.");
                         } else {
-                            eprintln!(" -> No active NAND image to assign keybin to.");
+                            error!(" -> No active NAND image to assign keybin to.");
                         }
                     } else {
-                        eprintln!(" -> No key provided in keybin.");
+                        error!(" -> No key provided in keybin.");
                     }
                 }
                 InternalCommand::ParseFlashfs { path } => {
-                    println!(" -> Preparing to build flashfs from folder {:?}...", path);
+                    info!(" -> Preparing to build flashfs from folder {:?}...", path);
                     if let Some(nand) = &mut self.active_nand {
                         if matches!(nand.layout, crate::core::data::blocks::NandLayout::Emmc) {
                             return Err("eMMC FlashFS building/injection is not yet implemented (different metadata structure).".to_string());
@@ -463,43 +473,43 @@ impl Session {
                             if from_root != 0 { from_root }
                             else { match nand.layout { crate::core::data::blocks::NandLayout::Bb => 0x1E0, _ => 0x4E } }
                         };
-                        match crate::builder::chain::flashfs::FileSystemRoot::build_from_folder(&mut nand.image, &nand.layout, &path, fs_start as u16) {
+                                                        match crate::builder::chain::flashfs::FileSystemRoot::build_from_folder(&mut nand.image, &nand.layout, &path, fs_start as u16) {
                             Ok(new_root) => {
                                 nand.flashfs.root = new_root;
-                                println!(" -> FlashFS constructed and injected successfully.");
+                                info!(" -> FlashFS constructed and injected successfully.");
                             }
-                            Err(e) => eprintln!(" -> Failed to build FlashFS from folder: {}", e),
+                            Err(e) => error!(" -> Failed to build FlashFS from folder: {}", e),
                         }
                     } else {
-                        eprintln!(" -> No active NAND loaded to parse FlashFS into.");
+                        error!(" -> No active NAND loaded to parse FlashFS into.");
                     }
                 }
                 InternalCommand::ParsePatch { path } => {
-                    println!(" -> Parsing patch binary from {:?}...", path);
+                    info!(" -> Parsing patch binary from {:?}...", path);
                     match parse_xe_binary(path.to_str().unwrap_or_default()) {
                         Ok(xe_patch) => {
-                            println!(" -> Successfully parsed patch: Type {:?}, {} KHV records", 
+                            info!(" -> Successfully parsed patch: Type {:?}, {} KHV records", 
                                      xe_patch.xetype, 
                                      xe_patch.khv.as_ref().map(|k| k.records.len()).unwrap_or(0));
                         }
-                        Err(e) => eprintln!(" -> Failed to parse patch binary: {}", e),
+                        Err(e) => error!(" -> Failed to parse patch binary: {}", e),
                     }
                 }
                 InternalCommand::ApplyPatch { path, ptype, target } => {
-                    println!(" -> Applying patch {:?} (type {}, target {:?})...", path, ptype, target);
+                    info!(" -> Applying patch {:?} (type {}, target {:?})...", path, ptype, target);
                     if let Some(nand) = &mut self.active_nand {
                         match parse_xe_binary(path.to_str().unwrap_or_default()) {
                             Ok(xe_patch) => {
                                 if let Err(e) = apply_xe_patch(xe_patch, nand) {
-                                    eprintln!(" -> Failed to apply patch: {}", e);
+                                    error!(" -> Failed to apply patch: {}", e);
                                 } else {
-                                    println!(" -> Successfully applied patch and routed KHV to NAND options.");
+                                    info!(" -> Successfully applied patch and routed KHV to NAND options.");
                                 }
                             }
-                            Err(e) => eprintln!(" -> Failed to parse xePatch binary: {}", e),
+                            Err(e) => error!(" -> Failed to parse xePatch binary: {}", e),
                         }
                     } else {
-                        eprintln!(" -> No active NAND loaded to patch.");
+                        error!(" -> No active NAND loaded to patch.");
                     }
                 }
                 InternalCommand::Replace { id, path } => {
@@ -519,34 +529,34 @@ impl Session {
                 InternalCommand::List => {
                     if let Some(nand) = &self.active_nand {
                         nand.header.print_info();
-                        println!(" -> Bootloaders Present: CB: {} | CD: {} | CE: {}", 
+                        info!(" -> Bootloaders Present: CB: {} | CD: {} | CE: {}", 
                             nand.bootloaders.cb.is_some(), 
                             nand.bootloaders.cd.is_some(), 
                             nand.bootloaders.ce.is_some()
                         );
                     } else {
-                        println!(" -> Active NAND is empty.");
+                        info!(" -> Active NAND is empty.");
                     }
                 }
                 InternalCommand::Delete { id } => {
-                    println!(" -> Deleting element {}...", id);
+                    info!(" -> Deleting element {}...", id);
                     if let Some(nand) = &mut self.active_nand {
                         match id {
                             1 => nand.extra.smc = Vec::new(),
                             3 => nand.bootloaders.cb = None,
-                            _ => eprintln!(" -> Unhandled Delete ID {}", id),
+                            _ => error!(" -> Unhandled Delete ID {}", id),
                         }
                     }
                 }
                 InternalCommand::Clear => {
                     self.active_nand = None;
-                    println!(" -> Active NAND cleared.");
+                    info!(" -> Active NAND cleared.");
                 }
                 InternalCommand::Compress => {
-                    println!(" -> Compress logic hooks to mspack / xenia (Not Yet Invoked)");
+                    info!(" -> Compress logic hooks to mspack / xenia (Not Yet Invoked)");
                 }
                 InternalCommand::Decompress => {
-                    println!(" -> Decompressing CE Base Kernel payload...");
+                    info!(" -> Decompressing CE Base Kernel payload...");
                     if let Some(nand) = &mut self.active_nand {
                         if let Some(ce) = &mut nand.bootloaders.ce {
                             match ce.decompress() {
@@ -554,24 +564,24 @@ impl Session {
                                     ce.data_kernel = Some(kernel_payload.clone());
                                     // Optionally dump to verification file locally
                                     let _ = std::fs::write("Kernel-Decompressed.bin", &kernel_payload);
-                                    println!(" -> CE Base Kernel successfully decompressed! (0x{:X} bytes)", kernel_payload.len());
+                                    info!(" -> CE Base Kernel successfully decompressed! (0x{:X} bytes)", kernel_payload.len());
                                 }
-                                Err(e) => eprintln!(" -> CE decompression failed: {}", e),
+                                Err(e) => error!(" -> CE decompression failed: {}", e),
                             }
                         } else {
-                            eprintln!(" -> Active NAND does not contain a CE bootloader to decompress.");
+                            error!(" -> Active NAND does not contain a CE bootloader to decompress.");
                         }
                     } else {
-                        eprintln!(" -> No active NAND loaded. Cannot run Decompress.");
+                        error!(" -> No active NAND loaded. Cannot run Decompress.");
                     }
                 }
                 InternalCommand::SessionInit { base, common } => {
-                    println!(" -> Initializing session with base {:?} and common {:?}", base, common);
+                    info!(" -> Initializing session with base {:?} and common {:?}", base, common);
                 }
                 InternalCommand::SessionList => {
-                    println!(" -> Session Queue:");
+                    info!(" -> Session Queue:");
                     for q in self.queue.iter() {
-                        println!("   [Priority {}] Seq {}: {:?}", q.command.priority_score(), q.sequence_id, q.command);
+                        info!("   [Priority {}] Seq {}: {:?}", q.command.priority_score(), q.sequence_id, q.command);
                     }
                 }
                 InternalCommand::SessionDelete { id } => {
@@ -582,11 +592,11 @@ impl Session {
                             temp.push(q);
                         } else {
                             found = true;
-                            println!(" -> Deleted Session sequence {}.", id);
+                            info!(" -> Deleted Session sequence {}.", id);
                         }
                     }
                     if !found {
-                        eprintln!(" -> Sequence {} not found in session queue.", id);
+                        error!(" -> Sequence {} not found in session queue.", id);
                     }
                     for q in temp {
                         self.queue.push(q);
@@ -594,39 +604,39 @@ impl Session {
                 }
                 InternalCommand::SessionClear => {
                     self.queue.clear();
-                    println!(" -> Session queue cleared.");
+                    info!(" -> Session queue cleared.");
                 }
                 InternalCommand::SessionRun => {
                     // This is inherently a no-op loop trigger since `run()` is already running.
-                    println!(" -> SessionRun triggered.");
+                    info!(" -> SessionRun triggered.");
                 }
                 InternalCommand::CreateImage { layout } => {
-                    println!(" -> Creating blank NAND image with layout {:?}...", layout);
+                    info!(" -> Creating blank NAND image with layout {:?}...", layout);
                     self.active_nand = Some(NandSkeleton::new_blank(layout));
                 }
                 InternalCommand::Update { path } => {
                     let data = match fs::read(&path) {
                         Ok(d) => d,
                         Err(e) => {
-                            eprintln!(" -> Failed to read update file {:?}: {}", path, e);
+                            error!(" -> Failed to read update file {:?}: {}", path, e);
                             return Ok(());
                         }
                     };
                     
                     if crate::builder::tools::stfs::StfsContainer::new(&data).is_ok() {
                         // 1. Process as STFS/PIRS container
-                        println!(" -> Discovery: System Update container detected at {:?}", path);
+                        info!(" -> Discovery: System Update container detected at {:?}", path);
                         let container = crate::builder::tools::stfs::StfsContainer::new(&data).unwrap();
                         let files = container.extract_to_memory()?;
                         
                         // Process internal xboxupd.bin if present for CF/CG
                         if let Some(upd_data) = files.get("xboxupd.bin") {
-                            println!(" -> Internal xboxupd.bin discovered. Parsing bootloaders...");
+                            info!(" -> Internal xboxupd.bin discovered. Parsing bootloaders...");
                             match crate::builder::tools::stfs::parse_xboxupd(upd_data) {
                                 Ok((cf, cg)) => {
                                     let cf_ver = cf.header.version.get();
                                     let cg_ver = cg.header.version.get();
-                                    println!(" -> Discovery: Identified CF_{} and CG_{} in xboxupd.bin", cf_ver, cg_ver);
+                                    info!(" -> Discovery: Identified CF_{} and CG_{} in xboxupd.bin", cf_ver, cg_ver);
 
                                     // Register versioned names in pending_assets to satisfy INI lookup
                                     self.pending_assets.insert(format!("cf_{}.bin", cf_ver), cf.serialize());
@@ -641,10 +651,10 @@ impl Session {
                                                 let _ = ce.apply_update(cf, cg);
                                             }
                                         }
-                                        println!(" -> Discovery: Injected CF/CG from internal xboxupd.bin into active NAND");
+                                        info!(" -> Discovery: Injected CF/CG from internal xboxupd.bin into active NAND");
                                     }
                                 }
-                                Err(e) => eprintln!(" -> Warning: Failed to parse internal xboxupd: {}", e),
+                                Err(e) => error!(" -> Warning: Failed to parse internal xboxupd: {}", e),
                             }
                         }
 
@@ -654,12 +664,12 @@ impl Session {
                         }
                     } else if path.file_name().and_then(|n| n.to_str()).map(|s| s.to_lowercase() == "xboxupd.bin").unwrap_or(false) {
                         // 2. Process as standalone xboxupd.bin binary
-                        println!(" -> Discovery: Standalone update binary detected at {:?}", path);
+                        info!(" -> Discovery: Standalone update binary detected at {:?}", path);
                         match crate::builder::tools::stfs::parse_xboxupd(&data) {
                             Ok((cf, cg)) => {
                                 let cf_ver = cf.header.version.get();
                                 let cg_ver = cg.header.version.get();
-                                println!(" -> Discovery: Identified CF_{} and CG_{} in standalone xboxupd.bin", cf_ver, cg_ver);
+                                info!(" -> Discovery: Identified CF_{} and CG_{} in standalone xboxupd.bin", cf_ver, cg_ver);
 
                                 // Register versioned names in pending_assets to satisfy INI lookup
                                 self.pending_assets.insert(format!("cf_{}.bin", cf_ver).to_lowercase(), cf.serialize());
@@ -674,7 +684,7 @@ impl Session {
                                             let _ = ce.apply_update(cf, cg);
                                         }
                                     }
-                                    println!(" -> Discovery: Injected CF/CG from standalone xboxupd.bin into active NAND");
+                                    info!(" -> Discovery: Injected CF/CG from standalone xboxupd.bin into active NAND");
                                 }
                             }
                             Err(e) => return Err(format!("Update Parse Error: {}", e)),
@@ -684,14 +694,14 @@ impl Session {
                         let filename = path.file_name().unwrap().to_string_lossy().to_string();
                         let lower = filename.to_lowercase();
                         if lower.ends_with(".xex") || lower.ends_with(".dll") || lower == "fcrt.bin" || lower == "xeconfig.bin" {
-                            println!(" -> Discovery: Loose FlashFS asset detected: {}", filename);
+                            info!(" -> Discovery: Loose FlashFS asset detected: {}", filename);
                             self.pending_assets.entry(filename).or_insert(data);
                         }
                     }
                 }
                 InternalCommand::FinalizeFlashfs => {
                     if !self.pending_assets.is_empty() {
-                        println!(" -> Finalizing FlashFS with {} collected assets...", self.pending_assets.len());
+                        info!(" -> Finalizing FlashFS with {} collected assets...", self.pending_assets.len());
                         if let Some(nand) = &mut self.active_nand {
                             // Prefer the parsed FlashFS root block; fall back to layout-specific defaults.
                             let fs_start = {
@@ -702,7 +712,7 @@ impl Session {
                             match crate::builder::chain::flashfs::FileSystemRoot::build_from_memory(&mut nand.image, &nand.layout, &self.pending_assets, fs_start as u16) {
                                 Ok(new_root) => {
                                     nand.flashfs.root = new_root;
-                                    println!(" -> FlashFS generation complete.");
+                                    info!(" -> FlashFS generation complete.");
                                 },
                                 Err(e) => return Err(format!("FlashFS Build Error: {}", e)),
                             }
@@ -710,7 +720,7 @@ impl Session {
                     }
                 }
                 InternalCommand::ExtractStfs { path, target_dir } => {
-                    println!(" -> Extracting STFS container from {:?} to {:?}...", path, target_dir);
+                    info!(" -> Extracting STFS container from {:?} to {:?}...", path, target_dir);
                     match fs::read(&path) {
                         Ok(data) => {
                             match crate::builder::tools::stfs::StfsContainer::new(&data) {

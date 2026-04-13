@@ -1,28 +1,19 @@
 # GGXBuild TODO
 
-- Rewrite nand parse function ?
-
-- Assemble-Shadow = Assemble Shadowboot image
-- Assemble-Xell = Assemble XeLL image
-
+- Rewrite Session
+- Assemble-Xell
+- Image type identification
+- Patch identification
 
 Weak Files:
 kv.rs
-flashfs.rs
-smc.rs
 
 Next Release:
 
-General:
-
+- Parse and Assemble Shadowboot
 - LZX Recompression
 - Error Handler / Saftey net
 
-Parsing:
-- Shadowboot
-- XDK Recovery
-
-Patching:
-- Keyvault
-- SMC
-- RGLP
+- Keyvault patching
+- SMC patching
+- RGLP patching

@@ -12,6 +12,7 @@
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use crate::builder::builder::*;
+use log::info;
 
 /// xeBuild binary patch format
 // 3 types: JTAG, RGH, Addon
@@ -166,7 +167,7 @@ fn apply_xe_buffer(patch: &XeBuildPatch, data: &mut Vec<u8>) -> anyhow::Result<(
 
 pub fn apply_xe_patch(patch: XeBuildBinary, nand: &mut NandSkeleton) -> anyhow::Result<()> {
     if let Some(khv) = patch.khv {
-        println!(" -> Appending KHV patches to NandSkeleton options...");
+        info!(" -> Appending {} KHV patches to NandSkeleton options...", khv.records.len());
         if let Some(patches) = &mut nand.options.patches {
             for record in khv.records {
                 patches.khv.push(PatchRecord {
@@ -180,12 +181,14 @@ pub fn apply_xe_patch(patch: XeBuildBinary, nand: &mut NandSkeleton) -> anyhow::
 
     if let Some(cb) = patch.cb {
         if let Some(cb_bl) = &mut nand.bootloaders.cb {
+            info!(" -> Applying {} RGH patches to CB...", cb.records.len());
             apply_xe_buffer(&cb, &mut cb_bl.data)?;
         }
     }
 
     if let Some(cd) = patch.cd {
         if let Some(cd_bl) = &mut nand.bootloaders.cd {
+            info!(" -> Applying {} RGH patches to CD...", cd.records.len());
             apply_xe_buffer(&cd, &mut cd_bl.data)?;
         }
     }

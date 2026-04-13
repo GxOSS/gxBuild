@@ -25,6 +25,7 @@ use std::fs;
 use crc32fast::Hasher;
 use thiserror::Error;
 use crate::builder::builder::NandSkeleton;
+use log::info;
 
 #[derive(Error, Debug)]
 pub enum IniError {
@@ -187,7 +188,7 @@ pub fn apply_xe_ini(
     
     // DIAGNOSTIC: Print all pending assets
     if !pending_assets.is_empty() {
-        println!(" -> Discovered assets in memory: {:?}", pending_assets.keys().collect::<Vec<_>>());
+        info!(" -> Discovered assets in memory: {:?}", pending_assets.keys().collect::<Vec<_>>());
     }
 
     // 1. Process [main] bootloaders
@@ -203,7 +204,7 @@ pub fn apply_xe_ini(
         } else {
             // If not in memory and not on disk, we only error if it's NOT already in the NAND.
             // This allows us to keep baseline bootloaders if no replacement was found.
-            println!(" -> Note: {} not found on disk or in containers, keeping baseline if present.", filename);
+            info!(" -> Note: {} not found on disk or in containers, keeping baseline if present.", filename);
             continue;
         };
         

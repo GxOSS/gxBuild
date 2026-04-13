@@ -1,8 +1,13 @@
 /target
 /standalone
 /scratch
+/nands
+/.qwen
+/output
+/References
 Cargo.lock
 errors.log
 Cargo_errors.txt
 ggx.code-workspace
+CLAUDE.md
 .vscode

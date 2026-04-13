@@ -4,7 +4,7 @@
     Modified in 2026 by Exposure / Zach for GGX
 */
 
-
+use log::info;
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum NandLayout {
@@ -17,6 +17,21 @@ pub enum NandLayout {
     Bb,
     /// eMMC, no spare (48 MB / 4 GB).
     Emmc,
+}
+
+/// Spare metadata format type — defines byte layout of the 16-byte spare area per page.
+/// Based on x360Utils NANDSpare.MetaType detection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum SpareMetaType {
+    /// Pre-Jasper (Xenon/Zephyr/Falcon/early Jasper) — BlockID at [0..1], FsSequence at [2..4]
+    MetaType0,
+    /// Jasper/Trinity/Corona — BlockID at [1..2], FsSequence at [0,3..4]
+    MetaType1,
+    /// Big-Block Jasper — BlockID at [1..2], FsSequence at [3..5], BadBlock at [0]
+    MetaType2,
+    /// No spare data or unknown (eMMC, clean logical images)
+    #[default]
+    MetaTypeNone,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -66,6 +81,62 @@ impl NandLayout {
 
     pub fn physical_page_size(&self) -> usize {
         self.page_size() + self.spare_size()
+    }
+
+    /// Converts a logical page number to its physical offset in a raw NAND image.
+    /// Matches the proven pattern from scratch iterations (V25, V43, V46).
+    /// - Small Block: logical page N → physical offset (N/512)*528 + (N%512)
+    /// - Big Block:   logical page N → physical offset (N/2048)*2112 + (N%2048)
+    /// - eMMC:        logical page N → physical offset N (identity mapping)
+    pub fn logical_to_physical(&self, logical_page: usize) -> u64 {
+        match self {
+            NandLayout::Emmc => logical_page as u64,
+            NandLayout::Xsb | NandLayout::Sb => {
+                ((logical_page / 512) * 528 + (logical_page % 512)) as u64
+            }
+            NandLayout::Bb => {
+                ((logical_page / 2048) * 2112 + (logical_page % 2048)) as u64
+            }
+        }
+    }
+
+    /// Reads `len` bytes starting from logical page `logical_page` in a physical NAND image.
+    /// Handles cross-page boundary reads transparently by translating each logical page
+    /// to its physical offset and reading chunks that don't cross physical page boundaries.
+    ///
+    /// This is essential for parsing bootloader headers and data from raw physical dumps
+    /// where spare/ECC areas are interleaved with actual data.
+    pub fn read_logical_from_physical(
+        image: &[u8],
+        logical_page: usize,
+        len: usize,
+        layout: NandLayout,
+    ) -> Option<Vec<u8>> {
+        if image.is_empty() || len == 0 { return None; }
+
+        let logical_page_size = layout.page_size();
+        let mut result = vec![0u8; len];
+        let mut cur = 0;
+
+        while cur < len {
+            let current_logical = logical_page + (cur / logical_page_size);
+            let phys_offset = layout.logical_to_physical(current_logical);
+            let page_offset = current_logical % logical_page_size;
+            let chunk_len = logical_page_size - page_offset;
+            let to_read = std::cmp::min(chunk_len, len - cur);
+
+            if (phys_offset as usize) + to_read > image.len() {
+                result.truncate(cur);
+                if result.is_empty() { return None; }
+                break;
+            }
+
+            let src_start = phys_offset as usize + page_offset;
+            result[cur..cur + to_read].copy_from_slice(&image[src_start..src_start + to_read]);
+            cur += to_read;
+        }
+
+        Some(result)
     }
 
     pub fn marker_offset(&self) -> usize {
@@ -137,7 +208,7 @@ impl NandLayout {
         };
 
         if let Ok(l) = &layout {
-            println!(" -> Detected NAND Layout: {:?} (Image Size: 0x{:x})", l, len);
+            info!(" -> Detected NAND Layout: {:?} (Image Size: 0x{:x})", l, len);
         }
         layout
     }
@@ -164,69 +235,187 @@ pub fn calculate_ecc(data: &mut [u8]) {
 
 pub fn add_spare(image: &[u8], layout: NandLayout, blockstart: usize) -> Vec<u8> {
     let page_size = layout.page_size();
-    let p_page_size = layout.physical_page_size();
     let total_pages = (image.len() + page_size - 1) / page_size;
-    let mut result = vec![0u8; total_pages * p_page_size];
-    let block_number_base = blockstart / layout.block_size();
 
-    println!(" -> Finalizing physical image: Generating ECC and Spare Areas...");
-    for i in 0..total_pages {
-        let read_offset = i * page_size;
-        let mut data_block = [0u8; 0x200];
-        let bytes_remaining = image.len().saturating_sub(read_offset);
-        if bytes_remaining > 0 {
-            let sz = std::cmp::min(0x200, bytes_remaining);
-            data_block[..sz].copy_from_slice(&image[read_offset..read_offset + sz]);
-        }
+    info!(" -> Finalizing physical image: Generating ECC and Spare Areas...");
 
-        let mut spare = [0u8; 16];
-        match layout {
-            NandLayout::Xsb => {
-                spare[5] = 0xFF;
-                let val = (i / 32) + block_number_base;
-                spare[0] = (val & 0xFF) as u8;
-                spare[1] = ((val / 0x100) & 0xFF) as u8;
-            }
-            NandLayout::Sb => {
-                spare[5] = 0xFF;
-                let val = (i / 32) + block_number_base;
-                spare[1] = (val & 0xFF) as u8;
-                spare[2] = ((val / 0x100) & 0xFF) as u8;
-            }
-            NandLayout::Bb => {
-                spare[0] = 0xFF;
-                let val = (i / 256) + (blockstart / 0x21000);
-                spare[1] = (val & 0xFF) as u8;
-                spare[2] = ((val >> 8) & 0xFF) as u8;
-            }
-            NandLayout::Emmc => {}
-        }
+    match layout {
+        NandLayout::Bb => {
+            // Big-block: pack 4 pages + 0x40 spare into 0x840-byte chunks
+            let chunk_data = 0x800usize; // 4 pages × 0x200
+            let chunk_spare = 0x40usize;  // 4 spare regions × 0x10
+            let chunk_total = chunk_data + chunk_spare;
+            let chunks = (total_pages + 3) / 4; // Round up
+            
+            let mut result = vec![0u8; chunks * chunk_total];
+            let block_number_base = blockstart / layout.block_size();
 
-        let write_offset = i * p_page_size;
-        let page_slice = &mut result[write_offset..write_offset + p_page_size];
-        page_slice[..0x200].copy_from_slice(&data_block);
-        if p_page_size > 0x200 {
-            page_slice[0x200..p_page_size].copy_from_slice(&spare[..p_page_size - 0x200]);
+            for chunk in 0..chunks {
+                let chunk_offset = chunk * chunk_total;
+                let page_base = chunk * 4;
+
+                for page_in_chunk in 0..4 {
+                    let page_idx = page_base + page_in_chunk;
+                    if page_idx >= total_pages { break; }
+
+                    let read_offset = page_idx * page_size;
+                    let mut data_block = [0u8; 0x200];
+                    let bytes_remaining = image.len().saturating_sub(read_offset);
+                    if bytes_remaining > 0 {
+                        let sz = std::cmp::min(0x200, bytes_remaining);
+                        data_block[..sz].copy_from_slice(&image[read_offset..read_offset + sz]);
+                    }
+
+                    // Write data portion
+                    let data_offset = chunk_offset + (page_in_chunk * 0x200);
+                    result[data_offset..data_offset + 0x200].copy_from_slice(&data_block);
+
+                    // Generate spare data
+                    let mut spare = [0u8; 16];
+                    spare[0] = 0xFF; // Big-block bad-block marker
+                    let val = (page_idx / 256) + block_number_base;
+                    spare[1] = (val & 0xFF) as u8;
+                    spare[2] = ((val >> 8) & 0xFF) as u8;
+
+                    // Write spare portion
+                    let spare_offset = chunk_offset + 0x800 + (page_in_chunk * 0x10);
+                    result[spare_offset..spare_offset + 0x10].copy_from_slice(&spare);
+                }
+
+                // Calculate ECC for the entire chunk (data + spare)
+                // Big-block ECC is calculated per-page over data+spare combined
+                for page_in_chunk in 0..4 {
+                    let page_start = chunk_offset + (page_in_chunk * 0x200);
+                    let spare_start = chunk_offset + 0x800 + (page_in_chunk * 0x10);
+                    let mut page_with_spare = [0u8; 0x210];
+                    page_with_spare[..0x200].copy_from_slice(&result[page_start..page_start + 0x200]);
+                    page_with_spare[0x200..0x210].copy_from_slice(&result[spare_start..spare_start + 0x10]);
+                    calculate_ecc(&mut page_with_spare);
+                    // Copy ECC back
+                    result[spare_start + 0x0C..spare_start + 0x10]
+                        .copy_from_slice(&page_with_spare[0x20C..0x210]);
+                }
+            }
+            result
         }
-        calculate_ecc(page_slice);
+        NandLayout::Xsb | NandLayout::Sb => {
+            // Small-block: one page + spare per 0x210-byte chunk
+            let p_page_size = layout.physical_page_size();
+            let mut result = vec![0u8; total_pages * p_page_size];
+            let block_number_base = blockstart / layout.block_size();
+
+            for i in 0..total_pages {
+                let read_offset = i * page_size;
+                let mut data_block = [0u8; 0x200];
+                let bytes_remaining = image.len().saturating_sub(read_offset);
+                if bytes_remaining > 0 {
+                    let sz = std::cmp::min(0x200, bytes_remaining);
+                    data_block[..sz].copy_from_slice(&image[read_offset..read_offset + sz]);
+                }
+
+                let mut spare = [0u8; 16];
+                match layout {
+                    NandLayout::Xsb => {
+                        spare[5] = 0xFF;
+                        let val = (i / 32) + block_number_base;
+                        spare[0] = (val & 0xFF) as u8;
+                        spare[1] = ((val / 0x100) & 0xFF) as u8;
+                    }
+                    NandLayout::Sb => {
+                        spare[5] = 0xFF;
+                        let val = (i / 32) + block_number_base;
+                        spare[1] = (val & 0xFF) as u8;
+                        spare[2] = ((val / 0x100) & 0xFF) as u8;
+                    }
+                    _ => {}
+                }
+
+                let write_offset = i * p_page_size;
+                let page_slice = &mut result[write_offset..write_offset + p_page_size];
+                page_slice[..0x200].copy_from_slice(&data_block);
+                page_slice[0x200..p_page_size].copy_from_slice(&spare);
+                calculate_ecc(page_slice);
+            }
+            result
+        }
+        NandLayout::Emmc => {
+            // eMMC has no spare data
+            image.to_vec()
+        }
     }
-    result
 }
 
 /// Returns true if the image has spare/ECC data appended to each page.
-/// Matches J-Runner's hasecc() detection: checks the spare bytes of the
-/// first page (SB: data[0x205] or data[0x200]; BB: data[0x800]).
+/// Matches J-Runner's hasecc() detection: validates multiple pages and ECC bytes
+/// to prevent false positives from erased or corrupted NAND.
 pub fn has_spare(image: &[u8]) -> bool {
-    // Small-block indicator: spare[5] == 0xFF (good block marker) or spare[0] == 0xFF (Bb marker)
+    // Check for small-block format (spare at +0x200 per page)
+    // J-Runner iterates through multiple pages; we check the first few with validation.
     if image.len() > 0x210 {
-        // SB formats: spare at +0x200, bad-block marker at +0x205 (Sb/Xsb) or +0x200 (Bb)
-        if image[0x205] == 0xFF { return true; } // Sb/Xsb: marker at spare[5]
-        if image[0x200] == 0xFF { return true; } // Bb:    marker at spare[0]
+        let mut counter = 0;
+        let mut i: usize = 0x200;
+        
+        while i < image.len() && counter <= 0x100 {
+            // Every 0x800 bytes, there's a 0x40-byte spare block for big-block
+            if i % 0x800 == 0 {
+                if i + 0x40 <= image.len() {
+                    // Check big-block spare pattern
+                    if image[i] == 0xFF && 
+                       image.get(i + 0x10).copied().unwrap_or(0) == 0xFF &&
+                       image.get(i + 0x20).copied().unwrap_or(0) == 0xFF &&
+                       image.get(i + 0x30).copied().unwrap_or(0) == 0xFF &&
+                       image.get(i + 3).copied().unwrap_or(0) == 0x00 &&
+                       image.get(i + 4).copied().unwrap_or(0) == 0x00 
+                    {
+                        // Verify not all 0xFF
+                        let spare_block = &image[i..i + 0x40];
+                        if spare_block.iter().any(|&b| b != 0xFF) {
+                            return true;
+                        }
+                    }
+                }
+                i += 0x40;
+            } else {
+                // Small-block spare at 0x10 per page
+                if i + 0x10 <= image.len() {
+                    let spare0 = image[i];
+                    let spare5 = image.get(i + 5).copied().unwrap_or(0);
+                    let spare3 = image.get(i + 3).copied().unwrap_or(0);
+                    let spare4 = image.get(i + 4).copied().unwrap_or(0);
+                    
+                    // Check: (spare[0]==0xFF || spare[5]==0xFF) && ECC bytes zero && non-uniform data
+                    if (spare0 == 0xFF || spare5 == 0xFF) &&
+                       spare3 == 0x00 && spare4 == 0x00 &&
+                       i + 0x10 <= image.len()
+                    {
+                        // Check bytes 0xC-0xF are not all 0xFF or all 0x00
+                        let ecc_bytes = &image[i + 0xC..i + 0x10];
+                        let all_ff = ecc_bytes.iter().all(|&b| b == 0xFF);
+                        let all_00 = ecc_bytes.iter().all(|&b| b == 0x00);
+                        if !all_ff && !all_00 {
+                            return true;
+                        }
+                    }
+                }
+                i += 0x10;
+            }
+            
+            i += 0x200;
+            if i % 0x4200 == 0 { counter += 1; }
+        }
     }
-    // BB format: spare packed at 0x800 boundary (4 pages × 0x200 = 0x800, spare block at +0x800)
+    
+    // Big-block fallback: check first spare block at 0x800
+    // J-Runner checks data[0x800], data[0x810], data[0x820] for 0xFF
     if image.len() > 0x840 {
-        if image[0x800] == 0xFF { return true; }
+        if image[0x800] == 0xFF && 
+           image.get(0x810).copied().unwrap_or(0) == 0xFF && 
+           image.get(0x820).copied().unwrap_or(0) == 0xFF 
+        {
+            return true;
+        }
     }
+    
     false
 }
 
@@ -245,31 +434,160 @@ pub fn promote_layout(image: &[u8], layout: NandLayout) -> NandLayout {
     layout
 }
 
+/// Detects the spare metadata format (MetaType0/MetaType1/MetaType2) of a physical NAND image.
+/// Based on x360Utils NANDSpare.DetectSpareType():
+/// 1. Read spare at block 1, page 0 spare area (offset 0x4400)
+/// 2. Check if bad — if so, retry at end of image
+/// 3. Try MetaType0: LBA == 1 at bytes [1]&0xF<<8 | [0]
+/// 4. Try MetaType1: LBA == 1 at bytes [2]&0xF<<8 | [1]
+/// 5. Try MetaType2: Read spare at 0x21200, check LBA == 1
+pub fn detect_meta_type(image: &[u8], layout: NandLayout) -> SpareMetaType {
+    if layout == NandLayout::Emmc { return SpareMetaType::MetaTypeNone; }
+    if image.len() < 0x4410 { return SpareMetaType::MetaTypeNone; }
+
+    // Helper to read 16-byte spare at raw offset
+    let read_spare = |offset: usize| -> Option<[u8; 16]> {
+        if offset + 16 <= image.len() {
+            let mut s = [0u8; 16];
+            s.copy_from_slice(&image[offset..offset + 16]);
+            Some(s)
+        } else { None }
+    };
+
+    // Try spare at block 1, page 0 (offset 0x4400)
+    let spare = match layout {
+        NandLayout::Bb => read_spare(0x21200), // Big block: first spare at different offset
+        _ => read_spare(0x4400),
+    };
+
+    let spare = match spare {
+        Some(s) => s,
+        None => {
+            // Retry at end of image
+            if image.len() > 0x4000 {
+                read_spare(image.len() - 0x4000).unwrap_or([0u8; 16])
+            } else {
+                return SpareMetaType::MetaTypeNone;
+            }
+        }
+    };
+
+    // Check for bad block (MetaType0/1: bad marker at [5], MetaType2: at [0])
+    let is_bad_mt0_1 = spare[5] != 0xFF;
+    let is_bad_mt2 = spare[0] != 0xFF;
+
+    if is_bad_mt0_1 && is_bad_mt2 {
+        // Block 1 is bad — retry at end of image
+        if image.len() > 0x4000 {
+            if let Some(s) = read_spare(image.len() - 0x4000) {
+                return detect_from_spare(&s, layout);
+            }
+        }
+        return SpareMetaType::MetaTypeNone;
+    }
+
+    detect_from_spare(&spare, layout)
+}
+
+/// Internal helper to determine MetaType from a spare data sample.
+fn detect_from_spare(spare: &[u8; 16], _layout: NandLayout) -> SpareMetaType {
+    // Try MetaType2 (Big Block) first — LBA at bytes [1..2]
+    // MetaType2: BlockID = (spare[2]&0xF)<<8 | spare[1]
+    let lba_mt2 = ((spare[2] as u16 & 0xF) << 8) | spare[1] as u16;
+    if spare[0] == 0xFF && lba_mt2 == 1 {
+        return SpareMetaType::MetaType2;
+    }
+
+    // Try MetaType0 — LBA at bytes [0..1]
+    // MetaType0: BlockID = (spare[1]&0xF)<<8 | spare[0]
+    let lba_mt0 = ((spare[1] as u16 & 0xF) << 8) | spare[0] as u16;
+    if spare[5] == 0xFF && lba_mt0 == 1 {
+        return SpareMetaType::MetaType0;
+    }
+
+    // Try MetaType1 — LBA at bytes [1..2]
+    // MetaType1: BlockID = (spare[2]&0xF)<<8 | spare[1]
+    let lba_mt1 = ((spare[2] as u16 & 0xF) << 8) | spare[1] as u16;
+    if spare[5] == 0xFF && lba_mt1 == 1 {
+        return SpareMetaType::MetaType1;
+    }
+
+    // Default: MetaType1 is most common (Jasper/Trinity/Corona)
+    SpareMetaType::MetaType1
+}
+
 pub fn remove_spare(image: &[u8]) -> Vec<u8> {
     let Ok(layout) = NandLayout::detect(image) else { return image.to_vec() };
     if layout == NandLayout::Emmc { return image.to_vec(); }
     // Gate on actual spare presence rather than blindly stripping.
     if !has_spare(image) { return image.to_vec(); }
 
-    let p_page = layout.physical_page_size();
-    let l_page = layout.page_size();
-    let pages = image.len() / p_page;
-
-    println!(" -> Multi-Core Prep: Stripping Physical Spares/ECC to create Clean Buffer...");
-    let mut result = vec![0u8; pages * l_page];
-    for i in 0..pages {
-        result[i * l_page..(i + 1) * l_page].copy_from_slice(&image[i * p_page..i * p_page + l_page]);
+    info!(" -> Multi-Core Prep: Stripping Physical Spares/ECC to create Clean Buffer...");
+    
+    // Big-block NAND uses 0x840-byte chunks (4 pages × 0x200 data + 0x40 spare)
+    // Small-block NAND uses 0x210-byte chunks (1 page × 0x200 data + 0x10 spare)
+    match layout {
+        NandLayout::Bb => {
+            // Big-block: strip 0x840 → 0x800
+            let chunk_in = 0x840usize;
+            let chunk_out = 0x800usize;
+            let chunks = image.len() / chunk_in;
+            let mut result = vec![0u8; chunks * chunk_out];
+            
+            for i in 0..chunks {
+                let in_offset = i * chunk_in;
+                let out_offset = i * chunk_out;
+                result[out_offset..out_offset + chunk_out]
+                    .copy_from_slice(&image[in_offset..in_offset + chunk_out]);
+            }
+            result
+        }
+        NandLayout::Xsb | NandLayout::Sb => {
+            // Small-block: strip 0x210 → 0x200
+            let p_page = layout.physical_page_size(); // 0x210
+            let l_page = layout.page_size();          // 0x200
+            let pages = image.len() / p_page;
+            let mut result = vec![0u8; pages * l_page];
+            
+            for i in 0..pages {
+                result[i * l_page..(i + 1) * l_page]
+                    .copy_from_slice(&image[i * p_page..i * p_page + l_page]);
+            }
+            result
+        }
+        NandLayout::Emmc => {
+            // Should not reach here due to early return, but handle anyway
+            image.to_vec()
+        }
     }
-    result
 }
 
 pub fn get_page_spare(image: &[u8], page: usize, layout: &NandLayout) -> Option<Vec<u8>> {
     let spare_size = layout.spare_size();
     if spare_size == 0 { return None; }
-    let offset = (page * layout.physical_page_size()) + layout.page_size();
-    if offset + spare_size <= image.len() {
-        Some(image[offset..offset + spare_size].to_vec())
-    } else { None }
+    
+    match layout {
+        NandLayout::Bb => {
+            // Big-block: spare is packed at 0x800 boundaries (4 pages share 0x40 bytes of spare)
+            // Pages 0-3 share spare at 0x800, pages 4-7 share spare at 0x1040, etc.
+            let group = page / 4;
+            let page_in_group = page % 4;
+            let group_offset = group * 0x840;
+            let spare_offset = group_offset + 0x800 + (page_in_group * 0x10);
+            
+            if spare_offset + spare_size <= image.len() {
+                Some(image[spare_offset..spare_offset + spare_size].to_vec())
+            } else { None }
+        }
+        NandLayout::Xsb | NandLayout::Sb => {
+            // Small-block: spare is at offset page_size after each page's data
+            let offset = (page * layout.physical_page_size()) + layout.page_size();
+            if offset + spare_size <= image.len() {
+                Some(image[offset..offset + spare_size].to_vec())
+            } else { None }
+        }
+        NandLayout::Emmc => None,
+    }
 }
 
 pub fn is_bad_block(image: &[u8], block_number: usize, layout: &NandLayout) -> bool {
@@ -280,19 +598,42 @@ pub fn is_bad_block(image: &[u8], block_number: usize, layout: &NandLayout) -> b
 
     let p_page_size = layout.physical_page_size();
     let l_page_size = layout.page_size();
-    let mut i = 0;
-    let mut flag = false;
-    while i + p_page_size <= block_size {
-        let page_offset = offset + i;
-        let spare = &image[page_offset + l_page_size..page_offset + p_page_size];
-        if spare.iter().all(|&b| b == 0x00) { return true; }
-        if image[page_offset + marker_offset] != 0xFF {
-            if layout != &NandLayout::Bb || !flag { return true; }
+    
+    match layout {
+        NandLayout::Bb => {
+            // Big-block: check first page's spare marker in each 0x840 group
+            let pages_per_block = block_size / 0x800; // 0x21000 / 0x800 = 128 groups
+            for group in 0..pages_per_block {
+                let group_offset = offset + (group * 0x840);
+                if group_offset + 0x840 > image.len() { break; }
+                
+                // Bad-block marker is at spare[0] for big-block (absolute offset +0x800 in group)
+                if image.get(group_offset + 0x800).copied().unwrap_or(0) != 0xFF {
+                    return true;
+                }
+            }
+            false
         }
-        flag = true;
-        i += p_page_size;
+        NandLayout::Xsb | NandLayout::Sb => {
+            // Small-block: check every page's spare
+            let mut i = 0;
+            while i + p_page_size <= block_size {
+                let page_offset = offset + i;
+                let spare = &image[page_offset + l_page_size..page_offset + p_page_size];
+                
+                // All-zero spare indicates bad block
+                if spare.iter().all(|&b| b == 0x00) { return true; }
+                
+                // Check bad-block marker
+                if image[page_offset + marker_offset] != 0xFF {
+                    return true;
+                }
+                i += p_page_size;
+            }
+            false
+        }
+        NandLayout::Emmc => false, // eMMC has no spare/bad-block markers
     }
-    false
 }
 
 #[derive(Clone, Debug)]
@@ -317,11 +658,11 @@ impl BlockMap {
         let bad_indices: Vec<usize> = self.blocks.iter().map(|b| b.block).collect();
         if bad_indices.is_empty() { return Ok(()); }
         
-        println!(" -> Found {} Bad Physical Blocks. Attempting Healing/Remapping...", bad_indices.len());
+        info!(" -> Found {} Bad Physical Blocks. Attempting Healing/Remapping...", bad_indices.len());
         let remapped = resolve_remapped_blocks(image, &bad_indices, &self.layout)?;
         for (i, &bad_block) in bad_indices.iter().enumerate() {
             let target = remapped[i].ok_or_else(|| format!("Bad block {} not remapped", bad_block))?;
-            println!("   - Remapping Bad Block {} -> Reserved Physical Block {}", bad_block, target);
+            info!("   - Remapping Bad Block {} -> Reserved Physical Block {}", bad_block, target);
             let b_size = self.layout.block_size();
             let mut buf = vec![0u8; b_size];
             buf.copy_from_slice(&image[target * b_size..target * b_size + b_size]);
@@ -371,28 +712,112 @@ pub fn resolve_remapped_blocks(image: &[u8], bad_blocks: &[usize], layout: &Nand
 
 pub struct NandProcessor;
 
+/// Tracks logical-to-physical block mapping after bad block healing.
+/// Based on x360Utils NANDReader LBA tracking functionality.
+/// This allows the builder to:
+/// 1. Know which physical blocks are bad (and thus shouldn't be used)
+/// 2. Write correct spare metadata when finalizing a NAND image
+/// 3. Verify that the built image has proper bad block markers
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct LbaMap {
+    /// List of bad physical blocks that were detected and remapped.
+    pub bad_blocks: Vec<usize>,
+    /// Maps each logical block number to its physical location.
+    /// If a logical block was remapped due to bad block, this tracks
+    /// the new physical location.
+    pub logical_to_physical: Vec<usize>,
+    /// Spare metadata format detected (MetaType0/1/2/None).
+    pub meta_type: SpareMetaType,
+}
+
+impl LbaMap {
+    pub fn new(total_blocks: usize) -> Self {
+        // Default: each logical block maps to the same physical block
+        Self {
+            bad_blocks: Vec::new(),
+            logical_to_physical: (0..total_blocks).collect(),
+            meta_type: SpareMetaType::MetaTypeNone,
+        }
+    }
+
+    /// Updates the mapping after bad block healing.
+    /// Called when a bad block at `bad_block` is replaced with content from `replacement_block`.
+    pub fn record_remap(&mut self, bad_block: usize, replacement_block: usize) {
+        if !self.bad_blocks.contains(&bad_block) {
+            self.bad_blocks.push(bad_block);
+        }
+        // Find all logical blocks that pointed to the replacement and redirect them
+        for (logical, physical) in self.logical_to_physical.iter_mut().enumerate() {
+            if *physical == replacement_block {
+                *physical = bad_block;
+                info!(" -> LBA {:#X}: physical block {:#X} → {:#X} (bad block healed)",
+                      logical, replacement_block, bad_block);
+            }
+        }
+    }
+
+    /// Returns the physical block for a given logical block number.
+    pub fn physical_block(&self, logical: usize) -> Option<usize> {
+        self.logical_to_physical.get(logical).copied()
+    }
+
+    /// Returns true if a physical block is known to be bad.
+    pub fn is_bad(&self, physical: usize) -> bool {
+        self.bad_blocks.contains(&physical)
+    }
+}
+
 impl NandProcessor {
+    /// Preprocesses a raw NAND image: detects layout, heals bad blocks, strips spare.
+    /// Returns the clean logical image and layout type.
     pub fn preprocess_nand(raw_image: &[u8]) -> Result<(Vec<u8>, NandLayout), String> {
+        let (clean, layout, _lba_map) = Self::preprocess_nand_with_lba(raw_image)?;
+        Ok((clean, layout))
+    }
+
+    /// Preprocesses a raw NAND image and returns an LBA map for tracking
+    /// logical-to-physical block mappings after bad block healing.
+    /// Based on x360Utils NANDReader FindBadBlocks + SeekToLbaEx functionality.
+    pub fn preprocess_nand_with_lba(raw_image: &[u8]) -> Result<(Vec<u8>, NandLayout, LbaMap), String> {
         let base_layout = NandLayout::detect(raw_image)?;
-        if base_layout == NandLayout::Emmc { return Ok((raw_image.to_vec(), base_layout)); }
+        if base_layout == NandLayout::Emmc {
+            let total_blocks = raw_image.len() / (base_layout.logical_pages_per_block() * 0x200);
+            return Ok((raw_image.to_vec(), base_layout, LbaMap::new(total_blocks)));
+        }
 
         // Promote Sb → Xsb while spare data is still present (matches J-Runner identifylayout).
         let layout = promote_layout(raw_image, base_layout);
         if layout != base_layout {
-            println!(" -> Promoted layout: {:?} -> {:?} (Xenon spare format detected)", base_layout, layout);
+            info!(" -> Promoted layout: {:?} -> {:?} (Xenon spare format detected)", base_layout, layout);
         }
 
+        // Detect spare metadata format
+        let meta_type = detect_meta_type(raw_image, layout);
+        info!(" -> Detected spare metadata format: {:?}", meta_type);
+
         let mut working = raw_image.to_vec();
+        let total_blocks = layout.total_blocks(working.len());
+        let mut lba_map = LbaMap::new(total_blocks);
+        lba_map.meta_type = meta_type;
+
         if let Some(mut bm) = BlockMap::new(&working) {
-            bm.map_and_heal(&mut working)?;
+            if !bm.blocks.is_empty() {
+                // Record bad blocks before healing
+                for bad in &bm.blocks {
+                    lba_map.bad_blocks.push(bad.block);
+                }
+                bm.map_and_heal(&mut working)?;
+            }
         }
         let mut clean = remove_spare(&working);
         if layout == NandLayout::Bb && clean.len() > 0x4000000 {
             clean.truncate(0x4000000);
         }
-        Ok((clean, layout))
+        Ok((clean, layout, lba_map))
     }
 
+    /// Finalizes a clean NAND image by adding ECC/spare data for physical output.
+    /// If an LbaMap is provided, it uses the metadata format for correct spare layout.
     pub fn finalize_nand(clean_data: &[u8], layout: NandLayout) -> Vec<u8> {
         if layout == NandLayout::Emmc { return clean_data.to_vec(); }
         add_spare(clean_data, layout, 0)

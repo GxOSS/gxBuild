@@ -23,6 +23,7 @@ use zerocopy::{FromBytes, IntoBytes};
     
 use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
+use log::info;
 
 #[derive(Clone, Debug)]
 pub struct CdMetadata {
@@ -92,12 +93,12 @@ impl BootloaderCd {
         } else {
             "CD"
         };
-        println!("{} version: {}", indicator, self.header.version.get());
-        println!("{} size: 0x{:x}", indicator, self.header.size.get());
-        println!("{} entrypoint: 0x{:x}", indicator, self.header.entrypoint.get());
+        info!("{} version: {}", indicator, self.header.version.get());
+        info!("{} size: 0x{:x}", indicator, self.header.size.get());
+        info!("{} entrypoint: 0x{:x}", indicator, self.header.entrypoint.get());
 
         if self.data.len() >= 0x23A {
-            println!(
+            info!(
                 "{} cfsalt: {}",
                 indicator,
                 String::from_utf8_lossy(&self.data[0x230..0x23A])
@@ -106,13 +107,13 @@ impl BootloaderCd {
 
         if self.is_decrypted() {
             if let Some(ref meta) = self.metadata {
-                println!("{}-E hash: {:02x?}", indicator, meta.ce_hash);
+                info!("{}-E hash: {:02x?}", indicator, meta.ce_hash);
             } else {
                 // Fallback to raw indexing if metadata wasn't populated
-                println!("{}-E hash: {:02x?}", indicator, &self.data[0x23C..0x250]);
+                info!("{}-E hash: {:02x?}", indicator, &self.data[0x23C..0x250]);
             }
         } else {
-            println!("{} is encrypted", indicator);
+            info!("{} is encrypted", indicator);
         }
     }
 
@@ -127,6 +128,7 @@ impl BootloaderCd {
         if let Ok(derived_key) = excrypt::hmac_sha(cbb_key, &[&self.data[0..16]]) {
             let mut final_key = [0u8; 16];
             final_key.copy_from_slice(&derived_key[..16]);
+            info!(" -> CD Decryption Key Derived: {:02x?}", final_key);
 
             // Optional CPU Key layer (2nd HMAC)
             if let Some(key) = cpu_key {

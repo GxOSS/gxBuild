@@ -23,6 +23,7 @@
 use zerocopy::{FromBytes, IntoBytes};
 use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, ExCryptRsa};
+use log::info;
 
 #[derive(Clone, Debug)]
 pub struct SmcMetadata {
@@ -73,6 +74,9 @@ impl Smc {
             major_version: self.data[0x101],
             minor_version: self.data[0x102],
         });
+        if let Some(meta) = &self.metadata {
+            info!(" -> SMC Metadata: Type 0x{:02X}, Ver {}.{}", meta.type_byte, meta.major_version, meta.minor_version);
+        }
     }
 
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
@@ -138,6 +142,9 @@ impl RawSmc {
             major_version: self.data[0x101],
             minor_version: self.data[0x102],
         });
+        if let Some(meta) = &self.metadata {
+            info!(" -> Raw SMC Metadata: Type 0x{:02X}, Ver {}.{}", meta.type_byte, meta.major_version, meta.minor_version);
+        }
     }
 
     /// Decrypts the raw SMC payload in-place using the "BuNy" rolling-key cipher.

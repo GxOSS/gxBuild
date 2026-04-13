@@ -24,6 +24,7 @@
 use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
 use zerocopy::{FromBytes, IntoBytes};
+use log::info;
 
 #[derive(Clone, Debug)]
 pub struct CbMetadata {
@@ -41,8 +42,40 @@ pub struct BootloaderCb {
 }
 
 impl BootloaderCb {
-    pub fn new(_bytes: &[u8]) -> Self {
-        todo!()
+    /// Construct a CB bootloader from raw binary data (full blob including header).
+    /// This matches xenon-bltool's pattern of working directly with raw byte buffers.
+    /// The input should be the complete CB binary as found in a NAND image or bootloader file.
+    pub fn new(bytes: &[u8]) -> Self {
+        // Parse header from the beginning of the data
+        let (header, payload) = match BootloaderHeader::read_from_prefix(bytes) {
+            Ok(result) => result,
+            Err(_) => {
+                // If parsing fails, create an empty placeholder
+                // This allows construction to succeed even with invalid data
+                let empty_header = BootloaderHeader {
+                    magic: zerocopy::byteorder::U16::new(0),
+                    version: zerocopy::byteorder::U16::new(0),
+                    pairing: zerocopy::byteorder::U16::new(0),
+                    flags: zerocopy::byteorder::U16::new(0),
+                    entrypoint: zerocopy::byteorder::U32::new(0),
+                    size: zerocopy::byteorder::U32::new(0),
+                };
+                return Self {
+                    header: empty_header,
+                    data: bytes.to_vec(),
+                    metadata: None,
+                };
+            }
+        };
+
+        let mut cb = Self {
+            header: header.clone(),
+            data: payload.to_vec(),
+            metadata: None,
+        };
+        // Attempt to populate metadata if the size looks like a decrypted or valid CB
+        cb.populate_metadata();
+        cb
     }
 
     pub fn parse(data: &[u8]) -> Result<Self, String> {
@@ -132,9 +165,9 @@ impl BootloaderCb {
             indicator = "CB_B";
         }
 
-        println!("{} version: {}", indicator, self.header.version.get());
-        println!("{} size: 0x{:x}", indicator, self.header.size.get());
-        println!(
+        info!("{} version: {}", indicator, self.header.version.get());
+        info!("{} size: 0x{:x}", indicator, self.header.size.get());
+        info!(
             "{} entrypoint: 0x{:x}",
             indicator,
             self.header.entrypoint.get()
@@ -142,18 +175,18 @@ impl BootloaderCb {
 
         if self.is_decrypted() {
             if let Some(ref meta) = self.metadata {
-                println!("{} LDV: {}", indicator, meta.ldv);
-                println!("{} next hash: {:02x?}", indicator, meta.cd_cbb_hash);
+                info!("{} LDV: {}", indicator, meta.ldv);
+                info!("{} next hash: {:02x?}", indicator, meta.cd_cbb_hash);
             } else {
                 // Fallback to raw indexing if metadata wasn't populated
-                println!("{} LDV: {}", indicator, self.data[0x391]);
-                println!("{} next hash: {:02x?}", indicator, &self.data[0x37C..0x390]);
+                info!("{} LDV: {}", indicator, self.data[0x391]);
+                info!("{} next hash: {:02x?}", indicator, &self.data[0x37C..0x390]);
             }
             if self.data.len() >= 0x30 && self.data[0x30] != 0 {
-                println!("{} signature: (requires keys to verify)", indicator);
+                info!("{} signature: (requires keys to verify)", indicator);
             }
         } else {
-            println!("{} is encrypted", indicator);
+            info!("{} is encrypted", indicator);
         }
     }
 
@@ -169,12 +202,53 @@ impl BootloaderCb {
         if let Ok(derived_key) = excrypt::hmac_sha(onebl_key, &[&self.data[0..16]]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
+            info!(" -> Decrypting CB using derived key: {:02x?}", decrypt_key);
             // Write back in-place, matching xenon-bltool cb_decrypt behaviour.
             self.data[0..16].copy_from_slice(&decrypt_key);
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }
         }
+    }
+
+    /// Decrypts a CB_B bootloader using MFG (manufacturing) zero-key.
+    /// Based on x360Utils Cryptography.DecryptBootloaderCB with BlEncryptionTypes.MfgCbb (0x801).
+    /// The "inkey" is all zeros, and the HMAC input combines cb_b_key + cb_a_key.
+    ///
+    /// # Arguments
+    /// * `cb_a_key` - The derived RC4 key from the CB_A bootloader (payload key at offset 0x10)
+    pub fn decrypt_mfg(&mut self, cb_a_key: &[u8; 16]) {
+        let size = self.header.size.get();
+        let size_aligned = (size + 0xF) & 0xFFFFFFF0;
+        let payload_len = size_aligned as usize - 0x10;
+
+        if self.data.len() < payload_len { return; }
+
+        // MFG key is all zeros
+        let zero_key = [0u8; 16];
+
+        // Build HMAC input: cb_b_key (0x10) + cb_a_key (0x10)
+        let mut hmac_input = [0u8; 0x20];
+        hmac_input[..0x10].copy_from_slice(&self.data[0..0x10]); // cb_b_hdr.key
+        hmac_input[0x10..0x20].copy_from_slice(cb_a_key);         // cb_a derived key
+
+        if let Ok(derived_key) = excrypt::hmac_sha(&zero_key, &[&hmac_input]) {
+            let mut decrypt_key = [0u8; 16];
+            decrypt_key.copy_from_slice(&derived_key[..16]);
+            info!(" -> Decrypting CB (MFG zero-key) using derived key: {:02x?}", decrypt_key);
+            if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
+                let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
+            }
+        }
+    }
+
+    /// Verifies that a CB bootloader has been successfully decrypted.
+    /// Based on x360Utils Cryptography.VerifyCBDecrypted():
+    /// After decryption, bytes 0x270..0x390 (0x120 bytes) should be all zeros.
+    /// This region corresponds to `globals[0x128..0x248]` in the decrypted CB payload.
+    pub fn verify_decrypted(&self) -> bool {
+        if self.data.len() < 0x390 { return false; }
+        self.data[0x270..0x390].iter().all(|&b| b == 0)
     }
 
     pub fn decrypt_v1(&mut self, cb_a_key: &[u8; 16], cpu_key: &[u8; 16]) {

@@ -12,6 +12,7 @@ use zerocopy::byteorder::{BigEndian as ZBigEndian, U16, U32};
     
 use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
 use crate::builder::chain::smc::RawSmc;
+use log::info;
 
 pub const ONEBL_KEY: [u8; 16] = [
     0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7,
@@ -210,6 +211,7 @@ pub fn fix_per_box_digest(
     
     let mut final_digest = [0u8; 16];
     final_digest.copy_from_slice(&res[..16]);
+    info!(" -> Calculated FixPerBoxDigest: {:02x?}", final_digest);
     Ok(final_digest)
 }
 
@@ -234,7 +236,13 @@ pub fn decrypt_chain(
     }
 
     // 1. Decrypt CB using 1BL Key.
+    info!(" -> Decrypting CB with 1BL Key...");
     cb.decrypt(&ONEBL_KEY);
+    if cb.verify_decrypted() {
+        info!(" -> CB decryption verified successfully (zero-region check passed).");
+    } else {
+        log::warn!(" -> CB decryption verification failed — decrypted data may be corrupted.");
+    }
 
     // 2. Derive CB Key from the original nonce (not the overwritten key).
     //    ExCryptHmacSha(onebl_key, nonce) → cb_key.
@@ -252,26 +260,39 @@ pub fn decrypt_chain(
     }
 
     // 3. Decrypt the rest of the chain
+    info!(" -> Decrypting CD and CE...");
     cd.decrypt(&cb_key, None);
     ce.decrypt(&cb_key);
 
     // Decrypt Updates (Slot 0 and Slot 1)
     if let (Some(cf), Some(cg)) = (cf_0, cg_0) {
         cf.decrypt(&ONEBL_KEY);
+        if cf.verify_decrypted() {
+            info!(" -> CF slot 0 decryption verified successfully.");
+        } else {
+            log::warn!(" -> CF slot 0 decryption verification failed.");
+        }
         if cf.data.len() >= 0x20 {
             let mut cg_hmac = [0u8; 16];
             cg_hmac.copy_from_slice(&cf.data[0x10..0x20]);
             cg.decrypt(&cg_hmac);
         }
+        info!(" -> Slot 0 Updates decrypted.");
     }
 
     if let (Some(cf), Some(cg)) = (cf_1, cg_1) {
         cf.decrypt(&ONEBL_KEY);
+        if cf.verify_decrypted() {
+            info!(" -> CF slot 1 decryption verified successfully.");
+        } else {
+            log::warn!(" -> CF slot 1 decryption verification failed.");
+        }
         if cf.data.len() >= 0x20 {
             let mut cg_hmac = [0u8; 16];
             cg_hmac.copy_from_slice(&cf.data[0x10..0x20]);
             cg.decrypt(&cg_hmac);
         }
+        info!(" -> Slot 1 Updates decrypted.");
     }
 
     Ok(())
@@ -303,6 +324,7 @@ pub fn encrypt_chain(
         .map_err(|e| format!("CB key derivation failed: {}", e))?;
     let mut cb_key = [0u8; 16];
     cb_key.copy_from_slice(&derived[..16]);
+    info!(" -> Derived CB Key: {:02x?}", cb_key);
 
     let digest = fix_per_box_digest(&smc.data, &cb.header, &cb.data, &cb_key, cpukey)?;
     if cb.data.len() >= 0x20 {
@@ -338,8 +360,9 @@ pub fn encrypt_chain(
         cb_b_bl.decrypt_v1(&cb_key, cpukey);
     }
     cd.decrypt(&cb_key, None);
-
+    info!(" -> CD Encrypted.");
     cb.decrypt(&ONEBL_KEY);
+    info!(" -> CB Encrypted.");
 
     Ok(())
 }

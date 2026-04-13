@@ -25,6 +25,7 @@ use crate::builder::deps::xenia;
 use crate::builder::chain::cf::BootloaderCf;
 use crate::builder::chain::cg::BootloaderCg;
 use zerocopy::{FromBytes, IntoBytes};
+use log::info;
 use zerocopy::byteorder::{U16, U32, U64, BigEndian};
 use byteorder::{BigEndian as RealBigEndian, ByteOrder};
 
@@ -113,26 +114,26 @@ impl BootloaderCe {
         } else {
             "CE"
         };
-        println!("{} version: {}", indicator, self.header.version.get());
-        println!("{} size: 0x{:x}", indicator, self.header.size.get());
+        info!("{} version: {}", indicator, self.header.version.get());
+        info!("{} size: 0x{:x}", indicator, self.header.size.get());
 
         if self.is_decrypted() {
             // Decrypted fields: target_address at 0x10, uncompressed_size at 0x18 (rel payload)
             let target_address = RealBigEndian::read_u64(&self.data[0x10..0x18]);
             let uncompressed_size = RealBigEndian::read_u32(&self.data[0x18..0x1C]);
 
-            println!(
+            info!(
                 "{} decompressed size: 0x{:x}",
                 indicator,
                 uncompressed_size
             );
-            println!(
+            info!(
                 "{} load address: 0x{:x}",
                 indicator,
                 target_address
             );
         } else {
-            println!("{} is encrypted", indicator);
+            info!("{} is encrypted", indicator);
         }
     }
 
@@ -146,6 +147,7 @@ impl BootloaderCe {
         if let Ok(derived_key) = excrypt::hmac_sha(cd_key, &[&self.data[0..16]]) {
             let mut final_key = [0u8; 16];
             final_key.copy_from_slice(&derived_key[..16]);
+            info!(" -> CE Decryption Key Derived: {:02x?}", final_key);
 
             if let Ok(mut rc4) = Rc4::new(&final_key) {
                 // Encryption starts at target_address, which is 0x10 rel into payload (absolute 0x20)
@@ -219,7 +221,7 @@ impl BootloaderCe {
             .map_err(|e| format!("Decompression structuring failed: {}", e))?;
 
         let mut decompressed = vec![0u8; uncompressed_size as usize];
-
+        info!(" -> Decompressing CE Kernel (LZX)...");
         xenia::decompress(
             &consolidated_compressed,
             &mut decompressed,
