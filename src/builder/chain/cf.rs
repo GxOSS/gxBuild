@@ -172,9 +172,11 @@ impl BootloaderCf {
     /// Based on x360Utils Cryptography.VerifyCFDecrypted():
     /// After decryption, bytes 0x1F0..0x210 (0x20 bytes) should be all zeros.
     /// This region is part of the `pairing` data in the decrypted CF payload.
+    /// Note: x360Utils offsets are from the full bootloader start (including 16-byte header).
+    /// gxBuild's `data` field is the payload AFTER the header, so we subtract 0x10.
     pub fn verify_decrypted(&self) -> bool {
-        if self.data.len() < 0x210 { return false; }
-        self.data[0x1F0..0x210].iter().all(|&b| b == 0)
+        if self.data.len() < 0x200 { return false; }
+        self.data[0x1E0..0x200].iter().all(|&b| b == 0)
     }
 
     pub fn serialize(&self) -> Vec<u8> {

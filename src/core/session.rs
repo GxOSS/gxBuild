@@ -491,13 +491,12 @@ impl Session {
                         if matches!(nand.layout, crate::core::data::blocks::NandLayout::Emmc) {
                             return Err("eMMC FlashFS building/injection is not yet implemented (different metadata structure).".to_string());
                         }
-                        // Prefer the parsed FlashFS root block; fall back to layout-specific defaults.
-                        let fs_start = {
-                            let from_root = nand.flashfs.root.block_number as usize;
-                            if from_root != 0 { from_root }
-                            else { match nand.layout { crate::core::data::blocks::NandLayout::Bb => 0x1E0, _ => 0x4E } }
+                        // Use layout-specific defaults for FlashFS start block, not the parsed NAND's root block.
+                        let fs_start: u16 = match nand.layout {
+                            crate::core::data::blocks::NandLayout::Bb => 0x1E0,
+                            _ => 0x4E,  // Small block default: block 78
                         };
-                                                        match crate::builder::chain::flashfs::FileSystemRoot::build_from_folder(&mut nand.image, &nand.layout, &path, fs_start as u16) {
+                        match crate::builder::chain::flashfs::FileSystemRoot::build_from_folder(&mut nand.image, &nand.layout, &path, fs_start) {
                             Ok(new_root) => {
                                 nand.flashfs.root = new_root;
                                 info!(" -> FlashFS constructed and injected successfully.");
@@ -665,17 +664,29 @@ impl Session {
                                     // Register versioned names in pending_assets to satisfy INI lookup
                                     self.pending_assets.insert(format!("cf_{}.bin", cf_ver), cf.serialize());
                                     self.pending_assets.insert(format!("cg_{}.bin", cg_ver), cg.serialize());
-                                    
+
                                     if let Some(nand) = &mut self.active_nand {
-                                        nand.update.cf_0 = Some(cf);
-                                        nand.update.cg_0 = Some(cg);
-                                        
-                                        if let Some(ce) = &mut nand.bootloaders.ce {
-                                            if let (Some(cf), Some(cg)) = (&nand.update.cf_0, &nand.update.cg_0) {
+                                        // STFS xboxupd.bin provides the UPDATE slot (patchslot 1),
+                                        // not the baseline slot 0. The baseline CF/CG comes from the NAND.
+                                        // This ensures J-Runner sees both patchslot 0 and patchslot 1.
+                                        if nand.update.cf_0.is_some() {
+                                            // Slot 0 already populated from NAND parse; put STFS in slot 1
+                                            nand.update.cf_1 = Some(cf);
+                                            nand.update.cg_1 = Some(cg);
+                                            info!(" -> Discovery: Injected CF/CG into patchslot 1 (update slot)");
+                                        } else {
+                                            // No baseline CF/CG from NAND; STFS provides slot 0
+                                            nand.update.cf_0 = Some(cf);
+                                            nand.update.cg_0 = Some(cg);
+                                            info!(" -> Discovery: Injected CF/CG into patchslot 0 (baseline slot)");
+                                        }
+
+                                        // Apply the update to CE kernel if both slots available
+                                        if let (Some(cf), Some(cg)) = (&nand.update.cf_0, &nand.update.cg_0) {
+                                            if let Some(ce) = &mut nand.bootloaders.ce {
                                                 let _ = ce.apply_update(cf, cg);
                                             }
                                         }
-                                        info!(" -> Discovery: Injected CF/CG from internal xboxupd.bin into active NAND");
                                     }
                                 }
                                 Err(e) => error!(" -> Warning: Failed to parse internal xboxupd: {}", e),
@@ -700,15 +711,20 @@ impl Session {
                                 self.pending_assets.insert(format!("cg_{}.bin", cg_ver).to_lowercase(), cg.serialize());
 
                                 if let Some(nand) = &mut self.active_nand {
-                                    nand.update.cf_0 = Some(cf);
-                                    nand.update.cg_0 = Some(cg);
-                                    
-                                    if let Some(ce) = &mut nand.bootloaders.ce {
-                                        if let (Some(cf), Some(cg)) = (&nand.update.cf_0, &nand.update.cg_0) {
+                                    // Standalone xboxupd.bin provides the UPDATE slot (patchslot 1)
+                                    if nand.update.cf_0.is_some() {
+                                        nand.update.cf_1 = Some(cf);
+                                        nand.update.cg_1 = Some(cg);
+                                    } else {
+                                        nand.update.cf_0 = Some(cf);
+                                        nand.update.cg_0 = Some(cg);
+                                    }
+
+                                    if let (Some(cf), Some(cg)) = (&nand.update.cf_0, &nand.update.cg_0) {
+                                        if let Some(ce) = &mut nand.bootloaders.ce {
                                             let _ = ce.apply_update(cf, cg);
                                         }
                                     }
-                                    info!(" -> Discovery: Injected CF/CG from standalone xboxupd.bin into active NAND");
                                 }
                             }
                             Err(e) => return Err(format!("Update Parse Error: {}", e)),
@@ -727,13 +743,16 @@ impl Session {
                     if !self.pending_assets.is_empty() {
                         info!(" -> Finalizing FlashFS with {} collected assets...", self.pending_assets.len());
                         if let Some(nand) = &mut self.active_nand {
-                            // Prefer the parsed FlashFS root block; fall back to layout-specific defaults.
-                            let fs_start = {
-                                let from_root = nand.flashfs.root.block_number as usize;
-                                if from_root != 0 { from_root }
-                                else { match nand.layout { crate::core::data::blocks::NandLayout::Bb => 0x1E0, _ => 0x4E } }
+                            // Use layout-specific defaults for FlashFS start block, NOT the parsed
+                            // NAND's root block. The original NAND's FlashFS root was placed based
+                            // on its own file content and growth pattern. A new build should start
+                            // fresh at the standard location.
+                            let fs_start: u16 = match nand.layout {
+                                crate::core::data::blocks::NandLayout::Bb => 0x1E0,
+                                _ => 0x4E,  // Small block default: block 78
                             };
-                            match crate::builder::chain::flashfs::FileSystemRoot::build_from_memory(&mut nand.image, &nand.layout, &self.pending_assets, fs_start as u16) {
+                            info!(" -> FlashFS start block: 0x{:X} ({})", fs_start, fs_start);
+                            match crate::builder::chain::flashfs::FileSystemRoot::build_from_memory(&mut nand.image, &nand.layout, &self.pending_assets, fs_start) {
                                 Ok(new_root) => {
                                     nand.flashfs.root = new_root;
                                     info!(" -> FlashFS generation complete.");

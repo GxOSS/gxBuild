@@ -111,22 +111,22 @@ DISCOVERY:
 
 CHANGES:
 
-- Glitch3 and full DevGL support
-- RGBuild and XDKBuild support
-- Shadowboot support
+- Glitch3 support
+- RGBuild and XDKBuild nand layout support
 - XeLL image support
 - JTAG 1f support
-- BigOnSmall Layout
-- Upgraded NAND extractor
-- Full FlashFS extraction
+- Upgraded NAND and FlashFS extractor
 
 - Detect applied patches
 - RGLoader (RGLP) patching
 - Base kernel and hypervisor (CE) updater
 - Directly apply Kernel/HV patches
+- BigOnSmall block layout
 
 - TUI NAND Builder
 - NAND presets
 - Python scripting via shell or script
 - FFI Developer API
 ---------------------------------------------------------------
+
+- Shadowboot support

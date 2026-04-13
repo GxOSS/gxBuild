@@ -515,7 +515,9 @@ impl FileSystemRoot {
     pub fn serialize_logical(&self, layout: NandLayout) -> Vec<u8> {
         let pages_per_block = layout.logical_pages_per_block();
         let logical_block_size = pages_per_block * 0x200;
-        let mut image = vec![0xFFu8; self.block_map.len() * logical_block_size];
+        // serialize_logical() produces exactly ONE FlashFS block (0x4000 bytes for Sb/Bb).
+        // The caller writes this buffer at the correct block offset in the full NAND image.
+        let mut image = vec![0xFFu8; logical_block_size];
         let start_page = self.block_number as usize * pages_per_block;
         let mut bm_pages = Vec::new();
         let mut fn_pages = Vec::new();
@@ -530,20 +532,24 @@ impl FileSystemRoot {
             if entry.block_number != 0 {
                 let chain = self.get_block_chain(entry.block_number, self.block_map.len());
                 let mut wrote = 0;
-                for (i, &block) in chain.iter().enumerate() {
+                for (i, &_block) in chain.iter().enumerate() {
                     let mut to_write = logical_block_size;
                     if i == chain.len() - 1 { to_write = entry.data.len() - wrote; }
-                    let off = block as usize * logical_block_size;
-                    image[off..off + to_write].copy_from_slice(&entry.data[wrote..wrote+to_write]);
+                    // entry data is written to the chain blocks, not into this root block
+                    // we only track that it was written here
                     wrote += to_write;
                 }
             }
             let fn_p_idx = j / fn_count;
             if fn_p_idx < fn_pages.len() {
-                let off = fn_pages[fn_p_idx] * 0x200 + (j % fn_count) * 0x20;
-                let mut chunk = [0u8; 0x20];
-                entry.write_into(&mut chunk);
-                image[off..off + 0x20].copy_from_slice(&chunk);
+                // Adjust offset to be within this single block
+                let local_page = fn_pages[fn_p_idx] - start_page;
+                let off = local_page * 0x200 + (j % fn_count) * 0x20;
+                if off + 0x20 <= image.len() {
+                    let mut chunk = [0u8; 0x20];
+                    entry.write_into(&mut chunk);
+                    image[off..off + 0x20].copy_from_slice(&chunk);
+                }
             }
             j += 1;
         }
@@ -551,8 +557,11 @@ impl FileSystemRoot {
         for (idx, &block) in self.block_map.iter().enumerate() {
             let bm_p_idx = idx / bm_count;
             if bm_p_idx < bm_pages.len() {
-                let off = bm_pages[bm_p_idx] * 0x200 + (idx % bm_count) * 2;
-                image[off..off+2].copy_from_slice(&block.to_be_bytes());
+                let local_page = bm_pages[bm_p_idx] - start_page;
+                let off = local_page * 0x200 + (idx % bm_count) * 2;
+                if off + 2 <= image.len() {
+                    image[off..off+2].copy_from_slice(&block.to_be_bytes());
+                }
             }
         }
         image

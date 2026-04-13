@@ -540,37 +540,47 @@ impl NandSkeleton {
             curr += (data.len() + 0xF) & 0xFFFFFFF0;
         }
 
+        // CF/CG always start at 0x70000 (standard CF offset for small-block NAND).
+        // CF_0/CG_0 go at 0x70000, CF_1/CG_1 go at 0x80000 (exactly 64KB later).
+        // This matches x360Utils GetBootLoaders() which seeks to CF_Ptr + 0x10000 for CF_1/CG_1.
         let cf0 = self.update.cf_0.as_ref().map(|b| b.serialize());
         let cg0 = self.update.cg_0.as_ref().map(|b| b.serialize());
         let cf1 = self.update.cf_1.as_ref().map(|b| b.serialize()).or_else(|| cf0.clone());
         let cg1 = self.update.cg_1.as_ref().map(|b| b.serialize()).or_else(|| cg0.clone());
 
         if let Some(cf0d) = cf0 {
-            curr = (curr + 0x1FF) & 0xFFFFFE00;
-            header.cf_offset.set(curr as u32);
-            header.patch_slots.set(2);
+            let cf0_offset = match layout {
+                NandLayout::Bb => 0x80000,
+                _ => 0x70000,
+            };
+            let cf1_offset = cf0_offset + 0x10000; // 64KB gap between CF_0 and CF_1
 
-            if curr + cf0d.len() > logical_image.len() {
-                return Err(format!("CF0 overflow at 0x{:X}: need 0x{:X} bytes", curr, cf0d.len()));
+            header.cf_offset.set(cf0_offset as u32);
+            header.patch_slots.set(if cf1.is_some() { 2 } else { 1 });
+
+            if cf0_offset + cf0d.len() > logical_image.len() {
+                return Err(format!("CF0 overflow at 0x{:X}: need 0x{:X} bytes", cf0_offset, cf0d.len()));
             }
-            logical_image[curr..curr+cf0d.len()].copy_from_slice(&cf0d); curr += (cf0d.len() + 0xF) & 0xFFFFFFF0;
+            logical_image[cf0_offset..cf0_offset+cf0d.len()].copy_from_slice(&cf0d);
             if let Some(cg0d) = cg0 {
-                if curr + cg0d.len() > logical_image.len() {
-                    return Err(format!("CG0 overflow at 0x{:X}: need 0x{:X} bytes", curr, cg0d.len()));
+                let cg0_offset = cf0_offset + cf0d.len();
+                if cg0_offset + cg0d.len() > logical_image.len() {
+                    return Err(format!("CG0 overflow at 0x{:X}: need 0x{:X} bytes", cg0_offset, cg0d.len()));
                 }
-                logical_image[curr..curr+cg0d.len()].copy_from_slice(&cg0d); curr += (cg0d.len() + 0xF) & 0xFFFFFFF0;
+                logical_image[cg0_offset..cg0_offset+cg0d.len()].copy_from_slice(&cg0d);
             }
             if let Some(cf1d) = cf1 {
-                if curr + cf1d.len() > logical_image.len() {
-                    return Err(format!("CF1 overflow at 0x{:X}: need 0x{:X} bytes", curr, cf1d.len()));
+                if cf1_offset + cf1d.len() > logical_image.len() {
+                    return Err(format!("CF1 overflow at 0x{:X}: need 0x{:X} bytes", cf1_offset, cf1d.len()));
                 }
-                logical_image[curr..curr+cf1d.len()].copy_from_slice(&cf1d); curr += (cf1d.len() + 0xF) & 0xFFFFFFF0;
-            }
-            if let Some(cg1d) = cg1 {
-                if curr + cg1d.len() > logical_image.len() {
-                    return Err(format!("CG1 overflow at 0x{:X}: need 0x{:X} bytes", curr, cg1d.len()));
+                logical_image[cf1_offset..cf1_offset+cf1d.len()].copy_from_slice(&cf1d);
+                if let Some(cg1d) = cg1 {
+                    let cg1_offset = cf1_offset + cf1d.len();
+                    if cg1_offset + cg1d.len() > logical_image.len() {
+                        return Err(format!("CG1 overflow at 0x{:X}: need 0x{:X} bytes", cg1_offset, cg1d.len()));
+                    }
+                    logical_image[cg1_offset..cg1_offset+cg1d.len()].copy_from_slice(&cg1d);
                 }
-                logical_image[curr..curr+cg1d.len()].copy_from_slice(&cg1d);
             }
         }
 

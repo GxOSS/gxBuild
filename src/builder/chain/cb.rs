@@ -246,9 +246,11 @@ impl BootloaderCb {
     /// Based on x360Utils Cryptography.VerifyCBDecrypted():
     /// After decryption, bytes 0x270..0x390 (0x120 bytes) should be all zeros.
     /// This region corresponds to `globals[0x128..0x248]` in the decrypted CB payload.
+    /// Note: x360Utils offsets are from the full bootloader start (including 16-byte header).
+    /// gxBuild's `data` field is the payload AFTER the header, so we subtract 0x10.
     pub fn verify_decrypted(&self) -> bool {
-        if self.data.len() < 0x390 { return false; }
-        self.data[0x270..0x390].iter().all(|&b| b == 0)
+        if self.data.len() < 0x380 { return false; }
+        self.data[0x260..0x380].iter().all(|&b| b == 0)
     }
 
     pub fn decrypt_v1(&mut self, cb_a_key: &[u8; 16], cpu_key: &[u8; 16]) {

@@ -307,62 +307,69 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
 
     // ============================================================
     // BOOTLOADER & FLASHFS DISCOVERY
-    // Tier 1: INI directory (-d) first
-    // Tier 2: Common directory second
+    // 1. Parse INI to get target filenames (relative paths)
+    // 2. Search INI dir first, then INI subfolders (flashfs/, data/), then common
+    // 3. If CF/CG not found, fall back to xboxupd.bin then su*** in INI dir
     // ============================================================
 
-    // TIER 1: INI directory — bootloaders and flashfs
-    info!("[GGX] TIER 1 Scanning INI Dir (bootloaders/flashfs): {:?}", ini_dir);
-    if let Ok(entries) = std::fs::read_dir(&ini_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-                if target_filenames.contains(&name)
-                    || name.starts_with("cb_") || name.starts_with("cd_") || name.starts_with("ce_")
-                    || name.starts_with("cf_") || name.starts_with("cg_") || name.starts_with("sc_")
-                {
-                    session.enqueue(InternalCommand::Update { path });
-                }
+    // Helper: try to find and enqueue a file by name across search paths
+    // Returns true if the file was actually found and enqueued
+    let enqueue_if_found = |session: &mut Session, name: &str, search_paths: &[&std::path::PathBuf]| {
+        let lower = name.to_lowercase();
+        for dir in search_paths {
+            let candidate = dir.join(name);
+            if candidate.exists() {
+                session.enqueue(InternalCommand::Update { path: candidate });
+                return true;
+            }
+            // Also try lowercase variant
+            let candidate_lower = dir.join(&lower);
+            if candidate_lower.exists() {
+                session.enqueue(InternalCommand::Update { path: candidate_lower });
+                return true;
             }
         }
+        false
+    };
+
+    // Build search path list: INI dir → INI subfolders → common
+    let ini_flashfs = ini_dir.join("flashfs");
+    let ini_data = ini_dir.join("data");
+    let mut search_paths: Vec<&std::path::PathBuf> = vec![&ini_dir];
+    if ini_flashfs.exists() && ini_flashfs.is_dir() { search_paths.push(&ini_flashfs); }
+    if ini_data.exists() && ini_data.is_dir() { search_paths.push(&ini_data); }
+    if resolved_common_dir.exists() && resolved_common_dir.is_dir() { search_paths.push(&resolved_common_dir); }
+
+    // Enqueue files from INI target filenames, track which CF/CG were actually found
+    let mut cf_on_disk = false;
+    let mut cg_on_disk = false;
+    info!("[GGX] Discovering {} assets from INI targets...", target_filenames.len());
+    for filename in &target_filenames {
+        let found = enqueue_if_found(session, filename, &search_paths);
+        if filename.starts_with("cf_") && filename.ends_with(".bin") && found { cf_on_disk = true; }
+        if filename.starts_with("cg_") && filename.ends_with(".bin") && found { cg_on_disk = true; }
     }
 
-    // TIER 1b: INI dir subfolders — flashfs/ and data/
-    for subfolder in &["flashfs", "data"] {
-        let sub_path = ini_dir.join(subfolder);
-        if sub_path.exists() && sub_path.is_dir() {
-            info!("[GGX] TIER 1b Scanning Subfolder: {:?}", sub_path);
-            if let Ok(entries) = std::fs::read_dir(&sub_path) {
+    // --- CF/CG Fallback: if not found on disk, search update containers ---
+    if !cf_on_disk || !cg_on_disk {
+        info!("[GGX] CF/CG not found on disk, searching update containers...");
+
+        // Priority 1: xboxupd.bin in INI dir
+        let xboxupd_path = ini_dir.join("xboxupd.bin");
+        if xboxupd_path.exists() {
+            info!("[GGX] Found xboxupd.bin in INI dir: {:?}", xboxupd_path);
+            session.enqueue(InternalCommand::Update { path: xboxupd_path });
+        } else {
+            // Priority 2: su*** files in INI dir
+            if let Ok(entries) = std::fs::read_dir(&ini_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.is_file() {
                         let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-                        if target_filenames.contains(&name)
-                            || name.starts_with("cb_") || name.starts_with("cd_") || name.starts_with("ce_")
-                            || name.starts_with("cf_") || name.starts_with("cg_") || name.starts_with("sc_")
-                        {
+                        if name.starts_with("su") {
+                            info!("[GGX] Found STFS container in INI dir: {:?}", path);
                             session.enqueue(InternalCommand::Update { path });
                         }
-                    }
-                }
-            }
-        }
-    }
-
-    // TIER 2: Common directory — shared bootloaders
-    if resolved_common_dir.exists() && resolved_common_dir.is_dir() {
-        info!("[GGX] TIER 2 Scanning Common Directory: {:?}", resolved_common_dir);
-        if let Ok(entries) = std::fs::read_dir(&resolved_common_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() {
-                    let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-                    if target_filenames.contains(&name)
-                        || name.starts_with("cb_") || name.starts_with("cd_") || name.starts_with("ce_")
-                        || name.starts_with("cf_") || name.starts_with("cg_") || name.starts_with("sc_")
-                    {
-                        session.enqueue(InternalCommand::Update { path });
                     }
                 }
             }
@@ -374,7 +381,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     // ============================================================
     info!("[GGX] Scanning Data Dir (nand/key/smc/fcrt/kv): {:?}", data_dir);
 
-    // --- NAND Image Discovery ---
+    // --- NAND Image Discovery (data dir only) ---
     let mut nand_found = false;
     let mut parsed_nand_path = None;
 
@@ -384,15 +391,10 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     } else {
         let nand_candidates = [
             data_dir.join("nanddump.bin"),
-            ini_dir.join("nanddump.bin"),
             data_dir.join("nanddump1.bin"),
-            ini_dir.join("nanddump1.bin"),
             data_dir.join("nanddump2.bin"),
-            ini_dir.join("nanddump2.bin"),
             data_dir.join("nanddump"),
-            ini_dir.join("nanddump"),
             data_dir.join("updflash.bin"),
-            ini_dir.join("updflash.bin"),
         ];
 
         for p in &nand_candidates {
@@ -426,7 +428,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         session.enqueue(InternalCommand::CreateImage { layout });
     }
 
-    // --- CPU Key Discovery ---
+    // --- CPU Key Discovery (data dir only) ---
     if let Some(key) = &args.cpu_key {
         session.set_cpukey(key.clone());
     } else {
@@ -434,10 +436,6 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         let key_candidates = [
             (data_dir.join("cpukey.bin"), true),
             (data_dir.join("cpukey.txt"), false),
-            (ini_dir.join("cpukey.bin"), true),
-            (ini_dir.join("cpukey.txt"), false),
-            (resolved_common_dir.join("cpukey.bin"), true),
-            (resolved_common_dir.join("cpukey.txt"), false),
         ];
 
         for (p, is_bin) in &key_candidates {
