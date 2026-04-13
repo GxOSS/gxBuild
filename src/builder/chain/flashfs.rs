@@ -603,4 +603,50 @@ impl FlashFS {
         }
         fs
     }
+
+    /// Scans a physical (raw) image for FlashFS signatures using spare metadata,
+    /// with LBA map awareness for accurate bad block remapping.
+    /// Based on x360Utils NANDReader ScanForFsRootAndMobile with LBA tracking.
+    pub fn scan_physical_with_lba(image: &[u8], layout: &NandLayout, lba_map: &crate::core::data::blocks::LbaMap) -> Self {
+        let mut fs = FlashFS::new();
+        let total_blocks = layout.total_blocks(image.len());
+        let pages_per_block = layout.logical_pages_per_block();
+        let mut best: std::collections::HashMap<u8, (usize, u32)> = std::collections::HashMap::new();
+
+        info!(" -> FlashFS scan: {} blocks to examine, {} known bad blocks", total_blocks, lba_map.bad_blocks.len());
+
+        // Phase 1: walk spare data, skipping known bad blocks from LBA map
+        for block in 0..total_blocks {
+            // Skip blocks known to be bad
+            if lba_map.is_bad(block) { continue; }
+            if is_bad_block(image, block, layout) { continue; }
+            if let Some(spare) = get_page_spare(image, block * pages_per_block, layout) {
+                let parsed = FsSpareData::parse(&spare, layout);
+                let btype = parsed.fs_block_type;
+                if btype == 0x30 || btype == 0x2C || (0x31..=0x39).contains(&btype) {
+                    let seq = parsed.fs_sequence;
+                    let newer = match best.get(&btype) { Some(&(_, b_seq)) => seq > b_seq, None => true };
+                    if newer { best.insert(btype, (block, seq)); }
+                }
+            }
+        }
+
+        // Phase 2: strip spare so root.read() uses correct 0x200-byte page stride.
+        let logical = crate::core::data::blocks::remove_spare(image);
+
+        for (btype, (block, seq)) in best {
+            let mut root = FileSystemRoot::new(block as i32, seq as i32);
+            root.read(&logical, layout);
+            if btype == 0x30 || btype == 0x2C { fs.root = root.clone(); }
+            fs.partitions.insert(btype, root);
+        }
+
+        if fs.root.block_number >= 0 {
+            info!(" -> FlashFS root found: block {}, version {}", fs.root.block_number, fs.root.version);
+        } else {
+            info!(" -> No FlashFS root detected in image.");
+        }
+
+        fs
+    }
 }

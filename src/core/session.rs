@@ -308,7 +308,7 @@ impl Session {
         match command {
                 InternalCommand::ExtractAll => {
                     info!(" -> Extracting all components...");
-                    let ids = vec!["smc", "kv", "fcrt", "cb", "cba", "cbb", "sc", "cd", "ce", "cf0", "cg0", "cf1", "cg1"];
+                    let ids = vec!["smc", "smcc", "kv", "fcrt", "cb", "cba", "cbb", "sc", "cd", "ce", "cf0", "cg0", "cf1", "cg1", "header"];
                     for id in ids {
                         let _ = self.execute_command(InternalCommand::Extract { id: id.to_string() });
                     }
@@ -318,7 +318,7 @@ impl Session {
                     if let Some(nand) = &self.active_nand {
                         let (filename, data) = match id.to_lowercase().as_str() {
                             "smc" => ("SMC.bin", Some(nand.extra.smc.clone())),
-                            "smcc" => ("SMCC.bin", Some(nand.extra.smc_config.clone())),
+                            "smcc" | "smc_config" => ("SMC_Config.bin", Some(nand.extra.smc_config.clone())),
                             "kv" => ("KV.bin", Some(nand.extra.keyvault.clone())),
                             "fcrt" => ("FCRT.bin", nand.extra.fcrt.clone()),
                             "cb" => ("CB.bin", nand.bootloaders.cb.as_ref().map(|b| b.serialize())),
@@ -421,14 +421,38 @@ impl Session {
                 }
                 InternalCommand::ParseImage { path, key } => {
                     info!(" -> Parsing image {:?}...", path);
+                    // Clear pending assets from previous session to prevent leakage
+                    self.pending_assets.clear();
                     match fs::read(&path) {
                         Ok(raw_data) => {
-                            match crate::core::data::blocks::NandProcessor::preprocess_nand(&raw_data) {
-                                Ok((clean_data, layout)) => {
-                                    // Scan FlashFS AFTER promotion so layout (Xsb/Sb/Bb) is correct.
-                                    let flashfs = crate::builder::chain::flashfs::FlashFS::scan_physical(&raw_data, &layout);
+                            // Use preprocess_nand_with_lba to track bad block remapping
+                            match crate::core::data::blocks::NandProcessor::preprocess_nand_with_lba(&raw_data) {
+                                Ok((clean_data, layout, lba_map)) => {
+                                    info!(" -> Detected {} bad block(s) during preprocessing", lba_map.bad_blocks.len());
+                                    // Scan FlashFS with LBA map for accurate block mapping
+                                    let flashfs = crate::builder::chain::flashfs::FlashFS::scan_physical_with_lba(&raw_data, &layout, &lba_map);
                                     match NandSkeleton::parse_clean(clean_data, layout, key.unwrap_or([0u8; 16]), flashfs) {
                                         Ok(nand) => {
+                                            // Verify bootloader decryption using zero-region checks
+                                            if let Some(cb) = &nand.bootloaders.cb_a {
+                                                if cb.verify_decrypted() {
+                                                    info!(" -> CB_A decryption verified (zero-region check passed).");
+                                                } else {
+                                                    log::warn!(" -> CB_A decryption verification failed — data may be corrupted.");
+                                                }
+                                            }
+                                            for (i, cf_opt) in [&nand.update.cf_0, &nand.update.cf_1].iter().enumerate() {
+                                                if let Some(cf) = cf_opt {
+                                                    if cf.verify_decrypted() {
+                                                        info!(" -> CF_{} decryption verified.", i);
+                                                    } else {
+                                                        log::warn!(" -> CF_{} decryption verification failed.", i);
+                                                    }
+                                                }
+                                            }
+                                            // Store LBA map in session for later use
+                                            info!(" -> LBA Map: {} total blocks, {} bad blocks remapped",
+                                                lba_map.logical_to_physical.len(), lba_map.bad_blocks.len());
                                             self.active_nand = Some(nand);
                                             info!(" -> Successfully parsed NAND from {:?} (Layout: {:?})", path, layout);
                                         }

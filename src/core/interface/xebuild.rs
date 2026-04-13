@@ -29,11 +29,11 @@ pub struct GgxArgs {
     #[arg(short = 't', long = "type")]
     pub build_type: Option<CliBuildType>,
 
-    /// 32 character CPU hex key
+    /// 32 character CPU hex key (override, can be elsewhere)
     #[arg(short = 'p', long = "cpukey")]
     pub cpu_key: Option<String>,
 
-    /// 32 character 1BL hex key
+    /// 32 character 1BL hex key (override, can be elsewhere)
     #[arg(short = 'b', long = "blkey")]
     pub bl_key: Option<String>,
 
@@ -41,7 +41,7 @@ pub struct GgxArgs {
     #[arg(short = 'c', long = "console")]
     pub console: Option<CliConsoleType>,
 
-    /// Per build files directory
+    /// INI directory — contains _retail.ini, bootloaders, flashfs/ (defaults to .)
     #[arg(short = 'd', long = "datadir")]
     pub data_dir: Option<PathBuf>,
 
@@ -49,11 +49,11 @@ pub struct GgxArgs {
     #[arg(short = 'm', long = "common")]
     pub common_dir: Option<PathBuf>,
 
-    /// Use different firmware dir
+    /// Data directory — nand dump, cpu key, smc, fcrt, keyvault (defaults to ./data)
     #[arg(short = 'f', long = "fwdir")]
     pub fw_dir: Option<PathBuf>,
 
-    /// Outputs SHA-1 of final image to file
+    /// Outputs SHA-1 of final image to <file>
     #[arg(short = 's', long = "sha")]
     pub sha_file: Option<PathBuf>,
 
@@ -61,7 +61,7 @@ pub struct GgxArgs {
     #[arg(short = 'o', long = "option", value_parser = parse_key_val)]
     pub options: Vec<(String, String)>,
 
-    /// Append patches (.bin file name)
+    /// Append addon patches or RGLP (.bin file name)
     #[arg(short = 'a', long = "addon")]
     pub addons: Vec<String>,
 
@@ -81,10 +81,6 @@ pub struct GgxArgs {
     #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
 
-    /// Suppresses prompt for enter key when finished
-    #[arg(long = "noenter")]
-    pub no_enter: bool,
-    
     /// Optional source NAND image
     #[arg(short = 'n', long = "nand")]
     pub source_nand: Option<PathBuf>,
@@ -92,6 +88,26 @@ pub struct GgxArgs {
     /// Optional system update file (e.g. xboxupd.bin)
     #[arg(short = 'u', long = "update")]
     pub xboxupd: Option<PathBuf>,
+
+    /// Set preset for build
+    #[arg(short = 'e', long = "preset")]
+    pub preset: Option<String>,
+
+    /// Run python script
+    #[arg(short = 'M', long = "script")]
+    pub script: Option<PathBuf>,
+
+    /// Apply CDXeLL / RGLP patches directly (toggle)
+    #[arg(short = 'x', long = "xell")]
+    pub apply_xell: bool,
+
+    /// Format of output image (system, full, xell, shadow)
+    #[arg(short = 'h', long = "format")]
+    pub format: Option<String>,
+
+    /// Output directory / location of file
+    #[arg(short = 'g', long = "output-dir")]
+    pub output_dir: Option<PathBuf>,
 
     /// Optional output image name
     pub output: Option<PathBuf>,
@@ -214,14 +230,15 @@ pub fn ggx_cli() {
         error!("\n[GGX] Session failed: {}", e);
     } else if let Some(GgxMode::Build { .. }) | None = args.mode {
         // Build succeeded, calculate SHA-1 if requested
-        let output_path = args.output.clone().unwrap_or_else(|| PathBuf::from("updflash.bin"));
+        let output_path = args.output.clone()
+            .unwrap_or_else(|| args.output_dir.clone().unwrap_or_else(|| PathBuf::from("updflash.bin")));
         if output_path.exists() {
             if let Ok(data) = std::fs::read(&output_path) {
                 if let Ok(hash) = crate::builder::deps::excrypt::sha(&[&data]) {
                     let sha_str = hash.iter().map(|b| format!("{:02x}", b)).collect::<String>();
                     info!(" -> Image SHA-1: {}", sha_str);
-                    
-                    if let Some(sha_p) = args.sha_file {
+
+                    if let Some(sha_p) = args.sha_file.clone() {
                         if let Err(e) = std::fs::write(&sha_p, &sha_str) {
                             error!("[GGX] Warning: Failed to write SHA-1 to {:?}: {}", sha_p, e);
                         } else {
@@ -232,89 +249,100 @@ pub fn ggx_cli() {
             }
         }
     }
-
-    if !args.no_enter {
-        println!("\nPress Enter to exit...");
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input).ok();
-    }
+    // Enter prompt is handled in handle_build via -o noenter
 }
 
 fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     let build_type = args.build_type.as_ref().ok_or_else(|| anyhow::anyhow!("Missing required argument: --type (-t)"))?;
     let console_type = args.console.as_ref().ok_or_else(|| anyhow::anyhow!("Missing required argument: --console (-c)"))?;
 
-    // 1. Determine common and data paths
-    let data_dir = args.data_dir.clone().unwrap_or_else(|| PathBuf::from("./data"));
-    let fw_dir = args.fw_dir.clone().unwrap_or_else(|| PathBuf::from("./"));
+    // --- Path Resolution ---
+    // -d = INI directory (contains _retail.ini, bootloaders, flashfs/)
+    let ini_dir = args.data_dir.clone()
+        .unwrap_or_else(|| PathBuf::from("."));
 
-    // 2. Resolve the correct INI file
+    // -f = data directory (nand dump, cpu key, smc, fcrt, keyvault)
+    let data_dir = args.fw_dir.clone()
+        .unwrap_or_else(|| PathBuf::from("data"));
+
+    // -m = common directory (shared bootloaders, defaults to <ini_dir>/../common)
+    let resolved_common_dir = args.common_dir.clone()
+        .unwrap_or_else(|| ini_dir.join("../common"));
+
+    // Resolve INI file path: <ini_dir>/_<type>.ini
     let build_type_str = format!("{:?}", build_type).to_lowercase();
     let ini_suffix = args.ini_ext.as_ref().map(|ext| format!("_{}", ext)).unwrap_or_default();
     let ini_filename = format!("_{}{}.ini", build_type_str, ini_suffix);
-    let ini_path = data_dir.join(ini_filename);
-
-    let resolved_common_dir = if let Some(common) = &args.common_dir {
-        common.clone()
-    } else {
-        // Default to adjacency: <ini_parent>/../common
-        ini_path.parent()
-            .and_then(|p| p.parent())
-            .map(|p| p.join("common"))
-            .unwrap_or_else(|| data_dir.join("common"))
-    };
+    let ini_path = ini_dir.join(&ini_filename);
 
     let console_base = format!("{:?}", console_type).to_lowercase();
     let bl_suffix = args.bl_ext.as_ref().map(|ext| format!("_{}", ext)).unwrap_or_default();
     let console_section = format!("{}bl{}", console_base, bl_suffix);
 
-    // 2.3 Pre-parse INI to identify TARGET filenames for discovery
+    // --- INI Pre-Parsing ---
     let mut target_filenames = std::collections::HashSet::new();
     if let Ok(content) = std::fs::read_to_string(&ini_path) {
-        if let Ok(ini) = crate::core::data::xeini::parse_xe_ini(&content, &console_section, &ini_path.parent().unwrap(), &resolved_common_dir) {
+        if let Ok(ini) = crate::core::data::xeini::parse_xe_ini(&content, &console_section, &ini_dir, &resolved_common_dir) {
             for entry in ini.main { target_filenames.insert(entry.filename.to_lowercase()); }
             for entry in ini.security { target_filenames.insert(entry.path.file_name().unwrap().to_string_lossy().to_lowercase()); }
             for entry in ini.flashfs { target_filenames.insert(entry.path.file_name().unwrap().to_string_lossy().to_lowercase()); }
         }
+    } else {
+        anyhow::bail!("Could not find or read INI at {:?}", ini_path);
     }
 
-    // 2.5 Tiered Discovery Orchestration
-    // Enqueue 'Finalize' to run after all discoveries
+    info!("\n--- GGX Build Configuration ---");
+    info!("Type:      {:?}", build_type);
+    info!("Console:   {}", console_base);
+    info!("Section:   {}", console_section);
+    info!("INI Dir:   {:?}", ini_dir);
+    info!("Data Dir:  {:?}", data_dir);
+    info!("Common:    {:?}", resolved_common_dir);
+    info!("INI File:  {:?}", ini_path);
+    info!("-------------------------------\n");
+
+    // --- Discovery Phase ---
+    // Enqueue FinalizeFlashfs to run after all asset discovery
     session.enqueue(InternalCommand::FinalizeFlashfs);
 
-    // TIER 1: Base Directory Scan (Highest Priority)
-    info!("[GGX] TIER 1 Scanning Base Directory: {:?}", fw_dir);
-    if let Ok(entries) = std::fs::read_dir(&fw_dir) {
+    // ============================================================
+    // BOOTLOADER & FLASHFS DISCOVERY
+    // Tier 1: INI directory (-d) first
+    // Tier 2: Common directory second
+    // ============================================================
+
+    // TIER 1: INI directory — bootloaders and flashfs
+    info!("[GGX] TIER 1 Scanning INI Dir (bootloaders/flashfs): {:?}", ini_dir);
+    if let Ok(entries) = std::fs::read_dir(&ini_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_file() {
                 let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-                // ONLY pick up if it is a target or a discovery donor
-                if target_filenames.contains(&name) || name.contains("su") || name.contains("update") || name == "xboxupd.bin" {
-                    if name != "updflash.bin" {
-                        session.enqueue(InternalCommand::Update { path });
-                    }
+                if target_filenames.contains(&name)
+                    || name.starts_with("cb_") || name.starts_with("cd_") || name.starts_with("ce_")
+                    || name.starts_with("cf_") || name.starts_with("cg_") || name.starts_with("sc_")
+                {
+                    session.enqueue(InternalCommand::Update { path });
                 }
             }
         }
     }
 
-    // TIER 2: Specialized Subfolders (flashfs/ and the INI parent directory)
-    let ini_dir = ini_path.parent().unwrap_or(&fw_dir);
-    let flashfs_dir = fw_dir.join("flashfs");
-    
-    for dir in &[Some(ini_dir), Some(&flashfs_dir)] {
-        if let Some(d) = dir {
-            if d.exists() && d.is_dir() {
-                info!("[GGX] TIER 2 Scanning Folder: {:?}", d);
-                if let Ok(entries) = std::fs::read_dir(d) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.is_file() {
-                            let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-                            if target_filenames.contains(&name) || name.contains("su") || name.contains("update") || name == "xboxupd.bin" {
-                                session.enqueue(InternalCommand::Update { path });
-                            }
+    // TIER 1b: INI dir subfolders — flashfs/ and data/
+    for subfolder in &["flashfs", "data"] {
+        let sub_path = ini_dir.join(subfolder);
+        if sub_path.exists() && sub_path.is_dir() {
+            info!("[GGX] TIER 1b Scanning Subfolder: {:?}", sub_path);
+            if let Ok(entries) = std::fs::read_dir(&sub_path) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() {
+                        let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+                        if target_filenames.contains(&name)
+                            || name.starts_with("cb_") || name.starts_with("cd_") || name.starts_with("ce_")
+                            || name.starts_with("cf_") || name.starts_with("cg_") || name.starts_with("sc_")
+                        {
+                            session.enqueue(InternalCommand::Update { path });
                         }
                     }
                 }
@@ -322,15 +350,18 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         }
     }
 
-    // TIER 3: Common Directory
-    info!("[GGX] TIER 3 Scanning Common Directory: {:?}", resolved_common_dir);
+    // TIER 2: Common directory — shared bootloaders
     if resolved_common_dir.exists() && resolved_common_dir.is_dir() {
+        info!("[GGX] TIER 2 Scanning Common Directory: {:?}", resolved_common_dir);
         if let Ok(entries) = std::fs::read_dir(&resolved_common_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_file() {
                     let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-                    if target_filenames.contains(&name) {
+                    if target_filenames.contains(&name)
+                        || name.starts_with("cb_") || name.starts_with("cd_") || name.starts_with("ce_")
+                        || name.starts_with("cf_") || name.starts_with("cg_") || name.starts_with("sc_")
+                    {
                         session.enqueue(InternalCommand::Update { path });
                     }
                 }
@@ -338,46 +369,12 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         }
     }
 
-    // TIER 4: Update Containers (Lowest Priority)
-    let discovery_paths = vec![Some(&fw_dir), Some(&resolved_common_dir)];
-    for dir in discovery_paths.into_iter().flatten() {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() {
-                    let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-                    if name.contains("su") || name.contains("update") || name == "xboxupd.bin" {
-                        session.enqueue(InternalCommand::Update { path });
-                    }
-                }
-            }
-        }
-    }
+    // ============================================================
+    // DATA DIR DISCOVERY (-f) — NAND, CPU Key, Security, SMC, FCRT, KV
+    // ============================================================
+    info!("[GGX] Scanning Data Dir (nand/key/smc/fcrt/kv): {:?}", data_dir);
 
-    info!("\n--- GGX Build Configuration ---");
-    info!("Type:      {:?}", build_type);
-    info!("Console:   {}", console_base);
-    info!("Section:   {}", console_section);
-    info!("INI Path:  {:?}", ini_path);
-    info!("Common:    {:?}", resolved_common_dir);
-    info!("-------------------------------\n");
-
-    // Determine layout from console type
-    let layout = match console_type {
-        CliConsoleType::xenon => crate::core::data::blocks::NandLayout::Xsb,
-        CliConsoleType::zephyr | CliConsoleType::falcon | CliConsoleType::jasper => {
-            crate::core::data::blocks::NandLayout::Sb
-        }
-        CliConsoleType::jasper256 | CliConsoleType::jasper512 | CliConsoleType::jasperbb | CliConsoleType::jasperbigffs => {
-            crate::core::data::blocks::NandLayout::Bb
-        }
-        CliConsoleType::trinity => crate::core::data::blocks::NandLayout::Sb,
-        CliConsoleType::trinitybigffs => crate::core::data::blocks::NandLayout::Bb,
-        CliConsoleType::corona => crate::core::data::blocks::NandLayout::Sb,
-        CliConsoleType::corona4g | CliConsoleType::winchester => crate::core::data::blocks::NandLayout::Emmc,
-    };
-
-    // 3. Initialize NAND (Parse from source or create blank)
+    // --- NAND Image Discovery ---
     let mut nand_found = false;
     let mut parsed_nand_path = None;
 
@@ -385,21 +382,20 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         parsed_nand_path = Some(nand.clone());
         nand_found = true;
     } else {
-        // Fallback search for source NAND
-        let discovery_targets = [
+        let nand_candidates = [
             data_dir.join("nanddump.bin"),
-            fw_dir.join("nanddump.bin"),
+            ini_dir.join("nanddump.bin"),
             data_dir.join("nanddump1.bin"),
-            fw_dir.join("nanddump1.bin"),
+            ini_dir.join("nanddump1.bin"),
             data_dir.join("nanddump2.bin"),
-            fw_dir.join("nanddump2.bin"),
+            ini_dir.join("nanddump2.bin"),
             data_dir.join("nanddump"),
-            fw_dir.join("nanddump"),
+            ini_dir.join("nanddump"),
             data_dir.join("updflash.bin"),
-            fw_dir.join("updflash.bin"),
+            ini_dir.join("updflash.bin"),
         ];
-        
-        for p in &discovery_targets {
+
+        for p in &nand_candidates {
             if p.exists() {
                 parsed_nand_path = Some(p.clone());
                 nand_found = true;
@@ -411,36 +407,43 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     if nand_found {
         let path = parsed_nand_path.unwrap();
         info!("[GGX] Auto-discovered source NAND image from {:?}", path);
-        session.enqueue(crate::core::session::InternalCommand::ParseImage { path, key: None });
+        session.enqueue(InternalCommand::ParseImage { path, key: None });
     } else {
-        info!("[GGX] Synthesizing blank image from scratch.");
-        session.enqueue(crate::core::session::InternalCommand::CreateImage { layout });
+        let layout = match console_type {
+            CliConsoleType::xenon => crate::core::data::blocks::NandLayout::Xsb,
+            CliConsoleType::zephyr | CliConsoleType::falcon | CliConsoleType::jasper => {
+                crate::core::data::blocks::NandLayout::Sb
+            }
+            CliConsoleType::jasper256 | CliConsoleType::jasper512 | CliConsoleType::jasperbb | CliConsoleType::jasperbigffs => {
+                crate::core::data::blocks::NandLayout::Bb
+            }
+            CliConsoleType::trinity => crate::core::data::blocks::NandLayout::Sb,
+            CliConsoleType::trinitybigffs => crate::core::data::blocks::NandLayout::Bb,
+            CliConsoleType::corona => crate::core::data::blocks::NandLayout::Sb,
+            CliConsoleType::corona4g | CliConsoleType::winchester => crate::core::data::blocks::NandLayout::Emmc,
+        };
+        info!("[GGX] Synthesizing blank image from scratch (Layout: {:?}).", layout);
+        session.enqueue(InternalCommand::CreateImage { layout });
     }
 
-    if let Ok(content) = std::fs::read_to_string(&ini_path) {
-        let filename = ini_path.file_name().unwrap_or_default().to_string_lossy().to_string();
-        session.parse_ini(content, filename, console_section, ini_path.parent().unwrap(), resolved_common_dir.clone());
-    } else {
-        anyhow::bail!("Could not find or read INI at {:?}", ini_path);
-    }
-
+    // --- CPU Key Discovery ---
     if let Some(key) = &args.cpu_key {
         session.set_cpukey(key.clone());
     } else {
-        // Look for cpukey.bin (binary) or cpukey.txt (text) in data_dir OR fw_dir
         let mut key_found = false;
-        
-        let discovery_targets = [
+        let key_candidates = [
             (data_dir.join("cpukey.bin"), true),
-            (fw_dir.join("cpukey.bin"), true),
             (data_dir.join("cpukey.txt"), false),
-            (fw_dir.join("cpukey.txt"), false),
+            (ini_dir.join("cpukey.bin"), true),
+            (ini_dir.join("cpukey.txt"), false),
+            (resolved_common_dir.join("cpukey.bin"), true),
+            (resolved_common_dir.join("cpukey.txt"), false),
         ];
 
-        for (p, is_bin) in discovery_targets {
+        for (p, is_bin) in &key_candidates {
             if p.exists() {
-                if is_bin {
-                    if let Ok(bytes) = std::fs::read(&p) {
+                if *is_bin {
+                    if let Ok(bytes) = std::fs::read(p) {
                         if bytes.len() >= 16 {
                             let mut key = [0u8; 16];
                             key.copy_from_slice(&bytes[..16]);
@@ -451,7 +454,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                         }
                     }
                 } else {
-                    if let Ok(text) = std::fs::read_to_string(&p) {
+                    if let Ok(text) = std::fs::read_to_string(p) {
                         let clean_key = text.trim();
                         if clean_key.len() >= 32 {
                             session.set_cpukey(clean_key.to_string());
@@ -463,37 +466,53 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                 }
             }
         }
-        
+
         if !key_found {
             anyhow::bail!("No CPU Key provided. A CPU key is strictly required to build.");
         }
     }
 
-    if args.bl_key.is_some() {
-        info!("[GGX] Warning: Overriding the 1BL key (-b) is currently not implemented. Using default retail key.");
+    // --- Security Assets (SMC, SMC config, FCRT, KV) from data dir ---
+    let security_candidates = [
+        data_dir.join("smc.bin"),
+        data_dir.join("smc_config.bin"),
+        data_dir.join("fcrt.bin"),
+        data_dir.join("kv.bin"),
+        data_dir.join("keyvault.bin"),
+    ];
+
+    for p in &security_candidates {
+        if p.exists() {
+            if let Ok(data) = std::fs::read(p) {
+                let name = p.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+                info!("[GGX] Discovered security asset: {:?} ({} bytes)", p, data.len());
+                session.pending_assets.insert(name, data);
+            }
+        }
     }
-    
-    if args.verbose {
-        session.set_verbose(true);
-    }
-    
-    // 4. Update Discovery (xboxupd.bin)
+
+    // --- Enqueue INI Parsing ---
+    let ini_content = std::fs::read_to_string(&ini_path)
+        .map_err(|e| anyhow::anyhow!("Failed to read INI at {:?}: {}", ini_path, e))?;
+    session.parse_ini(ini_content.clone(), ini_filename.clone(), console_section.clone(), &ini_dir, &resolved_common_dir);
+
+    // --- System Update Discovery (STFS / xboxupd.bin) ---
+    // Searched in INI dir (-d) first, then data dir (-f)
     let mut update_path = None;
     if let Some(upd) = &args.xboxupd {
         if upd.exists() { update_path = Some(upd.clone()); }
     } else {
-        // Search priority: INI dir, Common dir, Data dir, FW dir
-        let search_targets = [
-            ini_path.parent().map(|p| p.join("xboxupd.bin")),
-            Some(resolved_common_dir.join("xboxupd.bin")),
-            Some(data_dir.join("xboxupd.bin")),
-            Some(fw_dir.join("xboxupd.bin")),
-            Some(PathBuf::from("xboxupd.bin")),
+        let update_candidates = [
+            ini_dir.join("xboxupd.bin"),
+            ini_dir.join("system_update.xsu"),
+            ini_dir.join("system_update.bin"),
+            data_dir.join("xboxupd.bin"),
+            data_dir.join("system_update.xsu"),
         ];
-        
-        for target in search_targets.into_iter().flatten() {
+
+        for target in &update_candidates {
             if target.exists() {
-                update_path = Some(target);
+                update_path = Some(target.clone());
                 break;
             }
         }
@@ -504,33 +523,92 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         session.update(p);
     }
 
-    // 5. Addon patches
+    // --- 1BL Key Warning ---
+    if args.bl_key.is_some() {
+        info!("[GGX] Warning: Overriding the 1BL key (-b) is currently not implemented. Using default retail key.");
+    }
+
+    // --- Addon Patches ---
     for addon in &args.addons {
         let addon_path = if PathBuf::from(addon).is_absolute() {
             PathBuf::from(addon)
         } else {
-            let fw_path = fw_dir.join(addon);
-            if fw_path.exists() {
-                fw_path
+            let ini_path = ini_dir.join(addon);
+            if ini_path.exists() {
+                ini_path
             } else {
                 data_dir.join(addon)
             }
         };
-        
+
         if addon_path.exists() {
-            session.enqueue(crate::core::session::InternalCommand::ApplyPatch { 
-                path: addon_path, 
+            session.enqueue(InternalCommand::ApplyPatch {
+                path: addon_path,
                 ptype: 2, // Addon
-                target: None 
+                target: None
             });
         } else {
             error!("[GGX] Warning: Addon patch not found: {}", addon);
         }
     }
 
-    let output_path = args.output.clone().unwrap_or_else(|| PathBuf::from("updflash.bin"));
-    session.build(output_path, 0); // Target 0 for now
-    
+    // --- Raw Patches (-8) ---
+    for raw_patch in &args.raw_patches {
+        // Parse format: filename.ext,offset
+        let parts: Vec<&str> = raw_patch.split(',').collect();
+        if parts.len() == 2 {
+            let filename = parts[0];
+            let offset_str = parts[1];
+
+            let patch_path = if PathBuf::from(filename).is_absolute() {
+                PathBuf::from(filename)
+            } else {
+                let p = data_dir.join(filename);
+                if p.exists() { p } else { ini_dir.join(filename) }
+            };
+
+            let offset = if offset_str.starts_with("0x") {
+                u64::from_str_radix(&offset_str[2..], 16).ok()
+            } else {
+                offset_str.parse::<u64>().ok()
+            };
+
+            if patch_path.exists() && offset.is_some() {
+                info!("[GGX] Raw patch: {:?} at offset 0x{:X}", patch_path, offset.unwrap());
+                // Enqueue raw patch command
+                session.enqueue(InternalCommand::ApplyPatch {
+                    path: patch_path,
+                    ptype: 3, // Raw patch
+                    target: None
+                });
+            }
+        }
+    }
+
+    // --- Output Path Resolution ---
+    let output_path = args.output.clone()
+        .unwrap_or_else(|| args.output_dir.clone()
+            .unwrap_or_else(|| PathBuf::from("updflash.bin")));
+    session.build(output_path.clone(), 0); // Target 0 for now
+
+    // --- Options Processing ---
+    let mut no_enter = false;
+    for (key, _val) in &args.options {
+        match key.as_str() {
+            "noenter" => no_enter = true,
+            "noinfo" => {},
+            "nolog" => {},
+            "unsafe" => {},
+            _ => {}
+        }
+    }
+
+    if !no_enter {
+        println!("\nPress Enter to exit...");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).ok();
+    }
+
     Ok(())
 }
 
