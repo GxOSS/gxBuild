@@ -397,11 +397,15 @@ impl NandSkeleton {
             let bl_size = bl_header.size.get() as usize;
             let bl_version = bl_header.version.get();
 
+            // Validate size bounds — if invalid, stop the chain walk gracefully
+            // and let CF_Ptr bridging handle the gap (common between CE and CF)
             if bl_size < 0x10 || bl_size > 0x2000000 {
-                return Err(format!("Invalid bootloader size at 0x{:08X}: 0x{:X}", off, bl_size));
+                info!(" -> Invalid bootloader size at 0x{:08X} (0x{:X}), stopping chain walk", off, bl_size);
+                break;
             }
-            if off.checked_add(bl_size).ok_or("Bootloader size overflow")? > image.len() {
-                return Err(format!("Bootloader at 0x{:08X} extends past image end (size 0x{:X})", off, bl_size));
+            if off + bl_size > image.len() {
+                info!(" -> Bootloader at 0x{:08X} extends past image end (size 0x{:X}), stopping", off, bl_size);
+                break;
             }
 
             let bl_data = image[off..off + bl_size].to_vec();
