@@ -1,10 +1,12 @@
 # gxBuild
 
-A Rust Xbox 360 NAND image builder and patcher.
+A Rust Xbox 360 image builder and patcher.
 
-Uses the fbBuild/ggBuild/xeBuild CLI and INI style.
+Backwards compatible with xeBuild
 
 ## About
+
+Full start to finish NAND building and patching. Follows and extends the xeBuild format for compatibility. 
 
 Formats:
 - XSB Small Block, PSB/KSB Small Block, Big Block and eMMC
@@ -13,39 +15,37 @@ Formats:
 - Shadowboot (WIP) and XeLL image
 
 Features:
-- Backwards compatible with xeBuild
 - Spare data handling and Bad Block remapping
 - Full FlashFS Parser and Builder
 - CE LZX Decompression
-- Apply patchslots to decompressed CE
-
+- Base kernel and hypervisor updater
 - xeBuild and RGLoader patching
 - SMC and Keyvault patching (WIP)
 - xe / gg / fb ini support
 
-## Download
+## Usage and Scripting
 
-Available for Windows, Mac and Linux.
+gxBuild has 3 ways it can be interfaced; CLI, TUI, and FFI. The CLI mirrors xeBuild with some minor changes and expansions. the TUI can be accessed with `gxBuild tui`.
 
-Download from [GitHub Releases](https://github.com/GGX-Project/ggx/releases).
+For full usage type `gxBuild help`
 
-## PyGG
-
-PyGG is an optional `rust-python` scripting engine for gxBuild. All gxBuild functions and cli inputs are exposed to a script or a shell, allowing custom workflows and automation.
-
-Download from [GitHub Releases](https://github.com/GGX-Project/ggx/releases).
+gxBuild bundles rust-python for scripting, and exports all processed data into the interpreter. 
 
 ## Documentation
 
-Documentation is hosted on [GitHub Pages](https://exposuremg.github.io/ggx/home/).
+Documentation is hosted on the [GGX Project]() site:
+- [Usage]() - General Usage
+- [Patches]() - Patch format
+- [Scripting]() - Python Scripting
+- [Developer]() - FFI Interface
+
 
 ## Credits
 
 I referenced ALLOT of projects in the building of this. 
 
 These are the projects i directly took code from:
-
-- [xenon-bltool](https://github.com/InvoxiPlayGames/xenon-bltool) by [InxoviPlayGames](https://github.com/InvoxiPlayGames)
+ [xenon-bltool](https://github.com/InvoxiPlayGames/xenon-bltool) by [InxoviPlayGames](https://github.com/InvoxiPlayGames)
 - [x360utils](https://github.com/Swizzy/x360Utils) by [Swizzy](https://github.com/Swizzy)
 - [RGBuild](https://github.com/RGLoader/RGBuild) by [emoose](https://github.com/stoker25) / [stoker25](https://github.com/stoker25), [tydye81](https://github.com/tydye81) and [sk1080](https://github.com/sk1080)
 - [J-Runner with Extras](https://github.com/J-Runner-with-Extras/J-Runner-with-Extras) by J-Runner Contributors
@@ -66,11 +66,6 @@ And these are the people who deserve credit:
 - c0z for xeBuild patches
 - Ikari for FreeBoot
 - team xeBuild / fbBuild / ggBuild
-
-## Developer Info
-
-Heavily uses zerocopy for byteorder.
-Slimmed versions of ExCrypt, Mspack and Xenon-bltool are included locally and compiled with cc.
 
 ## License
 
