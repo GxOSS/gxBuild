@@ -12,7 +12,7 @@ Next Release:
 
 - Parse and Assemble Shadowboot
 - LZX Recompression
-- Error Handler / Saftey net
+- FFI/GUI/TUI error Handler
 
 - Keyvault patching
 - SMC patching

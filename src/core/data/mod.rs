@@ -11,3 +11,4 @@
 
 pub mod xeini;
 pub mod blocks;
+pub mod discovery;

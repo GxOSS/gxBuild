@@ -1,3 +1,4 @@
-pub mod python;
-pub mod xebuild;
+pub mod cli;
 pub mod ffi;
+pub mod python;
+pub mod tui;
