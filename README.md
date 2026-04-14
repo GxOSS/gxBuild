@@ -1,35 +1,18 @@
 # gxBuild
 
-A Rust Xbox 360 image builder and patcher.
+gxBuild is a Xbox 360 image builder and patcher. Implements full nand, xell and shadowboot parsing and building, with a number of complex targets like JTAG-2f and DevGL.
 
-Backwards compatible with xeBuild
+Aims for near-complete compatibility with xeBuild where possible, with only a few minor changes to syntax. Includes full xeBuild and RGBuild patching, the xeBuild folder structure and inis, crc32 hashing, and expands on xeBuild with Glitch3, native RGBuild, shadowboots, xell images, and CE patching.
 
-## About
+## Get Started
 
-Full start to finish NAND building and patching. Follows and extends the xeBuild format for compatibility. 
+Compatible with any x86 and aarch64 platform.
 
-Formats:
-- XSB Small Block, PSB/KSB Small Block, Big Block and eMMC
-- Single CB, Split CB, Glitch3, 1f, 2f (WIP), RGBuild, XDKBuild, Devkit and DevGL
-- System Update (STFS PIRS) and Xboxupd.bin
-- Shadowboot (WIP) and XeLL image
-
-Features:
-- Spare data handling and Bad Block remapping
-- Full FlashFS Parser and Builder
-- CE LZX Decompression
-- Base kernel and hypervisor updater
-- xeBuild and RGLoader patching
-- SMC and Keyvault patching (WIP)
-- xe / gg / fb ini support
-
-## Usage and Scripting
-
-gxBuild has 3 ways it can be interfaced; CLI, TUI, and FFI. The CLI mirrors xeBuild with some minor changes and expansions. the TUI can be accessed with `gxBuild tui`.
-
-For full usage type `gxBuild help`
-
-gxBuild bundles rust-python for scripting, and exports all processed data into the interpreter. 
+Officially supported:
+- [Windows x32]()
+- [Windows x64]()
+- [Linux AMD64]()
+- [MacOS aarch64]()
 
 ## Documentation
 
@@ -38,7 +21,6 @@ Documentation is hosted on the [GGX Project]() site:
 - [Patches]() - Patch format
 - [Scripting]() - Python Scripting
 - [Developer]() - FFI Interface
-
 
 ## Credits
 
@@ -61,7 +43,7 @@ And these are the projects i referenced:
 - [XDKBuild](https://github.com/xvistaman2005/XDKBuild) by [xvistaman2005](https://github.com/xvistaman2005)
 - [360hub Discord Server](https://discord.gg/z9r3HMUxp7)
 
-And these are the people who deserve credit:
+Last but not least:
 
 - c0z for xeBuild patches
 - Ikari for FreeBoot
