@@ -25,7 +25,7 @@ use std::fs;
 use crc32fast::Hasher;
 use thiserror::Error;
 use crate::builder::builder::NandSkeleton;
-use log::info;
+use log::{info, warn};
 
 #[derive(Error, Debug)]
 pub enum IniError {
@@ -69,6 +69,7 @@ pub fn parse_xe_ini(
     ini_base_path: impl AsRef<Path>,
     common_path: impl AsRef<Path>,
 ) -> Result<XeBuildIni, IniError> {
+    info!("[ini] Parsing section '{}' from INI (base: {:?})", target_section, ini_base_path.as_ref());
     let ini_base = ini_base_path.as_ref();
     let common_base = common_path.as_ref();
     
@@ -177,6 +178,8 @@ pub fn parse_xe_ini(
         flashfs: flashfs_entries,
     };
 
+    info!("[ini] Parsed section '{}': {} main bootloader(s), {} security file(s), {} FlashFS asset(s)",
+        target_section, ini.main.len(), ini.security.len(), ini.flashfs.len());
     Ok(ini)
 }
 
@@ -188,7 +191,7 @@ pub fn apply_xe_ini(
     
     // DIAGNOSTIC: Print all pending assets
     if !pending_assets.is_empty() {
-        info!(" -> Discovered assets in memory: {:?}", pending_assets.keys().collect::<Vec<_>>());
+        info!("[ini] Discovered assets in memory: {:?}", pending_assets.keys().collect::<Vec<_>>());
     }
 
     // 1. Process [main] bootloaders
@@ -204,26 +207,37 @@ pub fn apply_xe_ini(
         } else {
             // If not in memory and not on disk, we only error if it's NOT already in the NAND.
             // This allows us to keep baseline bootloaders if no replacement was found.
-            info!(" -> Note: {} not found on disk or in containers, keeping baseline if present.", filename);
+            info!("[ini] Note: '{}' not found in memory or at '{}', keeping baseline bootloader if present.",
+                filename, entry.path.display());
             continue;
         };
         
         if lower.starts_with("cba_") {
             nand.bootloaders.cb_a = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+            info!("[ini] Assigned CB_A from '{}' ({} bytes)", filename, data.len());
         } else if lower.starts_with("cb_x_") || lower.starts_with("cbx_") {
             nand.bootloaders.cb_x = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+            info!("[ini] Assigned CB_X from '{}' ({} bytes)", filename, data.len());
         } else if lower.starts_with("cbb_") {
             nand.bootloaders.cb_b = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+            info!("[ini] Assigned CB_B from '{}' ({} bytes)", filename, data.len());
         } else if lower.starts_with("cb_") {
             nand.bootloaders.cb = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+            info!("[ini] Assigned CB from '{}' ({} bytes)", filename, data.len());
         } else if lower.starts_with("cd_") {
             nand.bootloaders.cd = Some(crate::builder::chain::cd::BootloaderCd::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+            info!("[ini] Assigned CD from '{}' ({} bytes)", filename, data.len());
         } else if lower.starts_with("ce_") {
             nand.bootloaders.ce = Some(crate::builder::chain::ce::BootloaderCe::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+            info!("[ini] Assigned CE from '{}' ({} bytes)", filename, data.len());
         } else if lower.starts_with("cf_") {
             nand.update.cf_0 = Some(crate::builder::chain::cf::BootloaderCf::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+            info!("[ini] Assigned CF_0 (update slot 0) from '{}' ({} bytes)", filename, data.len());
         } else if lower.starts_with("cg_") {
             nand.update.cg_0 = Some(crate::builder::chain::cg::BootloaderCg::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+            info!("[ini] Assigned CG_0 (update slot 0) from '{}' ({} bytes)", filename, data.len());
+        } else {
+            warn!("[ini] '{}' did not match any known bootloader prefix, skipping.", filename);
         }
     }
 

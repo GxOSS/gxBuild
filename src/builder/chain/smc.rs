@@ -75,7 +75,7 @@ impl Smc {
             minor_version: self.data[0x102],
         });
         if let Some(meta) = &self.metadata {
-            info!(" -> SMC Metadata: Type 0x{:02X}, Ver {}.{}", meta.type_byte, meta.major_version, meta.minor_version);
+            info!("[smc] Metadata: Type 0x{:02X}, Ver {}.{}", meta.type_byte, meta.major_version, meta.minor_version);
         }
     }
 
@@ -143,7 +143,7 @@ impl RawSmc {
             minor_version: self.data[0x102],
         });
         if let Some(meta) = &self.metadata {
-            info!(" -> Raw SMC Metadata: Type 0x{:02X}, Ver {}.{}", meta.type_byte, meta.major_version, meta.minor_version);
+            info!("[smc] Raw SMC Metadata: Type 0x{:02X}, Ver {}.{}", meta.type_byte, meta.major_version, meta.minor_version);
         }
     }
 

@@ -2,11 +2,15 @@
     discovery.rs - Bootloader discovery engine using try_id pattern.
 
     Based on proven successful patterns from scratch iterations (V25, V43, V46).
-    Modified in 2026 by Exposure / Zach for GGX.
+    By Exposure / Zach for the public domain.
 */
 
+
+// This file is sort of a file of workarounds, proven ways from research to identify bootloaders
+// in an image or from a raw NAND dump.
+
 use crate::builder::deps::excrypt::{self, Rc4};
-use log::debug;
+use log::{debug, info};
 
 /// Retail 1BL master key — used to decrypt CB/CF bootloaders.
 pub const RETAIL_1BL_KEY: [u8; 16] = [
@@ -67,6 +71,10 @@ pub fn try_identify_bootloader(
         && version < 20000
         && size < 0x2000000
     {
+        debug!(
+            "[discovery] Bootloader identified (plain/unencrypted): {} v{} ({} bytes)",
+            magic_to_string(magic_val), version, size
+        );
         return Some(BootloaderDiscoveryResult {
             magic: magic_to_string(magic_val),
             version,
@@ -130,9 +138,10 @@ pub fn try_identify_bootloader(
                 res_key.copy_from_slice(&derived_key[..0x10]);
 
                 debug!(
-                    "Bootloader identified: {} v{} at salt 0x{:X} via {} key",
+                    "[discovery] Bootloader identified: {} v{} ({} bytes) at salt offset 0x{:02X} via {} key",
                     magic_to_string(decrypted_magic),
                     decrypted_version,
+                    decrypted_size,
                     salt_off,
                     key_name
                 );
@@ -197,12 +206,23 @@ pub fn scan_for_bootloader<F>(
 where
     F: FnMut(usize, usize) -> Option<Vec<u8>>,
 {
+    info!(
+        "[discovery] Scanning for bootloader: range 0x{:08X}..0x{:08X} ({} KB)",
+        start_offset,
+        start_offset + scan_range,
+        scan_range / 1024
+    );
     // Scan in 0x10-byte steps through the range
     for offset in (start_offset..start_offset + scan_range).step_by(0x10) {
         let buf = read_fn(offset, 0x100)?;
         if let Some(result) = try_identify_bootloader(&buf, parent_key) {
+            info!(
+                "[discovery] Found {} v{} at logical offset 0x{:08X} (via {} key)",
+                result.magic, result.version, offset, result.key_source
+            );
             return Some((offset, result));
         }
     }
+    info!("[discovery] No bootloader found in scanned range.");
     None
 }

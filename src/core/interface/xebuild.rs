@@ -59,7 +59,7 @@ pub struct GgxArgs {
 
     /// Set xeBuild options (e.g. -o nomobile;cputemp=80)
     #[arg(short = 'o', long = "option", value_parser = parse_key_val)]
-    pub options: Vec<(String, String)>,
+    pub options: Vec<Vec<(String, String)>>,
 
     /// Append addon patches or RGLP (.bin file name)
     #[arg(short = 'a', long = "addon")]
@@ -158,14 +158,18 @@ pub enum CliConsoleType {
 }
 
 /// Custom parser for the -o options flag.
-/// Supports both `key=value` and `key` (boolean true).
-/// Semicolons are handled by splitting before parsing.
-fn parse_key_val(s: &str) -> Result<(String, String), String> {
-    let pos = s.find('=');
-    match pos {
-        Some(pos) => Ok((s[..pos].to_string(), s[pos + 1..].to_string())),
-        None => Ok((s.to_string(), "true".to_string())),
-    }
+/// Supports semicolon-separated values: e.g. "noenter;noinfo;nomobile;cputemp=80"
+/// Each part supports both `key=value` and `key` (boolean true).
+fn parse_key_val(s: &str) -> Result<Vec<(String, String)>, String> {
+    s.split(';')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            match part.find('=') {
+                Some(pos) => Ok((part[..pos].to_string(), part[pos + 1..].to_string())),
+                None => Ok((part.to_string(), "true".to_string())),
+            }
+        })
+        .collect()
 }
 
 const LICENSE_TEXT: &str = r#"
@@ -201,7 +205,7 @@ pub fn ggx_cli() {
     };
 
     if let Err(e) = logger::init_logger(mode_str, args.verbose) {
-        eprintln!("[GGX] Failed to initialize logger: {}", e);
+        error!("[cli] Failed to initialize logger: {}", e);
     }
 
     info!("{}", LICENSE_TEXT);
@@ -211,7 +215,7 @@ pub fn ggx_cli() {
     match args.mode.clone() {
         Some(GgxMode::Build { .. }) | None => {
             if let Err(e) = handle_build(&args, &mut session) {
-                error!("\n[GGX] Build Setup Failed: {}", e);
+                error!("[cli] Build Setup Failed: {}", e);
                 std::process::exit(1);
             }
         }
@@ -219,15 +223,15 @@ pub fn ggx_cli() {
             session.extract_all();
         }
         Some(GgxMode::Client) => {
-            info!("Client mode selected.");
+            info!("[cli] Client mode selected.");
         }
         Some(GgxMode::Update) => {
-            info!("Update mode not fully implemented yet.");
+            info!("[cli] Update mode not fully implemented yet.");
         }
     }
 
     if let Err(e) = session.run() {
-        error!("\n[GGX] Session failed: {}", e);
+        error!("[cli] Session failed: {}", e);
     } else if let Some(GgxMode::Build { .. }) | None = args.mode {
         // Build succeeded, calculate SHA-1 if requested
         let output_path = args.output.clone()
@@ -236,13 +240,13 @@ pub fn ggx_cli() {
             if let Ok(data) = std::fs::read(&output_path) {
                 if let Ok(hash) = crate::builder::deps::excrypt::sha(&[&data]) {
                     let sha_str = hash.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-                    info!(" -> Image SHA-1: {}", sha_str);
+                    info!("[cli] Image SHA-1: {}", sha_str);
 
                     if let Some(sha_p) = args.sha_file.clone() {
                         if let Err(e) = std::fs::write(&sha_p, &sha_str) {
-                            error!("[GGX] Warning: Failed to write SHA-1 to {:?}: {}", sha_p, e);
+                            error!("[cli] Failed to write SHA-1 to {:?}: {}", sha_p, e);
                         } else {
-                            info!(" -> SHA-1 written to {:?}", sha_p);
+                            info!("[cli] SHA-1 written to {:?}", sha_p);
                         }
                     }
                 }
@@ -284,22 +288,29 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     if let Ok(content) = std::fs::read_to_string(&ini_path) {
         if let Ok(ini) = crate::core::data::xeini::parse_xe_ini(&content, &console_section, &ini_dir, &resolved_common_dir) {
             for entry in ini.main { target_filenames.insert(entry.filename.to_lowercase()); }
-            for entry in ini.security { target_filenames.insert(entry.path.file_name().unwrap().to_string_lossy().to_lowercase()); }
-            for entry in ini.flashfs { target_filenames.insert(entry.path.file_name().unwrap().to_string_lossy().to_lowercase()); }
+            for entry in ini.security {
+                if let Some(name) = entry.path.file_name() {
+                    target_filenames.insert(name.to_string_lossy().to_lowercase());
+                }
+            }
+            for entry in ini.flashfs {
+                if let Some(name) = entry.path.file_name() {
+                    target_filenames.insert(name.to_string_lossy().to_lowercase());
+                }
+            }
         }
     } else {
         anyhow::bail!("Could not find or read INI at {:?}", ini_path);
     }
 
-    info!("\n--- GGX Build Configuration ---");
-    info!("Type:      {:?}", build_type);
-    info!("Console:   {}", console_base);
-    info!("Section:   {}", console_section);
-    info!("INI Dir:   {:?}", ini_dir);
-    info!("Data Dir:  {:?}", data_dir);
-    info!("Common:    {:?}", resolved_common_dir);
-    info!("INI File:  {:?}", ini_path);
-    info!("-------------------------------\n");
+    info!("[cli] Build Configuration");
+    info!("[cli]   Type:      {:?}", build_type);
+    info!("[cli]   Console:   {}", console_base);
+    info!("[cli]   Section:   {}", console_section);
+    info!("[cli]   INI Dir:   {:?}", ini_dir);
+    info!("[cli]   Data Dir:  {:?}", data_dir);
+    info!("[cli]   Common:    {:?}", resolved_common_dir);
+    info!("[cli]   INI File:  {:?}", ini_path);
 
     // --- Discovery Phase ---
     // Enqueue FinalizeFlashfs to run after all asset discovery
@@ -343,7 +354,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     // Enqueue files from INI target filenames, track which CF/CG were actually found
     let mut cf_on_disk = false;
     let mut cg_on_disk = false;
-    info!("[GGX] Discovering {} assets from INI targets...", target_filenames.len());
+    info!("[cli] Discovering {} assets from INI targets...", target_filenames.len());
     for filename in &target_filenames {
         let found = enqueue_if_found(session, filename, &search_paths);
         if filename.starts_with("cf_") && filename.ends_with(".bin") && found { cf_on_disk = true; }
@@ -352,12 +363,12 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
 
     // --- CF/CG Fallback: if not found on disk, search update containers ---
     if !cf_on_disk || !cg_on_disk {
-        info!("[GGX] CF/CG not found on disk, searching update containers...");
+        info!("[cli] CF/CG not found on disk, searching update containers...");
 
         // Priority 1: xboxupd.bin in INI dir
         let xboxupd_path = ini_dir.join("xboxupd.bin");
         if xboxupd_path.exists() {
-            info!("[GGX] Found xboxupd.bin in INI dir: {:?}", xboxupd_path);
+            info!("[cli] Found xboxupd.bin in INI dir: {:?}", xboxupd_path);
             session.enqueue(InternalCommand::Update { path: xboxupd_path });
         } else {
             // Priority 2: su*** files in INI dir
@@ -367,7 +378,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                     if path.is_file() {
                         let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
                         if name.starts_with("su") {
-                            info!("[GGX] Found STFS container in INI dir: {:?}", path);
+                            info!("[cli] Found STFS container in INI dir: {:?}", path);
                             session.enqueue(InternalCommand::Update { path });
                         }
                     }
@@ -379,7 +390,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     // ============================================================
     // DATA DIR DISCOVERY (-f) — NAND, CPU Key, Security, SMC, FCRT, KV
     // ============================================================
-    info!("[GGX] Scanning Data Dir (nand/key/smc/fcrt/kv): {:?}", data_dir);
+    info!("[cli] Scanning Data Dir (nand/key/smc/fcrt/kv): {:?}", data_dir);
 
     // --- NAND Image Discovery (data dir only) ---
     let mut nand_found = false;
@@ -408,7 +419,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
 
     if nand_found {
         let path = parsed_nand_path.unwrap();
-        info!("[GGX] Auto-discovered source NAND image from {:?}", path);
+        info!("[cli] Auto-discovered source NAND image from {:?}", path);
         session.enqueue(InternalCommand::ParseImage { path, key: None });
     } else {
         let layout = match console_type {
@@ -424,7 +435,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
             CliConsoleType::corona => crate::core::data::blocks::NandLayout::Sb,
             CliConsoleType::corona4g | CliConsoleType::winchester => crate::core::data::blocks::NandLayout::Emmc,
         };
-        info!("[GGX] Synthesizing blank image from scratch (Layout: {:?}).", layout);
+        info!("[cli] Synthesizing blank image from scratch (Layout: {:?}).", layout);
         session.enqueue(InternalCommand::CreateImage { layout });
     }
 
@@ -446,7 +457,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                             let mut key = [0u8; 16];
                             key.copy_from_slice(&bytes[..16]);
                             session.parse_keybin(Some(key));
-                            info!("[GGX] Auto-discovered CPU Key binary from {:?}", p);
+                                info!("[cli] Auto-discovered CPU Key binary from {:?}", p);
                             key_found = true;
                             break;
                         }
@@ -456,7 +467,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                         let clean_key = text.trim();
                         if clean_key.len() >= 32 {
                             session.set_cpukey(clean_key.to_string());
-                            info!("[GGX] Auto-discovered CPU Key string from {:?}", p);
+                            info!("[cli] Auto-discovered CPU Key string from {:?}", p);
                             key_found = true;
                             break;
                         }
@@ -483,7 +494,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         if p.exists() {
             if let Ok(data) = std::fs::read(p) {
                 let name = p.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-                info!("[GGX] Discovered security asset: {:?} ({} bytes)", p, data.len());
+                info!("[cli] Discovered security asset: {:?} ({} bytes)", p, data.len());
                 session.pending_assets.insert(name, data);
             }
         }
@@ -517,13 +528,13 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     }
 
     if let Some(p) = update_path {
-        info!("[GGX] Auto-discovered system update from {:?}", p);
+        info!("[cli] Auto-discovered system update from {:?}", p);
         session.update(p);
     }
 
     // --- 1BL Key Warning ---
     if args.bl_key.is_some() {
-        info!("[GGX] Warning: Overriding the 1BL key (-b) is currently not implemented. Using default retail key.");
+        info!("[cli] Warning: Overriding the 1BL key (-b) is currently not implemented. Using default retail key.");
     }
 
     // --- Addon Patches ---
@@ -546,39 +557,49 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                 target: None
             });
         } else {
-            error!("[GGX] Warning: Addon patch not found: {}", addon);
+            error!("[cli] Warning: Addon patch not found: {}", addon);
         }
     }
 
     // --- Raw Patches (-8) ---
     for raw_patch in &args.raw_patches {
-        // Parse format: filename.ext,offset
-        let parts: Vec<&str> = raw_patch.split(',').collect();
-        if parts.len() == 2 {
-            let filename = parts[0];
-            let offset_str = parts[1];
+        // Support semicolon-separated patches: "file1.bin,0x1234;file2.bin,0x5678"
+        for patch_str in raw_patch.split(';').filter(|s| !s.is_empty()) {
+            // Parse format: filename.ext,offset
+            let parts: Vec<&str> = patch_str.split(',').collect();
+            if parts.len() == 2 {
+                let filename = parts[0];
+                let offset_str = parts[1];
 
-            let patch_path = if PathBuf::from(filename).is_absolute() {
-                PathBuf::from(filename)
+                let patch_path = if PathBuf::from(filename).is_absolute() {
+                    PathBuf::from(filename)
+                } else {
+                    let p = data_dir.join(filename);
+                    if p.exists() { p } else { ini_dir.join(filename) }
+                };
+
+                let offset = if offset_str.starts_with("0x") {
+                    u64::from_str_radix(&offset_str[2..], 16).ok()
+                } else {
+                    offset_str.parse::<u64>().ok()
+                };
+
+                if patch_path.exists() {
+                    if let Some(off) = offset {
+                        info!("[cli] Raw patch: {:?} at offset 0x{:X}", patch_path, off);
+                        session.enqueue(InternalCommand::ApplyPatch {
+                            path: patch_path,
+                            ptype: 3, // Raw patch
+                            target: None
+                        });
+                    } else {
+                        error!("[cli] Invalid offset value '{}' in raw patch: {}", offset_str, patch_str);
+                    }
+                } else {
+                    error!("[cli] Raw patch file not found: {}", filename);
+                }
             } else {
-                let p = data_dir.join(filename);
-                if p.exists() { p } else { ini_dir.join(filename) }
-            };
-
-            let offset = if offset_str.starts_with("0x") {
-                u64::from_str_radix(&offset_str[2..], 16).ok()
-            } else {
-                offset_str.parse::<u64>().ok()
-            };
-
-            if patch_path.exists() && offset.is_some() {
-                info!("[GGX] Raw patch: {:?} at offset 0x{:X}", patch_path, offset.unwrap());
-                // Enqueue raw patch command
-                session.enqueue(InternalCommand::ApplyPatch {
-                    path: patch_path,
-                    ptype: 3, // Raw patch
-                    target: None
-                });
+                error!("[cli] Malformed raw patch entry (expected filename,offset): {}", patch_str);
             }
         }
     }
@@ -591,7 +612,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
 
     // --- Options Processing ---
     let mut no_enter = false;
-    for (key, _val) in &args.options {
+    for (key, _val) in args.options.iter().flat_map(|v| v.iter()) {
         match key.as_str() {
             "noenter" => no_enter = true,
             "noinfo" => {},
@@ -617,10 +638,10 @@ impl Session {
             if let Ok(arr) = bytes.try_into() {
                 self.parse_key(arr);
             } else {
-                error!("[Session] Error: CPU Key must be 32 hex characters (16 bytes).");
+                error!("[cli] CPU Key must be 32 hex characters (16 bytes).");
             }
         } else {
-            error!("[Session] Error: Invalid hex format for CPU Key.");
+            error!("[cli] Invalid hex format for CPU Key.");
         }
     }
     pub fn set_verbose(&mut self, _v: bool) {

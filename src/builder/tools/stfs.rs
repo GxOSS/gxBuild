@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::fs;
+use log::{info};
 use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable, byteorder::{U16, U32, BigEndian}};
 
 use crate::builder::chain::cf::BootloaderCf;
@@ -71,6 +72,7 @@ impl<'a> StfsContainer<'a> {
         if data.len() < 4 || &data[0..4] != b"PIRS" {
             return Err("Invalid STFS signature: Expected 'PIRS'".into());
         }
+        info!("[builder] STFS container validated (PIRS magic OK, {} bytes)", data.len());
         Ok(Self { data })
     }
 
@@ -133,7 +135,7 @@ impl<'a> StfsContainer<'a> {
                 }
 
                 fs::write(&full_path, file_data).map_err(|e| e.to_string())?;
-                println!(" -> Extracted file: {}", name);
+                info!("[builder] STFS extracted file: {}", name);
             }
         }
 
@@ -146,7 +148,7 @@ impl<'a> StfsContainer<'a> {
         let start_offset = if pathind_peek == 0xFFFF { 0xC000 } else { 0xD000 };
         let multiplier = if start_offset == 0xC000 { 0x1000 } else { 0x2000 };
 
-        println!(" [STFS] Discovery: start_offset=0x{:x}, multiplier=0x{:x}", start_offset, multiplier);
+        info!("[builder] STFS extract_to_memory: start_offset=0x{:x}, multiplier=0x{:x}", start_offset, multiplier);
 
         let first_clust = u16::from_le_bytes(self.data[start_offset + 0x2F..start_offset + 0x31].try_into().unwrap()) as usize;
         let dir_data = &self.data[start_offset..start_offset + (0x1000 * first_clust)];
@@ -195,6 +197,7 @@ impl<'a> StfsContainer<'a> {
             results.insert(name.to_lowercase(), file_data);
         }
 
+        info!("[builder] STFS in-memory extraction complete: {} files extracted.", results.len());
         Ok(results)
     }
 }
@@ -221,6 +224,7 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
         return Err("Failed to decrypt CF header.".to_string());
     }
 
+    info!("[builder] Parsing xboxupd: CF at offset 0, size=0x{:x}", cf.header.size.get());
     cf.populate_metadata();
     let meta = cf.metadata.as_ref().ok_or("Failed to populate CF metadata")?;
     let cf_size = cf.header.size.get() as usize;
@@ -249,5 +253,6 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
         return Err("CG checking hash mismatch against CF signature metadata".to_string());
     }
 
+    info!("[builder] xboxupd parsed OK: CF v{} -> CG v{} ({} bytes)", cf.header.version.get(), cg.header.version.get(), xboxupd_bytes.len());
     Ok((cf, cg))
 }

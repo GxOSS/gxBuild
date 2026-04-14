@@ -165,28 +165,28 @@ impl BootloaderCb {
             indicator = "CB_B";
         }
 
-        info!("{} version: {}", indicator, self.header.version.get());
-        info!("{} size: 0x{:x}", indicator, self.header.size.get());
+        info!("[builder] {} version: {}", indicator, self.header.version.get());
+        info!("[builder] {} size: 0x{:x}", indicator, self.header.size.get());
         info!(
-            "{} entrypoint: 0x{:x}",
+            "[builder] {} entrypoint: 0x{:x}",
             indicator,
             self.header.entrypoint.get()
         );
 
         if self.is_decrypted() {
             if let Some(ref meta) = self.metadata {
-                info!("{} LDV: {}", indicator, meta.ldv);
-                info!("{} next hash: {:02x?}", indicator, meta.cd_cbb_hash);
+                info!("[builder] {} LDV: {}", indicator, meta.ldv);
+                info!("[builder] {} next hash: {:02x?}", indicator, meta.cd_cbb_hash);
             } else {
                 // Fallback to raw indexing if metadata wasn't populated
-                info!("{} LDV: {}", indicator, self.data[0x391]);
-                info!("{} next hash: {:02x?}", indicator, &self.data[0x37C..0x390]);
+                info!("[builder] {} LDV: {}", indicator, self.data[0x391]);
+                info!("[builder] {} next hash: {:02x?}", indicator, &self.data[0x37C..0x390]);
             }
             if self.data.len() >= 0x30 && self.data[0x30] != 0 {
-                info!("{} signature: (requires keys to verify)", indicator);
+                info!("[builder] {} signature: (requires keys to verify)", indicator);
             }
         } else {
-            info!("{} is encrypted", indicator);
+            info!("[builder] {} is encrypted", indicator);
         }
     }
 
@@ -197,14 +197,13 @@ impl BootloaderCb {
 
         if self.data.len() < payload_len { return; }
 
-        // C: ExCryptHmacSha(onebl_key, ..., hdr->key, ..., hdr->key, ...)
-        // The derived key is written back into hdr->key (data[0..16]) in-place.
+        // Derive RC4 key from 1BL key and the bootloader's key field.
+        // Matches xenon-bltool's cb_decrypt: writes derived key back into data[0..16] in-place.
         if let Ok(derived_key) = excrypt::hmac_sha(onebl_key, &[&self.data[0..16]]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
-            info!(" -> Decrypting CB using derived key: {:02x?}", decrypt_key);
-            // Write back in-place, matching xenon-bltool cb_decrypt behaviour.
             self.data[0..16].copy_from_slice(&decrypt_key);
+            info!("[builder] Decrypting CB using derived key: {:02x?}", decrypt_key);
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }
@@ -235,7 +234,7 @@ impl BootloaderCb {
         if let Ok(derived_key) = excrypt::hmac_sha(&zero_key, &[&hmac_input]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
-            info!(" -> Decrypting CB (MFG zero-key) using derived key: {:02x?}", decrypt_key);
+            info!("[builder] Decrypting CB (MFG zero-key) using derived key: {:02x?}", decrypt_key);
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }

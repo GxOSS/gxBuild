@@ -208,7 +208,7 @@ impl NandLayout {
         };
 
         if let Ok(l) = &layout {
-            info!(" -> Detected NAND Layout: {:?} (Image Size: 0x{:x})", l, len);
+            info!("[blocks] Detected NAND Layout: {:?} (Image Size: 0x{:x})", l, len);
         }
         layout
     }
@@ -237,7 +237,7 @@ pub fn add_spare(image: &[u8], layout: NandLayout, blockstart: usize) -> Vec<u8>
     let page_size = layout.page_size();
     let total_pages = (image.len() + page_size - 1) / page_size;
 
-    info!(" -> Finalizing physical image: Generating ECC and Spare Areas...");
+    info!("[blocks] Finalizing physical image: Generating ECC and Spare Areas...");
 
     match layout {
         NandLayout::Bb => {
@@ -522,7 +522,7 @@ pub fn remove_spare(image: &[u8]) -> Vec<u8> {
     // Gate on actual spare presence rather than blindly stripping.
     if !has_spare(image) { return image.to_vec(); }
 
-    info!(" -> Multi-Core Prep: Stripping Physical Spares/ECC to create Clean Buffer...");
+    info!("[blocks] Multi-Core Prep: Stripping Physical Spares/ECC to create Clean Buffer...");
     
     // Big-block NAND uses 0x840-byte chunks (4 pages × 0x200 data + 0x40 spare)
     // Small-block NAND uses 0x210-byte chunks (1 page × 0x200 data + 0x10 spare)
@@ -658,11 +658,11 @@ impl BlockMap {
         let bad_indices: Vec<usize> = self.blocks.iter().map(|b| b.block).collect();
         if bad_indices.is_empty() { return Ok(()); }
         
-        info!(" -> Found {} Bad Physical Blocks. Attempting Healing/Remapping...", bad_indices.len());
+        info!("[blocks] Found {} Bad Physical Blocks. Attempting Healing/Remapping...", bad_indices.len());
         let remapped = resolve_remapped_blocks(image, &bad_indices, &self.layout)?;
         for (i, &bad_block) in bad_indices.iter().enumerate() {
             let target = remapped[i].ok_or_else(|| format!("Bad block {} not remapped", bad_block))?;
-            info!("   - Remapping Bad Block {} -> Reserved Physical Block {}", bad_block, target);
+            info!("[blocks] Remapping Bad Block {} -> Reserved Physical Block {}", bad_block, target);
             let b_size = self.layout.block_size();
             let mut buf = vec![0u8; b_size];
             buf.copy_from_slice(&image[target * b_size..target * b_size + b_size]);
@@ -750,7 +750,7 @@ impl LbaMap {
         for (logical, physical) in self.logical_to_physical.iter_mut().enumerate() {
             if *physical == replacement_block {
                 *physical = bad_block;
-                info!(" -> LBA {:#X}: physical block {:#X} → {:#X} (bad block healed)",
+                info!("[blocks] LBA {:#X}: physical block {:#X} -> {:#X} (bad block healed)",
                       logical, replacement_block, bad_block);
             }
         }
@@ -788,12 +788,12 @@ impl NandProcessor {
         // Promote Sb → Xsb while spare data is still present (matches J-Runner identifylayout).
         let layout = promote_layout(raw_image, base_layout);
         if layout != base_layout {
-            info!(" -> Promoted layout: {:?} -> {:?} (Xenon spare format detected)", base_layout, layout);
+            info!("[blocks] Promoted layout: {:?} -> {:?} (Xenon spare format detected)", base_layout, layout);
         }
 
         // Detect spare metadata format
         let meta_type = detect_meta_type(raw_image, layout);
-        info!(" -> Detected spare metadata format: {:?}", meta_type);
+        info!("[blocks] Detected spare metadata format: {:?}", meta_type);
 
         let mut working = raw_image.to_vec();
         let total_blocks = layout.total_blocks(working.len());

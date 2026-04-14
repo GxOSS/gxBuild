@@ -211,7 +211,7 @@ pub fn fix_per_box_digest(
     
     let mut final_digest = [0u8; 16];
     final_digest.copy_from_slice(&res[..16]);
-    info!(" -> Calculated FixPerBoxDigest: {:02x?}", final_digest);
+    info!("[builder] Calculated FixPerBoxDigest: {:02x?}", final_digest);
     Ok(final_digest)
 }
 
@@ -236,12 +236,12 @@ pub fn decrypt_chain(
     }
 
     // 1. Decrypt CB using 1BL Key.
-    info!(" -> Decrypting CB with 1BL Key...");
+    info!("[builder] Decrypting CB with 1BL Key...");
     cb.decrypt(&ONEBL_KEY);
     if cb.verify_decrypted() {
-        info!(" -> CB decryption verified successfully (zero-region check passed).");
+        info!("[builder] CB decryption verified successfully (zero-region check passed).");
     } else {
-        log::warn!(" -> CB decryption verification failed — decrypted data may be corrupted.");
+        log::warn!("[builder] CB decryption verification failed — decrypted data may be corrupted.");
     }
 
     // 2. Derive CB Key from the original nonce (not the overwritten key).
@@ -260,7 +260,7 @@ pub fn decrypt_chain(
     }
 
     // 3. Decrypt the rest of the chain
-    info!(" -> Decrypting CD and CE...");
+    info!("[builder] Decrypting CD and CE...");
     cd.decrypt(&cb_key, None);
     ce.decrypt(&cb_key);
 
@@ -268,31 +268,31 @@ pub fn decrypt_chain(
     if let (Some(cf), Some(cg)) = (cf_0, cg_0) {
         cf.decrypt(&ONEBL_KEY);
         if cf.verify_decrypted() {
-            info!(" -> CF slot 0 decryption verified successfully.");
+            info!("[builder] CF slot 0 decryption verified successfully.");
         } else {
-            log::warn!(" -> CF slot 0 decryption verification failed.");
+            log::warn!("[builder] CF slot 0 decryption verification failed.");
         }
         if cf.data.len() >= 0x20 {
             let mut cg_hmac = [0u8; 16];
             cg_hmac.copy_from_slice(&cf.data[0x10..0x20]);
             cg.decrypt(&cg_hmac);
         }
-        info!(" -> Slot 0 Updates decrypted.");
+        info!("[builder] Slot 0 Updates decrypted.");
     }
 
     if let (Some(cf), Some(cg)) = (cf_1, cg_1) {
         cf.decrypt(&ONEBL_KEY);
         if cf.verify_decrypted() {
-            info!(" -> CF slot 1 decryption verified successfully.");
+            info!("[builder] CF slot 1 decryption verified successfully.");
         } else {
-            log::warn!(" -> CF slot 1 decryption verification failed.");
+            log::warn!("[builder] CF slot 1 decryption verification failed.");
         }
         if cf.data.len() >= 0x20 {
             let mut cg_hmac = [0u8; 16];
             cg_hmac.copy_from_slice(&cf.data[0x10..0x20]);
             cg.decrypt(&cg_hmac);
         }
-        info!(" -> Slot 1 Updates decrypted.");
+        info!("[builder] Slot 1 Updates decrypted.");
     }
 
     Ok(())
@@ -324,7 +324,7 @@ pub fn encrypt_chain(
         .map_err(|e| format!("CB key derivation failed: {}", e))?;
     let mut cb_key = [0u8; 16];
     cb_key.copy_from_slice(&derived[..16]);
-    info!(" -> Derived CB Key: {:02x?}", cb_key);
+    info!("[builder] Derived CB Key for re-encryption: {:02x?}", cb_key);
 
     let digest = fix_per_box_digest(&smc.data, &cb.header, &cb.data, &cb_key, cpukey)?;
     if cb.data.len() >= 0x20 {
@@ -332,24 +332,32 @@ pub fn encrypt_chain(
     }
 
     // Encrypt in reverse order (innermost first).
-    // Slot 1
+    // Slot 1 — read CG HMAC from decrypted CF, then re-encrypt CG, then re-encrypt CF
     if let (Some(cf), Some(cg)) = (cf_1, cg_1) {
+        // Read CG HMAC from decrypted CF before re-encrypting
+        let mut cg_hmac = [0u8; 16];
         if cf.data.len() >= 0x20 {
-            let mut cg_hmac = [0u8; 16];
             cg_hmac.copy_from_slice(&cf.data[0x10..0x20]);
-            cg.decrypt(&cg_hmac);
         }
+        // Re-encrypt CG first (it uses the HMAC as key)
+        cg.decrypt(&cg_hmac);
+        // Now re-encrypt CF
         cf.decrypt(&ONEBL_KEY);
+        info!("[builder] CF/CG slot 1 re-encrypted.");
     }
 
-    // Slot 0
+    // Slot 0 — read CG HMAC from decrypted CF, then re-encrypt CG, then re-encrypt CF
     if let (Some(cf), Some(cg)) = (cf_0, cg_0) {
+        // Read CG HMAC from decrypted CF before re-encrypting
+        let mut cg_hmac = [0u8; 16];
         if cf.data.len() >= 0x20 {
-            let mut cg_hmac = [0u8; 16];
             cg_hmac.copy_from_slice(&cf.data[0x10..0x20]);
-            cg.decrypt(&cg_hmac);
         }
+        // Re-encrypt CG first (it uses the HMAC as key)
+        cg.decrypt(&cg_hmac);
+        // Now re-encrypt CF
         cf.decrypt(&ONEBL_KEY);
+        info!("[builder] CF/CG slot 0 re-encrypted.");
     }
 
     ce.decrypt(&cb_key);
@@ -360,9 +368,9 @@ pub fn encrypt_chain(
         cb_b_bl.decrypt_v1(&cb_key, cpukey);
     }
     cd.decrypt(&cb_key, None);
-    info!(" -> CD Encrypted.");
+    info!("[builder] CD re-encrypted.");
     cb.decrypt(&ONEBL_KEY);
-    info!(" -> CB Encrypted.");
+    info!("[builder] CB re-encrypted.");
 
     Ok(())
 }

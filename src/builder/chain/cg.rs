@@ -85,23 +85,23 @@ impl BootloaderCg {
         } else {
             "CG"
         };
-        info!("{} version: {}", indicator, self.header.version.get());
-        info!("{} size: 0x{:x}", indicator, self.header.size.get());
+        info!("[builder] {} version: {}", indicator, self.header.version.get());
+        info!("[builder] {} size: 0x{:x}", indicator, self.header.size.get());
 
         if self.is_decrypted() {
             if let Some(ref meta) = self.metadata {
                 info!(
-                    "{} base size: 0x{:x}",
+                    "[builder] {} base size: 0x{:x}",
                     indicator,
                     meta.original_size
                 );
-                info!("{}-G base hash: {:02x?}", indicator, meta.original_hash);
+                info!("[builder] {}-G base hash: {:02x?}", indicator, meta.original_hash);
                 info!(
-                    "{} target size: 0x{:x}",
+                    "[builder] {} target size: 0x{:x}",
                     indicator,
                     meta.new_size
                 );
-                info!("{}-G target hash: {:02x?}", indicator, meta.new_hash);
+                info!("[builder] {}-G target hash: {:02x?}", indicator, meta.new_hash);
             } else {
                 let original_size = BigEndian::read_u32(&self.data[0x10..0x14]);
                 let original_hash = &self.data[0x14..0x28];
@@ -109,20 +109,20 @@ impl BootloaderCg {
                 let new_hash = &self.data[0x2C..0x40];
 
                 info!(
-                    "{} base size: 0x{:x}",
+                    "[builder] {} base size: 0x{:x}",
                     indicator,
                     original_size
                 );
-                info!("{}-G base hash: {:02x?}", indicator, original_hash);
+                info!("[builder] {}-G base hash: {:02x?}", indicator, original_hash);
                 info!(
-                    "{} target size: 0x{:x}",
+                    "[builder] {} target size: 0x{:x}",
                     indicator,
                     new_size
                 );
-                info!("{}-G target hash: {:02x?}", indicator, new_hash);
+                info!("[builder] {}-G target hash: {:02x?}", indicator, new_hash);
             }
         } else {
-            info!("{} is encrypted", indicator);
+            info!("[builder] {} is encrypted", indicator);
         }
     }
 
@@ -136,7 +136,7 @@ impl BootloaderCg {
         if let Ok(cg_key) = excrypt::hmac_sha(cg_hmac, &[&self.data[0..16]]) {
             let mut final_key = [0u8; 16];
             final_key.copy_from_slice(&cg_key[..16]);
-            info!(" -> CG Decryption Key Derived: {:02x?}", final_key);
+            info!("[builder] CG Decryption Key Derived: {:02x?}", final_key);
 
             if let Ok(mut rc4) = Rc4::new(&final_key) {
                 // Encryption starts at original_size, which is 0x10 rel into payload (absolute 0x20)
@@ -184,7 +184,7 @@ impl BootloaderCg {
         output_buf[..original_size].copy_from_slice(&base_data[..original_size]);
         // The rest is automatically padded with 0 since vec! initializes with 0
 
-        info!(" -> Applying LZX delta patch to kernel...");
+        info!("[builder] Applying LZX delta patch to kernel (base: 0x{:X} bytes -> target: 0x{:X} bytes)...", original_size, new_size);
         // Skip the 0x40 bytes of CG metadata (key + original_size + original_hash + new_size + new_hash)
         // The LZX delta patch data starts after this metadata
         xenia::apply_patch(
@@ -199,6 +199,7 @@ impl BootloaderCg {
             }
         }
 
+        info!("[builder] LZX delta patch applied and hash verified OK.");
         Ok(output_buf)
     }
 

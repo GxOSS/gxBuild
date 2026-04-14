@@ -120,31 +120,31 @@ impl BootloaderCf {
         } else {
             "CF"
         };
-        info!("{} version: {}", indicator, self.header.version.get());
-        info!("{} size: 0x{:x}", indicator, self.header.size.get());
-        info!("{} entrypoint: 0x{:x}", indicator, self.header.entrypoint.get());
+        info!("[builder] {} version: {}", indicator, self.header.version.get());
+        info!("[builder] {} size: 0x{:x}", indicator, self.header.size.get());
+        info!("[builder] {} entrypoint: 0x{:x}", indicator, self.header.entrypoint.get());
 
         if self.data.len() >= 0x10 {
             let base_ver = BigEndian::read_u16(&self.data[0x0..0x2]);
             let target_ver = BigEndian::read_u16(&self.data[0x4..0x6]);
             let cg_size = BigEndian::read_u32(&self.data[0xC..0x10]);
 
-            info!("{} base version: {}", indicator, base_ver);
-            info!("{} target version: {}", indicator, target_ver);
-            info!("{}-G size: 0x{:x}", indicator, cg_size);
+            info!("[builder] {} base version: {}", indicator, base_ver);
+            info!("[builder] {} target version: {}", indicator, target_ver);
+            info!("[builder] {}-G size: 0x{:x}", indicator, cg_size);
         }
 
         if self.is_decrypted() {
             if let Some(ref meta) = self.metadata {
-                info!("{}-G key: {:02x?}", indicator, meta.cg_hmac);
-                info!("{}-G checksum: {:02x?}", indicator, meta.cg_hash);
-            } else if self.data.len() >= 0x334 {
-                info!("{}-G key: {:02x?}", indicator, &self.data[0x310..0x320]);
-                info!("{}-G checksum: {:02x?}", indicator, &self.data[0x320..0x334]);
+                info!("[builder] {}-G key: {:02x?}", indicator, meta.cg_hmac);
+                info!("[builder] {}-G checksum: {:02x?}", indicator, meta.cg_hash);
+            } else if self.data.len() >= 0x344 {
+                info!("[builder] {}-G key: {:02x?}", indicator, &self.data[0x320..0x330]);
+                info!("[builder] {}-G checksum: {:02x?}", indicator, &self.data[0x330..0x344]);
             }
-            info!("{} signature: (requires keys to verify)", indicator);
+            info!("[builder] {} signature: (requires keys to verify)", indicator);
         } else {
-            info!("{} is encrypted", indicator);
+            info!("[builder] {} is encrypted", indicator);
         }
     }
 
@@ -159,7 +159,7 @@ impl BootloaderCf {
         if let Ok(derived_key) = excrypt::hmac_sha(onebl_key, &[&self.data[0x10..0x20]]) {
             let mut final_key = [0u8; 16];
             final_key.copy_from_slice(&derived_key[..16]);
-            info!(" -> CF Decryption Key Derived: {:02x?}", final_key);
+            info!("[builder] CF Decryption Key Derived: {:02x?}", final_key);
 
             if let Ok(mut rc4) = Rc4::new(&final_key) {
                 // Encryption starts at pairing, which is 0x20 deep into the payload (0x30 deep into file)

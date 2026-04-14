@@ -295,9 +295,9 @@ impl FileSystemRoot {
     pub fn build_from_memory(image: &mut [u8], layout: &NandLayout, files: &HashMap<String, Vec<u8>>, fs_start_block: u16) -> std::io::Result<Self> {
         let mut root = FileSystemRoot::new(-1, 0);
         root.create_defaults(image.len(), layout, fs_start_block);
-        info!(" -> Building FlashFS from memory with {} assets...", files.len());
+        info!("[flashfs] Building FlashFS from memory with {} assets...", files.len());
         for (name, content) in files {
-            info!("   * Processing asset: {} (Size: 0x{:X})", name, content.len());
+            info!("[flashfs]   * Processing asset: {} (Size: 0x{:X})", name, content.len());
             let mut new_entry = FileSystemEntry::new(0);
             new_entry.file_name = name.clone();
             root.set_entry_data(image, layout, &mut new_entry, content);
@@ -315,7 +315,7 @@ impl FileSystemRoot {
         let mut i = 0;
         loop {
             if !visited.insert(current) {
-                error!("[FlashFS] Cycle detected in block chain at block {}!", current);
+                error!("[flashfs] Cycle detected in block chain at block {}!", current);
                 break;
             }
             list.push(current);
@@ -400,7 +400,7 @@ impl FileSystemRoot {
                 _ => protected_count += 1,
             }
         }
-        error!("[FlashFS] ALLOCATION FAILURE: No free blocks found! (Free: {}, Protected: {}, In-Use: {}, Total: {})", 
+        error!("[flashfs] ALLOCATION FAILURE: No free blocks found! (Free: {}, Protected: {}, In-Use: {}, Total: {})", 
                free_count, protected_count, in_use_count, self.block_map.len());
         0
     }
@@ -440,10 +440,10 @@ impl FileSystemRoot {
                 let curr = *chain.last().unwrap_or(&start_block);
                 let next = self.allocate_new_block(image, layout, 1, 0);
                 if next == 0 {
-                    error!("[FlashFS] Failed to allocate additional block for chain starting at {}. Required expansion beyond {} blocks", start_block, chain.len());
+                    error!("[flashfs] Failed to allocate additional block for chain starting at {}. Required expansion beyond {} blocks", start_block, chain.len());
                     break;
                 }
-                info!("     + Expanding chain: {} -> {}", curr, next);
+                info!("[flashfs]   + Expanding chain: {} -> {}", curr, next);
                 self.block_map[curr as usize] = next;
                 // Loop repeats with updated block_map.
             } else {
@@ -622,7 +622,7 @@ impl FlashFS {
         let pages_per_block = layout.logical_pages_per_block();
         let mut best: std::collections::HashMap<u8, (usize, u32)> = std::collections::HashMap::new();
 
-        info!(" -> FlashFS scan: {} blocks to examine, {} known bad blocks", total_blocks, lba_map.bad_blocks.len());
+        info!("[flashfs] FlashFS scan: {} blocks to examine, {} known bad blocks", total_blocks, lba_map.bad_blocks.len());
 
         // Phase 1: walk spare data, skipping known bad blocks from LBA map
         for block in 0..total_blocks {
@@ -651,9 +651,9 @@ impl FlashFS {
         }
 
         if fs.root.block_number >= 0 {
-            info!(" -> FlashFS root found: block {}, version {}", fs.root.block_number, fs.root.version);
+            info!("[flashfs] Root found: block {}, version {}", fs.root.block_number, fs.root.version);
         } else {
-            info!(" -> No FlashFS root detected in image.");
+            info!("[flashfs] No FlashFS root detected in image.");
         }
 
         fs

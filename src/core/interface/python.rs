@@ -22,6 +22,7 @@
 
 use std::path::Path;
 use std::fs;
+use log::info;
 use rustpython_vm::Interpreter;
 
 #[cfg(feature = "tui")]
@@ -34,11 +35,11 @@ pub fn python_interpreter() -> Interpreter {
 #[cfg(feature = "tui")]
 pub fn python_shell(interpreter: &Interpreter) -> anyhow::Result<()> {
     let mut rl = DefaultEditor::new().unwrap();
-    println!("[PyGG] Entering PyGG Shell (Ctrl+D to exit)");
+    info!("[session] Entering PyGG interactive shell (Ctrl+D to exit)");
 
     interpreter.enter(|vm| {
         let scope = vm.new_scope_with_builtins();
-        
+
         loop {
             // Read
             let readline = rl.readline(">>> ");
@@ -69,8 +70,11 @@ pub fn python_script(interpreter: &Interpreter, script_path: impl AsRef<Path>) -
         let path_str = script_path.as_ref().display().to_string();
 
         match vm.run_code_string(scope, &script, path_str.clone()) {
-            Ok(_) => println!("[PyGG] Script {} finished", path_str),
-            Err(err) => vm.print_exception(err),
+            Ok(_) => info!("[session] Script {} finished", path_str),
+            Err(err) => {
+                log::error!("[session] Script {} raised an exception:", path_str);
+                vm.print_exception(err);
+            }
         }
     });
     Ok(())

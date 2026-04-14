@@ -94,6 +94,8 @@ pub fn parse_xe_binary(path: &str) -> anyhow::Result<XeBuildBinary> {
     let mut header = [0u8; 4];
     file.read_exact(&mut header)?;
 
+    info!("[xebuild] Parsing xeBuild binary: '{}'", path);
+
     let mut output = XeBuildBinary {
         xetype: XeBuildBinaryType::Unknown,
         onebl: None,
@@ -107,6 +109,7 @@ pub fn parse_xe_binary(path: &str) -> anyhow::Result<XeBuildBinary> {
     if &header == b"JTAG" {
         output.xetype = XeBuildBinaryType::Jtag;
         let mut sections = parse_patch_records(&mut file)?;
+        info!("[xebuild] Detected JTAG patch binary ({} section(s))", sections.len());
         if sections.is_empty() {
             return Err(anyhow::anyhow!("Empty JTAG patch file"));
         }
@@ -116,27 +119,21 @@ pub fn parse_xe_binary(path: &str) -> anyhow::Result<XeBuildBinary> {
     } else if &header == b"RGH\0" || &header == b"RGH " {
         output.xetype = XeBuildBinaryType::Rgh;
         let mut sections = parse_patch_records(&mut file)?;
+        info!("[xebuild] Detected RGH patch binary ({} section(s): CB, CD, KHV)", sections.len());
         if sections.len() < 3 {
             return Err(anyhow::anyhow!("RGH patch file missing sections (expected 3+)"));
         }
-        output.cb = Some(XeBuildPatch {
-            records: sections.remove(0),
-        });
-        output.cd = Some(XeBuildPatch {
-            records: sections.remove(0),
-        });
-        output.khv = Some(XeBuildPatch {
-            records: sections.remove(0),
-        });
+        output.cb = Some(XeBuildPatch { records: sections.remove(0) });
+        output.cd = Some(XeBuildPatch { records: sections.remove(0) });
+        output.khv = Some(XeBuildPatch { records: sections.remove(0) });
     } else {
         // Fallback or Addon?
         output.xetype = XeBuildBinaryType::Addon;
         file.seek(SeekFrom::Start(0))?;
         let mut sections = parse_patch_records(&mut file)?;
+        info!("[xebuild] Detected Addon/unknown patch binary ({} section(s))", sections.len());
         if !sections.is_empty() {
-            output.khv = Some(XeBuildPatch {
-                records: sections.remove(0),
-            });
+            output.khv = Some(XeBuildPatch { records: sections.remove(0) });
         }
     }
 
@@ -167,7 +164,7 @@ fn apply_xe_buffer(patch: &XeBuildPatch, data: &mut Vec<u8>) -> anyhow::Result<(
 
 pub fn apply_xe_patch(patch: XeBuildBinary, nand: &mut NandSkeleton) -> anyhow::Result<()> {
     if let Some(khv) = patch.khv {
-        info!(" -> Appending {} KHV patches to NandSkeleton options...", khv.records.len());
+        info!("[xebuild] Queuing {} KHV patch record(s) into NAND options...", khv.records.len());
         if let Some(patches) = &mut nand.options.patches {
             for record in khv.records {
                 patches.khv.push(PatchRecord {
@@ -181,14 +178,14 @@ pub fn apply_xe_patch(patch: XeBuildBinary, nand: &mut NandSkeleton) -> anyhow::
 
     if let Some(cb) = patch.cb {
         if let Some(cb_bl) = &mut nand.bootloaders.cb {
-            info!(" -> Applying {} RGH patches to CB...", cb.records.len());
+            info!("[xebuild] Applying {} RGH patch record(s) to CB ({} bytes)", cb.records.len(), cb_bl.data.len());
             apply_xe_buffer(&cb, &mut cb_bl.data)?;
         }
     }
 
     if let Some(cd) = patch.cd {
         if let Some(cd_bl) = &mut nand.bootloaders.cd {
-            info!(" -> Applying {} RGH patches to CD...", cd.records.len());
+            info!("[xebuild] Applying {} RGH patch record(s) to CD ({} bytes)", cd.records.len(), cd_bl.data.len());
             apply_xe_buffer(&cd, &mut cd_bl.data)?;
         }
     }

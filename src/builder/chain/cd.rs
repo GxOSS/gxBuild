@@ -93,13 +93,13 @@ impl BootloaderCd {
         } else {
             "CD"
         };
-        info!("{} version: {}", indicator, self.header.version.get());
-        info!("{} size: 0x{:x}", indicator, self.header.size.get());
-        info!("{} entrypoint: 0x{:x}", indicator, self.header.entrypoint.get());
+        info!("[builder] {} version: {}", indicator, self.header.version.get());
+        info!("[builder] {} size: 0x{:x}", indicator, self.header.size.get());
+        info!("[builder] {} entrypoint: 0x{:x}", indicator, self.header.entrypoint.get());
 
         if self.data.len() >= 0x23A {
             info!(
-                "{} cfsalt: {}",
+                "[builder] {} cfsalt: {}",
                 indicator,
                 String::from_utf8_lossy(&self.data[0x230..0x23A])
             );
@@ -107,13 +107,13 @@ impl BootloaderCd {
 
         if self.is_decrypted() {
             if let Some(ref meta) = self.metadata {
-                info!("{}-E hash: {:02x?}", indicator, meta.ce_hash);
+                info!("[builder] {}-E hash: {:02x?}", indicator, meta.ce_hash);
             } else {
                 // Fallback to raw indexing if metadata wasn't populated
-                info!("{}-E hash: {:02x?}", indicator, &self.data[0x23C..0x250]);
+                info!("[builder] {}-E hash: {:02x?}", indicator, &self.data[0x23C..0x250]);
             }
         } else {
-            info!("{} is encrypted", indicator);
+            info!("[builder] {} is encrypted", indicator);
         }
     }
 
@@ -124,11 +124,12 @@ impl BootloaderCd {
 
         if self.data.len() < payload_size { return; }
 
-        // Derived key starts with CBB key and Absolute 0x10 key
+        // Derived key starts with CBB key and Absolute 0x10 key.
+        // Matches xenon-bltool's cd_decrypt: writes derived key back into data[0..16] in-place.
         if let Ok(derived_key) = excrypt::hmac_sha(cbb_key, &[&self.data[0..16]]) {
             let mut final_key = [0u8; 16];
             final_key.copy_from_slice(&derived_key[..16]);
-            info!(" -> CD Decryption Key Derived: {:02x?}", final_key);
+            info!("[builder] CD Decryption Key Derived: {:02x?}", final_key);
 
             // Optional CPU Key layer (2nd HMAC)
             if let Some(key) = cpu_key {
@@ -137,6 +138,7 @@ impl BootloaderCd {
                 }
             }
 
+            self.data[0..16].copy_from_slice(&final_key);
             if let Ok(mut rc4) = Rc4::new(&final_key) {
                 // Encryption starts at signature, which is 0x10 rel into payload (absolute 0x20)
                 let _ = rc4.crypt(&mut self.data[0x10..payload_size]);

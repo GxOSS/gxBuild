@@ -114,8 +114,8 @@ impl BootloaderCe {
         } else {
             "CE"
         };
-        info!("{} version: {}", indicator, self.header.version.get());
-        info!("{} size: 0x{:x}", indicator, self.header.size.get());
+        info!("[builder] {} version: {}", indicator, self.header.version.get());
+        info!("[builder] {} size: 0x{:x}", indicator, self.header.size.get());
 
         if self.is_decrypted() {
             // Decrypted fields: target_address at 0x10, uncompressed_size at 0x18 (rel payload)
@@ -123,17 +123,17 @@ impl BootloaderCe {
             let uncompressed_size = RealBigEndian::read_u32(&self.data[0x18..0x1C]);
 
             info!(
-                "{} decompressed size: 0x{:x}",
+                "[builder] {} decompressed size: 0x{:x}",
                 indicator,
                 uncompressed_size
             );
             info!(
-                "{} load address: 0x{:x}",
+                "[builder] {} load address: 0x{:x}",
                 indicator,
                 target_address
             );
         } else {
-            info!("{} is encrypted", indicator);
+            info!("[builder] {} is encrypted", indicator);
         }
     }
 
@@ -147,7 +147,7 @@ impl BootloaderCe {
         if let Ok(derived_key) = excrypt::hmac_sha(cd_key, &[&self.data[0..16]]) {
             let mut final_key = [0u8; 16];
             final_key.copy_from_slice(&derived_key[..16]);
-            info!(" -> CE Decryption Key Derived: {:02x?}", final_key);
+            info!("[builder] CE Decryption Key Derived: {:02x?}", final_key);
 
             if let Ok(mut rc4) = Rc4::new(&final_key) {
                 // Encryption starts at target_address, which is 0x10 rel into payload (absolute 0x20)
@@ -221,7 +221,7 @@ impl BootloaderCe {
             .map_err(|e| format!("Decompression structuring failed: {}", e))?;
 
         let mut decompressed = vec![0u8; uncompressed_size as usize];
-        info!(" -> Decompressing CE Kernel (LZX)...");
+        info!("[builder] Decompressing CE Kernel (LZX)...");
         xenia::decompress(
             &consolidated_compressed,
             &mut decompressed,
@@ -241,6 +241,8 @@ impl BootloaderCe {
                 cf_meta.base_version
             ));
         }
+
+        info!("[builder] Applying CG kernel delta patch to CE base kernel (base v{} -> target patch)...", self.header.version.get());
 
         let base_kernel = self.data_kernel.as_ref()
             .ok_or("CE Base Kernel has not been decompressed yet. Cannot apply patch.")?;
