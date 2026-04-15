@@ -1,19 +1,23 @@
 # GGXBuild TODO
 
-- Rewrite Session
-- Assemble-Xell
-- Image type identification
-- Patch identification
+- Assemble-Shadow = Assemble Shadowboot image
+- Assemble-Xell = Assemble XeLL image
+- Assemble-Rebooter = Assemble 2f rebooter image
+- LZX Recompression
+
+FlashFS:
+- eMMC
+- BB
+- Testing
 
 Weak Files:
-kv.rs
+- kv.rs
+- discovery.rs
 
-Next Release:
+Parsing:
+- Shadowboot
 
-- Parse and Assemble Shadowboot
-- LZX Recompression
-- FFI/GUI/TUI error Handler
-
-- Keyvault patching
-- SMC patching
-- RGLP patching
+Patching:
+- Keyvault
+- SMC
+- RGLP
