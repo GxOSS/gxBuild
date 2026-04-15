@@ -1,5 +1,7 @@
 # gxBuild
 
+![gxBuild Banner](assets/gx_banner.png)
+
 gxBuild is a Xbox 360 image builder and patcher. Implements full nand, xell and shadowboot parsing and building, with a number of complex targets like JTAG-2f and DevGL.
 
 Aims for near-complete compatibility with xeBuild where possible, with only a few minor changes to syntax. Includes full xeBuild and RGBuild patching, the xeBuild folder structure and inis, crc32 hashing, and expands on xeBuild with Glitch3, native RGBuild, shadowboots, xell images, and CE patching.
