@@ -94,7 +94,7 @@ use crate::builder::chain::cg::BootloaderCg;
 pub struct NandBootloaders {
     pub cb: Option<BootloaderCb>,
     pub cb_a: Option<BootloaderCb>,
-    pub cb_x: Option<BootloaderCb>,
+    pub cb_x: Option<Vec<u8>>,
     pub cb_b: Option<BootloaderCb>,
     pub sc: Option<BootloaderSc>,
     pub cd: Option<BootloaderCd>,

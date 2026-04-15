@@ -16,11 +16,11 @@ Officially supported:
 
 ## Documentation
 
-Documentation is hosted on the [GGX Project]() site:
-- [Usage]() - General Usage
-- [Patches]() - Patch format
-- [Scripting]() - Python Scripting
-- [Developer]() - FFI Interface
+Documentation is hosted on the [GGX Project](https://ggx-project.github.io/gxBuild/home/) site:
+- [Usage](https://ggx-project.github.io/gxBuild/usage/)  - General Usage
+- [Patches](https://ggx-project.github.io/gxBuild/patches/) - Patch format
+- [Scripting](https://ggx-project.github.io/gxBuild/scripting/) - Python Scripting
+- [Developer](https://ggx-project.github.io/gxBuild/developer/) - FFI Interface
 
 ## Credits
 
@@ -36,7 +36,7 @@ These are the projects i directly took code from:
 
 And these are the projects i referenced:
 
-- [Xbox 360 Research](https://exposuremg.github.io/) by [ExposureMG](https://github.com/ExposureMG)
+- [Xbox 360 Research](https://ggx-project.github.io/expo-research/home/) by [ExposureMG](https://github.com/ExposureMG)
 - [Xbox 360 Research](https://github.com/Byrom90/Xbox_360_Research) by [Byrom90](https://github.com/Byrom90)
 - [Xbox 360 Research](https://github.com/InvoxiPlayGames/x360-Research) by [InxoviPlayGames](https://github.com/InvoxiPlayGames)
 - [xeBuild Patch Sources](https://github.com/mitchellwaite/xbox360_xebuild_patches) by [mitchellwaite](https://github.com/mitchellwaite)
