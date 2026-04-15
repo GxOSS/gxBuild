@@ -503,7 +503,7 @@ pub fn apply_xe_ini(
         
         if lower.starts_with("cb_") || lower.starts_with("cba_") || lower.starts_with("sb_") {
             nand.bootloaders.cb = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
-            info!("[ini] Assigned CB_A from '{}' ({} bytes)", filename, data.len());
+            info!("[ini] Assigned  from '{}' ({} bytes)", filename, data.len());
         } else if lower.starts_with("cbx_") {
             nand.bootloaders.cb_x = &data;
             info!("[ini] Assigned CB_X from '{}' ({} bytes)", filename, data.len());

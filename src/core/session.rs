@@ -427,7 +427,7 @@ impl Session {
                     if let Some(nand) = self.active_nand.take() {
                         match crate::core::data::xeini::parse_xe_ini(&content, &target, &ini_base, &common) {
                             Ok(parsed_cfg) => {
-                                // 1. Collect FlashFS/Security assets from INI
+                                // collect FlashFS/Security assets from INI
                                 let mut file_entries = parsed_cfg.security.clone();
                                 file_entries.extend(parsed_cfg.flashfs.clone());
                                 for entry in file_entries {
@@ -438,7 +438,7 @@ impl Session {
                                     }
                                 }
 
-                                // 2. Apply bootloaders
+                                // apply bootloaders
                                 match crate::core::data::xeini::apply_xe_ini(nand, parsed_cfg, &self.pending_assets) {
                                     Ok(updated_nand) => {
                                         self.active_nand = Some(updated_nand);
