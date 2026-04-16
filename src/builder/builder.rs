@@ -185,6 +185,7 @@ pub struct NandSkeleton {
     pub header: NandHeader,
     pub extra: NandExtra,
     pub bootloaders: NandBootloaders,
+    pub rebooter: Option<NandBootloaders>,
     pub update: NandUpdate,
     pub flashfs: FlashFS,
     pub layout: NandLayout,

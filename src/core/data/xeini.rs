@@ -64,6 +64,7 @@ pub struct XeBuildIni {
     pub security: Vec<BuildIniEntry>,
     pub flashfs: Vec<BuildIniEntry>,
     pub patch: BuildIniPatch,
+    pub rebooter: bool,
 }
 
 pub struct OptionsIni {
@@ -483,7 +484,17 @@ pub fn apply_xe_ini(
         info!("[ini] Discovered assets in memory: {:?}", pending_assets.keys().collect::<Vec<_>>());
     }
 
-    // 1. Process [main] bootloaders
+    if (ini.buildtype == "jtag" || ini.buildtype == "2f" || ini.buildtype == "rebooter") {
+        
+    }
+
+    let mut bootloaders = nand.bootloaders;
+    
+    // rebooter sanity check
+    let mut chains = 0;
+    let mut notified = false;
+
+    // process [main] bootloaders
     for entry in &ini.main {
         let filename = &entry.filename;
         let lower = filename.to_lowercase();
@@ -501,29 +512,40 @@ pub fn apply_xe_ini(
             continue;
         };
         
+        if chains > 0 && notified == false {
+            info!("[ini] Rebooter chain detected");
+            notified = true;
+        }
+
         if lower.starts_with("cb_") || lower.starts_with("cba_") || lower.starts_with("sb_") {
-            nand.bootloaders.cb = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
-            info!("[ini] Assigned  from '{}' ({} bytes)", filename, data.len());
+            bootloaders.cb = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+            info!("[ini] Assigned CB from '{}' ({} bytes)", filename, data.len());
         } else if lower.starts_with("cbx_") {
-            nand.bootloaders.cb_x = &data;
-            info!("[ini] Assigned CB_X from '{}' ({} bytes)", filename, data.len());
+            if chains > 0 {
+                // Add sanity check, cbx never needed in rebooter, deny if unsafe disabled
+                bootloaders.cb_x = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+                warn!("[ini] Assigned Rebooter CB_X from '{}' ({} bytes)", filename, data.len());
+            } else {
+                bootloaders.cb_x = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+                info!("[ini] Assigned CB_X from '{}' ({} bytes)", filename, data.len());
+            }
         } else if lower.starts_with("cbb_") {
-            nand.bootloaders.cb_b = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+            bootloaders.cb_b = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
             info!("[ini] Assigned CB_B from '{}' ({} bytes)", filename, data.len());
         } else if lower.starts_with("sc_") {
-            nand.bootloaders.sc = Some(crate::builder::chain::sc::BootloaderSc::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+            bootloaders.sc = Some(crate::builder::chain::sc::BootloaderSc::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
             info!("[ini] Assigned SC from '{}' ({} bytes)", filename, data.len());
         } else if lower.starts_with("cd_") || if lower.starts_with("sd_") {
-            nand.bootloaders.cd = Some(crate::builder::chain::cd::BootloaderCd::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+            bootloaders.cd = Some(crate::builder::chain::cd::BootloaderCd::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
             info!("[ini] Assigned CD from '{}' ({} bytes)", filename, data.len());
         } else if lower.starts_with("ce_") || lower.starts_with("se_") {
-            nand.bootloaders.ce = Some(crate::builder::chain::ce::BootloaderCe::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+            bootloaders.ce = Some(crate::builder::chain::ce::BootloaderCe::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
             info!("[ini] Assigned CE from '{}' ({} bytes)", filename, data.len());
         } else if lower.starts_with("cf_") || lower.starts_with("sf_") {
-            nand.update.cf_0 = Some(crate::builder::chain::cf::BootloaderCf::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+            bootloaders.cf_0 = Some(crate::builder::chain::cf::BootloaderCf::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
             info!("[ini] Assigned CF_0 (update slot 0) from '{}' ({} bytes)", filename, data.len());
         } else if lower.starts_with("cg_") || lower.starts_with("sg_") {
-            nand.update.cg_0 = Some(crate::builder::chain::cg::BootloaderCg::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
+            bootloaders.cg_0 = Some(crate::builder::chain::cg::BootloaderCg::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
             info!("[ini] Assigned CG_0 (update slot 0) from '{}' ({} bytes)", filename, data.len());
         } else {
             warn!("[ini] '{}' did not match any known bootloader prefix, skipping.", filename);
