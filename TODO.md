@@ -2,7 +2,7 @@
 
 - Assemble-Shadow = Assemble Shadowboot image
 - Assemble-Xell = Assemble XeLL image
-- Assemble-Rebooter = Assemble 2f rebooter image
+- Assemble-Rebooter = Assemble rebooter image using second bootloaders struct
 - LZX Recompression
 
 FlashFS:

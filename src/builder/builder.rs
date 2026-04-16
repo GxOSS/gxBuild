@@ -94,7 +94,7 @@ use crate::builder::chain::cg::BootloaderCg;
 pub struct NandBootloaders {
     pub cb: Option<BootloaderCb>,
     pub cb_a: Option<BootloaderCb>,
-    pub cb_x: Option<Vec<u8>>,
+    pub cb_x: Option<BootloaderCb>,
     pub cb_b: Option<BootloaderCb>,
     pub sc: Option<BootloaderSc>,
     pub cd: Option<BootloaderCd>,
@@ -187,6 +187,7 @@ pub struct NandSkeleton {
     pub bootloaders: NandBootloaders,
     pub rebooter: Option<NandBootloaders>,
     pub update: NandUpdate,
+    pub rebooter_update: Option<NandUpdate>,
     pub flashfs: FlashFS,
     pub layout: NandLayout,
     pub total_blocks: usize,
@@ -239,7 +240,9 @@ impl NandSkeleton {
             },
             extra: NandExtra { smc: Vec::new(), smc_config: Vec::new(), keyvault: Vec::new(), fcrt: None, power_on_cause_a: 0, power_on_cause_b: 0 },
             bootloaders: NandBootloaders { cb: None, cb_a: None, cb_x: None, cb_b: None, sc: None, cd: None, ce: None },
+            rebooter: None,
             update: NandUpdate { cf_0: None, cg_0: None, cf_1: None, cg_1: None },
+            rebooter_update: None,
             flashfs: FlashFS { root: crate::builder::chain::flashfs::FileSystemRoot::new(0, 0), partitions: HashMap::new() },
             layout,
             total_blocks,
@@ -354,7 +357,9 @@ impl NandSkeleton {
             header,
             extra,
             bootloaders: bl_mut,
+            rebooter: None,
             update,
+            rebooter_update: None,
             flashfs,
         })
     }

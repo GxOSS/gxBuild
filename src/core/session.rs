@@ -439,7 +439,7 @@ impl Session {
                                 }
 
                                 // apply bootloaders
-                                match crate::core::data::xeini::apply_xe_ini(nand, parsed_cfg, &self.pending_assets) {
+                                match crate::core::data::xeini::apply_xe_ini(nand, parsed_cfg, &self.pending_assets, None) {
                                     Ok(updated_nand) => {
                                         self.active_nand = Some(updated_nand);
                                         info!("[session] INI bootloaders applied to NAND skeleton.");

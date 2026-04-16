@@ -41,8 +41,22 @@ pub enum IniError {
     NoVersion(),
     #[error("[ini] Incorrect formatting in options.ini")]
     BadOptionsFormat(),
-    #[error("[ini] Incorrect formatting in {0}"),]
+    #[error("[ini] Incorrect formatting in {0}")]
     BadBuildFormat(String),
+    #[error("[ini] Rebooter bootloader chain requested in INI but not initialized in NAND skeleton")]
+    RebooterNotInitialized,
+    #[error("[ini] Rebooter update chain requested in INI but not initialized in NAND skeleton")]
+    RebooterUpdateNotInitialized,
+    #[error("[ini] Bootloader parse error: {0}")]
+    BootloaderError(String),
+    #[error("[ini] {0} Patches for platform {1} not found at path {2}")]
+    NoAutoPatches(String, String, String),
+    #[error("[ini] No security files found in INI")]
+    NoSecurityFiles,
+    #[error("[ini] No FlashFS files found in INI")]
+    NoFlashFSFiles,
+    #[error("[ini] No patches found in INI")]
+    NoPatches,
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +64,7 @@ pub struct BuildIniEntry {
     pub filename: String,
     pub path: PathBuf,
     pub hash: Option<String>,
+    pub chain: u8,
 }
 
 pub struct BuildIniPatch {
@@ -102,18 +117,22 @@ pub struct OptionsIni {
     pub gameregion: String,
     pub dvdregion: String,
     pub macid: String,
+    pub noenter: bool,
+    pub nolog: bool,
+    pub noinfo: bool,
+    pub gxunsafe: bool,
 }
 
 impl OptionsIni {
     pub fn new() -> Self {
         OptionsIni {
-            _type: String::new("options"),
-            _1blkey: String::new("00000000000000000000000000000000"),
-            cpukey: String::new("00000000000000000000000000000000"),
-            cfldv: String::new("0"),
-            dvdkey: String::new("00000000000000000000000000000000"),
-            xellbutton: String::new("0"),
-            xellbutton2: String::new("0"),
+            ctype: String::from("options"),
+            _1blkey: String::from("00000000000000000000000000000000"),
+            cpukey: String::from("00000000000000000000000000000000"),
+            cfldv: String::from("0"),
+            dvdkey: String::from("00000000000000000000000000000000"),
+            xellbutton: String::from("0"),
+            xellbutton2: String::from("0"),
             cygnos: false,
             demon: false,
             smcnoeject: false,
@@ -129,22 +148,22 @@ impl OptionsIni {
             nosecurity: false,
             nosusecurity: false,
             smcnocheck: false,
-            cputemp: String::new("0"),
-            gputemp: String::new("0"),
-            edramtemp: String::new("0"),
-            overcputemp: String::new("0"),
-            overgputemp: String::new("0"),
-            overedramtemp: String::new("0"),
-            cpufan: String::new("0"),
-            gpufan: String::new("0"),
-            avregion: String::new("0"),
-            gameregion: String::new("0"),
-            dvdregion: String::new("0"),
-            macid: String::new("00000000000000000000000000000000"),
             noenter: false,
             nolog: false,
             noinfo: false,
             gxunsafe: false,
+            cputemp: String::from("0"),
+            gputemp: String::from("0"),
+            edramtemp: String::from("0"),
+            overcputemp: String::from("0"),
+            overgputemp: String::from("0"),
+            overedramtemp: String::from("0"),
+            cpufan: String::from("0"),
+            gpufan: String::from("0"),
+            avregion: String::from("0"),
+            gameregion: String::from("0"),
+            dvdregion: String::from("0"),
+            macid: String::from("00000000000000000000000000000000"),
         }
     }
 }
@@ -165,9 +184,6 @@ pub fn parse_options_ini(
 ) -> Result<OptionsIni, IniError> {
     info!("[ini] Parsing options.ini");
     
-    let mut sections: HashMap<String, String> = HashMap::new();
-    let mut option = String::new();
-
     let mut options = OptionsIni::new();
     // 1. Initial Parse into raw sections
     for line in content.lines() {
@@ -180,14 +196,13 @@ pub fn parse_options_ini(
         if line.starts_with('[') && line.ends_with(']') {
             return Err(IniError::BadOptionsFormat());
         } else {
-            let part: Vec<String> = line.split(' = ')
+            let parts: Vec<String> = line.split(" = ")
                 .map(|s| s.trim_end_matches(';').trim().to_string())
                 .collect();
-                .as_slice();
-            match part.as_slice() {
+            match parts.as_slice() {
                 [key, value] => {
                     match key.to_lowercase().as_str() {
-                        "type" => options._type = value.clone(),
+                        "type" => options.ctype = value.clone(),
                         "1blkey" => options._1blkey = value.clone(),
                         "cpukey" => options.cpukey = value.clone(),
                         "cfldv" => options.cfldv = value.clone(),
@@ -240,14 +255,12 @@ pub fn parse_xe_ini(
     target_section: &str,
     ini_base_path: impl AsRef<Path>,
     common_path: impl AsRef<Path>,
-    data_path: impl AsRef<Path>,
 ) -> Result<XeBuildIni, IniError> {
     
     info!("[ini] Parsing section '{}' from INI (base: {:?})", target_section, ini_base_path.as_ref());
     
     let ini_base = ini_base_path.as_ref(); 
     let common_base = common_path.as_ref();
-    let data_base = data_path.as_ref();
     
     let patches_dir = ini_base.join("data");
 
@@ -256,12 +269,11 @@ pub fn parse_xe_ini(
 
     let mut patch_path = None;
 
-    let build_type = ini_base_path
+    let build_type = ini_base_path.as_ref()
         .file_stem()
         .and_then(|n| n.to_str())
-        .map(|s| s.trim_start_matches('_').to_string())
+        .map(|s| s.trim_start_matches('_').to_lowercase())
         .unwrap_or_default();
-        .to_lowercase()
 
     let console_type = target_section
         .split('_')
@@ -275,7 +287,7 @@ pub fn parse_xe_ini(
         .map(|(prefix, suffix)| format!("{}_{}", prefix.trim_end_matches("bl"), suffix))
         .unwrap_or_else(|| target_section.trim_end_matches("bl").to_string());
     
-    let validate_and_resolve = |search_paths: &[&Path], filename: &str, expected_hash: Option<&str>| -> Result<IniEntry, IniError> {
+    let validate_and_resolve = |search_paths: &[&Path], filename: &str, expected_hash: Option<&str>, chain: u8| -> Result<BuildIniEntry, IniError> {
         let mut full_path = None;
 
         for base in search_paths {
@@ -291,103 +303,110 @@ pub fn parse_xe_ini(
             }
         }
 
-        if (!full_path.exists()) {
-            warn!("[ini] File not found: {}", filename);
-        } else {
-            info!("[ini] File {} found at path: {}", filename, full_path.display());
+        let full_path = full_path.ok_or_else(|| {
+             warn!("[ini] File not found: {}", filename);
+             IniError::FileNotFound(filename.to_string())
+        })?;
+
+        info!("[ini] File {} found at path: {}", filename, full_path.display());
+
+        if let Some(expected) = expected_hash {
+            if !expected.is_empty() {
+                let actual = get_hash(&full_path).map_err(IniError::IoError)?;
+                if actual.to_lowercase() != expected.to_lowercase() {
+                    return Err(IniError::HashMismatch(filename.to_string(), expected.to_string(), actual));
+                }
+            }
         }
         
-        // If not found on disk, we revert to a best-guess path in the first search directory
-        // but mark it for targeted discovery.
-        let full_path = full_path.unwrap_or_else(|| search_paths[0].join(filename));
-
-        Ok(IniEntry {
+        Ok(BuildIniEntry {
             filename: filename.to_string(),
             path: full_path,
-            hash: expected_hash,
-            require_patch: require_patch,
+            hash: expected_hash.map(|s| s.to_string()),
+            chain,
         })
     };
     
     // xeBuild auto patching
-    match build_type {
+    match build_type.as_str() {
         "retail" => {
-            info!("[ini] Retail build type selected"),
+            info!("[ini] Retail build type selected");
         },
-        "glitch1" | "glitch2" | "glitch2m" | "glitch3" | "jtag" | "1f" | "2f" | "devgl" | "devkit" | "xdkbuild" | "rgbuild" => {
-            info!("[ini] {0} build type selected", build_type),
-            match build_type {
+    "glitch1" | "glitch2" | "glitch2m" | "glitch3" | "jtag" | "1f" | "2f" | "devgl" | "devkit" | "xdkbuild" | "rgbuild" => {
+            info!("[ini] {} build type selected", build_type);
+            match build_type.as_str() {
                 "glitch1" => {
-                    let patch_path = match console_type {
+                    let p_path = match console_type.as_str() {
                         "trinity" | "corona" => Some(patches_dir.join("patches_trinity.bin")),
                         "zephyr" | "jasper" | "falcon" => Some(patches_dir.join("patches_fat.bin")),
                         "xenon" => None,
                         _ => None,
                     };
-                    if (!patch_path.exists() || patch_path.is_none()) { 
-                        error!("[ini] Glitch1 Patches for platform {} not found at path: {}", main_section_name, patch_path.display());
-                    } else {
-                        info!("[ini] Glitch1 Patches for platform {} found at path: {}", main_section_name, patch_path.display());
+                    if let Some(ref p) = p_path {
+                        if !p.exists() {
+                            return Err(IniError::NoAutoPatches("Glitch1".to_string(), main_section_name, p.display().to_string()));
+                        } else {
+                            info!("[ini] Glitch1 Patches for platform {} found at path: {}", main_section_name, p.display());
+                        }
                     }
+                    patch_path = p_path;
                 }
                 "glitch2" => {
-                    let patch_path = patches_dir.join(format!("patches_g2{}.bin", main_section_name));
-                    if (!patch_path.exists()) { 
-                        error!("[ini] Glitch2 Patches for platform {} not found at path: {}", main_section_name, patch_path.display());
+                    let p = patches_dir.join(format!("patches_g2{}.bin", main_section_name));
+                    if !p.exists() { 
+                        return Err(IniError::NoAutoPatches("Glitch2".to_string(), main_section_name, p.display().to_string()));
                     } else {
-                        info!("[ini] Glitch2 Patches for platform {} found at path: {}", main_section_name, patch_path.display());
+                        info!("[ini] Glitch2 Patches for platform {} found at path: {}", main_section_name, p.display());
+                        patch_path = Some(p);
                     }
                 }
                 "glitch2m" | "devgl" | "xdkbuild" => {
-                    let patch_path = patches_dir.join(format!("patches_g2m{}.bin", main_section_name));
-                    if (!patch_path.exists()) { 
-                        error!("[ini] {} Patches for platform {} not found at path: {}", build_type, main_section_name, patch_path.display());
+                    let p = patches_dir.join(format!("patches_g2m{}.bin", main_section_name));
+                    if !p.exists() { 
+                        return Err(IniError::NoAutoPatches(build_type.clone(), main_section_name, p.display().to_string()));
                     } else {
-                        info!("[ini] {} Patches for platform {} found at path: {}", build_type, main_section_name, patch_path.display());
+                        info!("[ini] {} Patches for platform {} found at path: {}", build_type, main_section_name, p.display());
+                        patch_path = Some(p);
                     }
                 }
                 "glitch3" => {
-                    let patch_path = patches_dir.join(format!("patches_g3{}.bin", main_section_name));
-                    let patch_path2 = patches_dir.join(format!("patches_g2{}.bin", main_section_name));
-                    if (!patch_path.exists()) {
-                        if (patch_path2.exists()) {
-                            warn!("[ini] Glitch3 Patches for platform {} not found at path: {}", main_section_name, patch_path.display());
-                            info!("[ini] Falling back to Glitch2 Patches for platform {} found at path: {}", main_section_name, patch_path2.display());
-                            patch_path = patch_path2;
+                    let p_g3 = patches_dir.join(format!("patches_g3{}.bin", main_section_name));
+                    let p_g2 = patches_dir.join(format!("patches_g2{}.bin", main_section_name));
+                    if !p_g3.exists() {
+                        if p_g2.exists() {
+                            warn!("[ini] Glitch3 Patches for platform {} not found at path: {}", main_section_name, p_g3.display());
+                            info!("[ini] Falling back to Glitch2 Patches for platform {} found at path: {}", main_section_name, p_g2.display());
+                            patch_path = Some(p_g2);
                         } else {
-                            warn!("[ini] Glitch3 Patches for platform {} not found at path: {}", main_section_name, patch_path.display());
-                            error!("[ini] Fallback Glitch2 Patches for platform {} not found at path: {}", main_section_name, patch_path2.display());
+                            return Err(IniError::NoAutoPatches("Glitch3".to_string(), main_section_name, p_g3.display().to_string()));
                         }
                     } else {
-                        info!("[ini] Glitch3 Patches for platform {} found at path: {}", main_section_name, patch_path.display());
+                        info!("[ini] Glitch3 Patches for platform {} found at path: {}", main_section_name, p_g3.display());
+                        patch_path = Some(p_g3);
                     }
                 }
                 "devkit" => {
-                    let patch_path = patches_dir.join(format!("patches_dev{}.bin", main_section_name));
-                    if (!patch_path.exists()) { 
-                        error!("[ini] Devkit Patches for platform {} not found at path: {}", main_section_name, patch_path.display());
+                    let p = patches_dir.join(format!("patches_dev{}.bin", main_section_name));
+                    if !p.exists() { 
+                        return Err(IniError::NoAutoPatches("Devkit".to_string(), main_section_name, p.display().to_string()));
                     } else {
-                        info!("[ini] Devkit Patches for platform {} found at path: {}", main_section_name, patch_path.display());
+                        info!("[ini] Devkit Patches for platform {} found at path: {}", main_section_name, p.display());
+                        patch_path = Some(p);
                     }
                 }
                 "rgbuild" => {
-                    let patch_path = patches_dir.join(format!("patches_rg{}.bin", main_section_name));
-                    if (!patch_path.exists()) { 
-                        error!("[ini] RGBuild Patches for platform {} not found at path: {}", main_section_name, patch_path.display());
+                    let p = patches_dir.join(format!("patches_rg{}.bin", main_section_name));
+                    if !p.exists() { 
+                        return Err(IniError::NoAutoPatches("RGBuild".to_string(), main_section_name, p.display().to_string()));
                     } else {
-                        info!("[ini] RGBuild Patches for platform {} found at path: {}", main_section_name, patch_path.display());
+                        info!("[ini] RGBuild Patches for platform {} found at path: {}", main_section_name, p.display());
+                        patch_path = Some(p);
                     }
                 }
-                "1f" => {
-                    // ???           
-                }
-                "jtag" | "2f" => {
-                    // Need payload or smc
-                    // Need 4532 cf/cg
-                }
+                _ => {}
             }
         },
-        _ => return Err(IniError::BadBuildType(build_type)),
+        _ => return Err(IniError::BadBuildFormat(build_type)),
     }
 
     for line in content.lines() {
@@ -409,10 +428,6 @@ pub fn parse_xe_ini(
     let main_data_raw = sections.get(&target_section.to_lowercase())
         .ok_or_else(|| IniError::SectionNotFound(target_section.to_string()))?;
 
-    let version_raw = sections.get("version")
-        .cloned()
-        .unwrap_or_default();
-
     let security_data_raw = sections.get("security")
         .cloned()
         .unwrap_or_default();
@@ -422,14 +437,21 @@ pub fn parse_xe_ini(
         .unwrap_or_default();
 
     let mut main_entries = Vec::new();
+    let mut counts = HashMap::new();
     for entry in main_data_raw {
-        main_entries.push(validate_and_resolve(&[ini_base, common_base], &entry[0], entry.get(1).map(|s| s.as_str()))?);
+        let original_name = &entry[0];
+        let prefix = original_name.split('_').next().unwrap_or(original_name).to_lowercase();
+        let count = counts.entry(prefix.clone()).or_insert(0);
+        *count += 1;
+
+        main_entries.push(validate_and_resolve(&[ini_base, common_base], original_name, entry.get(1).map(|s| s.as_str()), *count - 1)?);
     }
+
 
     let mut security_entries = Vec::new();
     for entry in security_data_raw {
         if !entry.is_empty() {
-            security_entries.push(validate_and_resolve(&[ini_base], &entry[0], None)?);
+            security_entries.push(validate_and_resolve(&[ini_base], &entry[0], None, 0)?);
         }
     }
 
@@ -443,19 +465,32 @@ pub fn parse_xe_ini(
 
     for entry in flashfs_data_raw {
         if entry.len() >= 2 {
-            flashfs_entries.push(validate_and_resolve(&flashfs_paths, &entry[0], Some(&entry[1]))?);
+            flashfs_entries.push(validate_and_resolve(&flashfs_paths, &entry[0], Some(&entry[1]), 0)?);
         } else if entry.len() == 1 {
-            flashfs_entries.push(validate_and_resolve(&flashfs_paths, &entry[0], None)?);
+            flashfs_entries.push(validate_and_resolve(&flashfs_paths, &entry[0], None, 0)?);
         }
     }
 
     let mut patches_needed = BuildIniPatch {
-        enabled: !matches!(build_type, "retail"),
+        enabled: build_type != "retail",
         path: None,
     };
 
-    if (patch_path.exists()) {
-        patches_needed.path = Some(patch_path);
+    if let Some(p) = patch_path {
+        patches_needed.path = Some(p);
+    }
+
+    // Validation for non-retail builds
+    if build_type != "retail" {
+        if security_entries.is_empty() {
+             return Err(IniError::NoSecurityFiles);
+        }
+        if flashfs_entries.is_empty() {
+             return Err(IniError::NoFlashFSFiles);
+        }
+        if patches_needed.path.is_none() {
+             return Err(IniError::NoPatches);
+        }
     }
 
     let ini = XeBuildIni {
@@ -465,6 +500,7 @@ pub fn parse_xe_ini(
         security: security_entries,
         flashfs: flashfs_entries,
         patch: patches_needed,
+        rebooter: counts.values().any(|&c| c > 1),
     };
 
     info!("[ini] Parsed section '{}': {} main bootloader(s), {} security file(s), {} FlashFS asset(s)",
@@ -476,22 +512,15 @@ pub fn apply_xe_ini(
     mut nand: NandSkeleton,
     ini: XeBuildIni,
     pending_assets: &HashMap<String, Vec<u8>>,
-    expected_hash: Option<&str>)
-    -> anyhow::Result<NandSkeleton> {
+    _expected_hash: Option<&str>)
+    -> Result<NandSkeleton, IniError> {
     
     // DIAGNOSTIC: Print all pending assets
     if !pending_assets.is_empty() {
         info!("[ini] Discovered assets in memory: {:?}", pending_assets.keys().collect::<Vec<_>>());
     }
 
-    if (ini.buildtype == "jtag" || ini.buildtype == "2f" || ini.buildtype == "rebooter") {
-        
-    }
-
-    let mut bootloaders = nand.bootloaders;
-    
     // rebooter sanity check
-    let mut chains = 0;
     let mut notified = false;
 
     // process [main] bootloaders
@@ -511,56 +540,55 @@ pub fn apply_xe_ini(
                 filename, entry.path.display());
             continue;
         };
+
+        let is_rebooter = entry.chain == 1;
+        let chain_id = entry.chain;
+
+        let target_bl = if is_rebooter {
+            nand.rebooter.as_mut().ok_or(IniError::RebooterNotInitialized)?
+        } else {
+            &mut nand.bootloaders
+        };
+
+        let target_update = if is_rebooter {
+            nand.rebooter_update.as_mut().ok_or(IniError::RebooterUpdateNotInitialized)?
+        } else {
+            &mut nand.update
+        };
         
-        if chains > 0 && notified == false {
+        let prefix = &lower;
+
+        if is_rebooter && notified == false {
             info!("[ini] Rebooter chain detected");
             notified = true;
         }
 
-        if lower.starts_with("cb_") || lower.starts_with("cba_") || lower.starts_with("sb_") {
-            bootloaders.cb = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
-            info!("[ini] Assigned CB from '{}' ({} bytes)", filename, data.len());
-        } else if lower.starts_with("cbx_") {
-            if chains > 0 {
-                // Add sanity check, cbx never needed in rebooter, deny if unsafe disabled
-                bootloaders.cb_x = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
-                warn!("[ini] Assigned Rebooter CB_X from '{}' ({} bytes)", filename, data.len());
-            } else {
-                bootloaders.cb_x = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
-                info!("[ini] Assigned CB_X from '{}' ({} bytes)", filename, data.len());
-            }
-        } else if lower.starts_with("cbb_") {
-            bootloaders.cb_b = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
-            info!("[ini] Assigned CB_B from '{}' ({} bytes)", filename, data.len());
-        } else if lower.starts_with("sc_") {
-            bootloaders.sc = Some(crate::builder::chain::sc::BootloaderSc::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
-            info!("[ini] Assigned SC from '{}' ({} bytes)", filename, data.len());
-        } else if lower.starts_with("cd_") || if lower.starts_with("sd_") {
-            bootloaders.cd = Some(crate::builder::chain::cd::BootloaderCd::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
-            info!("[ini] Assigned CD from '{}' ({} bytes)", filename, data.len());
-        } else if lower.starts_with("ce_") || lower.starts_with("se_") {
-            bootloaders.ce = Some(crate::builder::chain::ce::BootloaderCe::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
-            info!("[ini] Assigned CE from '{}' ({} bytes)", filename, data.len());
-        } else if lower.starts_with("cf_") || lower.starts_with("sf_") {
-            bootloaders.cf_0 = Some(crate::builder::chain::cf::BootloaderCf::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
-            info!("[ini] Assigned CF_0 (update slot 0) from '{}' ({} bytes)", filename, data.len());
-        } else if lower.starts_with("cg_") || lower.starts_with("sg_") {
-            bootloaders.cg_0 = Some(crate::builder::chain::cg::BootloaderCg::parse(&data).map_err(|e| anyhow::anyhow!("{}", e))?);
-            info!("[ini] Assigned CG_0 (update slot 0) from '{}' ({} bytes)", filename, data.len());
+        if prefix.starts_with("cb_") || prefix.starts_with("cba_") || prefix.starts_with("sb_") {
+            target_bl.cb = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] Assigned CB from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
+        } else if prefix.starts_with("cbx_") {
+            target_bl.cb_x = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] Assigned CB_X from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
+        } else if prefix.starts_with("cbb_") {
+            target_bl.cb_b = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] Assigned CB_B from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
+        } else if prefix.starts_with("sc_") {
+            target_bl.sc = Some(crate::builder::chain::sc::BootloaderSc::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] Assigned SC from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
+        } else if prefix.starts_with("cd_") || prefix.starts_with("sd_") {
+            target_bl.cd = Some(crate::builder::chain::cd::BootloaderCd::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] Assigned CD from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
+        } else if prefix.starts_with("ce_") || prefix.starts_with("se_") {
+            target_bl.ce = Some(crate::builder::chain::ce::BootloaderCe::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] Assigned CE from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
+        } else if prefix.starts_with("cf_") || prefix.starts_with("sf_") {
+            target_update.cf_0 = Some(crate::builder::chain::cf::BootloaderCf::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] Assigned CF from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
+        } else if prefix.starts_with("cg_") || prefix.starts_with("sg_") {
+            target_update.cg_0 = Some(crate::builder::chain::cg::BootloaderCg::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] Assigned CG from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
         } else {
             warn!("[ini] '{}' did not match any known bootloader prefix, skipping.", filename);
-        }
-    }
-
-    let mut final_hash = None;
-        if let Some(expected) = expected_hash {
-            if !expected.is_empty() && full_path.exists() {
-                let actual = get_hash(&full_path)?;
-                if actual.to_lowercase() != expected.to_lowercase() {
-                    return Err(IniError::HashMismatch(filename.to_string(), expected.to_string(), actual));
-                }
-                final_hash = Some(actual);
-            }
         }
     }
 
