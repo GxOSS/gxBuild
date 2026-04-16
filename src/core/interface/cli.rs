@@ -34,7 +34,7 @@ pub struct GgxArgs {
     pub cpu_key: Option<String>,
 
     /// 32 character 1BL hex key (override, can be elsewhere)
-    #[arg(short = 'b', long = "blkey")]
+    #[arg(short = 'b', long = "1blkey")]
     pub bl_key: Option<String>,
 
     /// Console motherboard type
@@ -42,7 +42,7 @@ pub struct GgxArgs {
     pub console: Option<CliConsoleType>,
 
     /// INI directory — contains _retail.ini, bootloaders, flashfs/ (defaults to .)
-    #[arg(short = 'd', long = "datadir")]
+    #[arg(short = 'd', long = "build")]
     pub data_dir: Option<PathBuf>,
 
     /// Folder for shared bootloaders (defaults to <ini_dir>/../common)
@@ -50,7 +50,7 @@ pub struct GgxArgs {
     pub common_dir: Option<PathBuf>,
 
     /// Data directory — nand dump, cpu key, smc, fcrt, keyvault (defaults to ./data)
-    #[arg(short = 'f', long = "fwdir")]
+    #[arg(short = 'f', long = "data")]
     pub fw_dir: Option<PathBuf>,
 
     /// Outputs SHA-1 of final image to <file>
@@ -58,7 +58,7 @@ pub struct GgxArgs {
     pub sha_file: Option<PathBuf>,
 
     /// Set xeBuild options (e.g. -o nomobile;cputemp=80)
-    #[arg(short = 'o', long = "option", value_parser = parse_key_val)]
+    #[arg(short = 'o', long = "options", value_parser = parse_key_val)]
     pub options: Vec<Vec<(String, String)>>,
 
     /// Append addon patches or RGLP (.bin file name)
@@ -66,23 +66,21 @@ pub struct GgxArgs {
     pub addons: Vec<String>,
 
     /// Adds _<ext> into firmware ini and patches file names
-    #[arg(short = 'i', long = "iniext")]
+    #[arg(short = 'i', long = "fwext")]
     pub ini_ext: Option<String>,
 
     /// Adds _<ext> into ini bl section name and patches file names
-    #[arg(short = 'r', long = "blext")]
+    #[arg(short = 'r', long = "iniext")]
     pub bl_ext: Option<String>,
 
     /// Adds raw patch to NAND (format: file,offset)
-    #[arg(short = '8', long = "rawpatch")]
+    #[arg(short = '8', long = "raw")]
     pub raw_patches: Vec<String>,
 
-    /// Shows more info during build process
-    #[arg(short = 'v', long = "verbose")]
-    pub verbose: bool,
-
+    /// Show version mapped natively by clap.
+    
     /// Optional source NAND image
-    #[arg(short = 'n', long = "nand")]
+    #[arg(short = 'l', long = "image")]
     pub source_nand: Option<PathBuf>,
 
     /// Optional system update file (e.g. xboxupd.bin)
@@ -94,12 +92,12 @@ pub struct GgxArgs {
     pub preset: Option<String>,
 
     /// Run python script
-    #[arg(short = 'M', long = "script")]
+    #[arg(short = 'w', long = "script")]
     pub script: Option<PathBuf>,
 
-    /// Apply CDXeLL / RGLP patches directly (toggle)
-    #[arg(short = 'x', long = "xell")]
-    pub apply_xell: bool,
+    /// Direct session access
+    #[arg(short = 'n', long = "cmd")]
+    pub cmd: Option<String>,
 
     /// Format of output image (system, full, xell, shadow)
     #[arg(short = 'h', long = "format")]
@@ -204,7 +202,16 @@ pub fn ggx_cli() {
         Some(GgxMode::Update) => "update",
     };
 
-    if let Err(e) = logger::init_logger(mode_str, args.verbose) {
+    let mut is_verbose = false;
+    for group in &args.options {
+        for (k, _) in group {
+            if k.eq_ignore_ascii_case("verbose") {
+                is_verbose = true;
+            }
+        }
+    }
+
+    if let Err(e) = logger::init_logger(mode_str, is_verbose) {
         error!("[cli] Failed to initialize logger: {}", e);
     }
 
