@@ -280,24 +280,21 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     let ini_path = ini_dir.join(&ini_filename);
 
     let console_base = format!("{:?}", console_type).to_lowercase();
-    let bl_suffix = args.bl_ext.as_ref().map(|ext| format!("_{}", ext)).unwrap_or_default();
-    let console_section = format!("{}bl{}", console_base, bl_suffix);
+    let console_section = if let Some(ext) = &args.bl_ext {
+        format!("{}_{}", console_base, ext)
+    } else {
+        console_base.clone()
+    };
 
     // --- INI Pre-Parsing ---
     let mut target_filenames = std::collections::HashSet::new();
-    if let Ok(content) = std::fs::read_to_string(&ini_path) {
-        if let Ok(ini) = crate::core::data::xeini::parse_xe_ini(&content, &console_section, &ini_dir, &resolved_common_dir) {
-            for entry in ini.main { target_filenames.insert(entry.filename.to_lowercase()); }
-            for entry in ini.security {
-                if let Some(name) = entry.path.file_name() {
-                    target_filenames.insert(name.to_string_lossy().to_lowercase());
-                }
-            }
-            for entry in ini.flashfs {
-                if let Some(name) = entry.path.file_name() {
-                    target_filenames.insert(name.to_string_lossy().to_lowercase());
-                }
-            }
+    if let Ok(ini) = crate::core::data::xeini::parse_xe_ini(&ini_path, &console_section) {
+        for entry in ini.main { target_filenames.insert(entry.filename.to_lowercase()); }
+        for entry in ini.security {
+            target_filenames.insert(entry.filename.to_lowercase());
+        }
+        for entry in ini.flashfs {
+            target_filenames.insert(entry.filename.to_lowercase());
         }
     } else {
         anyhow::bail!("Could not find or read INI at {:?}", ini_path);
@@ -501,36 +498,11 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     }
 
     // --- Enqueue INI Parsing ---
-    let ini_content = std::fs::read_to_string(&ini_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read INI at {:?}: {}", ini_path, e))?;
-    session.parse_ini(ini_content.clone(), ini_filename.clone(), console_section.clone(), &ini_dir, &resolved_common_dir);
+    // --- Enqueue INI Parsing ---
+    session.parse_ini(&ini_path, console_section, &ini_dir, &resolved_common_dir);
 
-    // --- System Update Discovery (STFS / xboxupd.bin) ---
-    // Searched in INI dir (-d) first, then data dir (-f)
-    let mut update_path = None;
-    if let Some(upd) = &args.xboxupd {
-        if upd.exists() { update_path = Some(upd.clone()); }
-    } else {
-        let update_candidates = [
-            ini_dir.join("xboxupd.bin"),
-            ini_dir.join("system_update.xsu"),
-            ini_dir.join("system_update.bin"),
-            data_dir.join("xboxupd.bin"),
-            data_dir.join("system_update.xsu"),
-        ];
+    // --- STFS / System Update Discovery has been moved to IniSearch ---
 
-        for target in &update_candidates {
-            if target.exists() {
-                update_path = Some(target.clone());
-                break;
-            }
-        }
-    }
-
-    if let Some(p) = update_path {
-        info!("[cli] Auto-discovered system update from {:?}", p);
-        session.update(p);
-    }
 
     // --- 1BL Key Warning ---
     if args.bl_key.is_some() {

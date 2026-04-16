@@ -18,10 +18,11 @@ use std::fs;
 #[cfg(feature = "python")]
 use crate::core::interface::python::{python_interpreter, python_shell, python_script};
 use crate::builder::tools::xebuild::{parse_xe_binary, apply_xe_patch};
+use crate::core::data::filesearch::IniSearch;
 use log::{info, error};
 #[derive(Debug)]
 pub enum InternalCommand { 
-    ParseIni { content: String, filename: String, target: String, ini_base: PathBuf, common: PathBuf },
+    ParseIni { path: PathBuf, target: String, ini_base: PathBuf, common: PathBuf },
     ParseImage { path: PathBuf, key: Option<[u8; 16]> },
     ParseKey { key: [u8; 16] },
     ParseKeybin { key: Option<[u8; 16]> },
@@ -292,10 +293,9 @@ impl Session {
         result
     }
 
-    pub fn parse_ini(&mut self, content: String, filename: String, target: String, ini_base: impl AsRef<Path>, common: impl AsRef<Path>) {
+    pub fn parse_ini(&mut self, path: impl AsRef<Path>, target: String, ini_base: impl AsRef<Path>, common: impl AsRef<Path>) {
         self.enqueue(InternalCommand::ParseIni { 
-            content, 
-            filename,
+            path: path.as_ref().to_path_buf(), 
             target, 
             ini_base: ini_base.as_ref().to_path_buf(), 
             common: common.as_ref().to_path_buf() 
@@ -333,9 +333,9 @@ impl Session {
         while let Some(queued_cmd) = self.queue.pop() {
             let priority = queued_cmd.command.priority_score();
             match &queued_cmd.command {
-                InternalCommand::ParseIni { filename, target, .. } => {
-                    info!("[session] Executing (PriorityScore: {}, Seq: {}): ParseIni {{ filename: {:?}, target: {:?} }}", 
-                             priority, queued_cmd.sequence_id, filename, target);
+                InternalCommand::ParseIni { path, target, .. } => {
+                    info!("[session] Executing (PriorityScore: {}, Seq: {}): ParseIni {{ path: {:?}, target: {:?} }}", 
+                             priority, queued_cmd.sequence_id, path, target);
                 }
                 cmd => {
                     info!("[session] Executing (PriorityScore: {}, Seq: {}): {:?}", 
@@ -422,30 +422,32 @@ impl Session {
                         error!("[session] No active NAND loaded to build!");
                     }
                 }
-                InternalCommand::ParseIni { content, filename, target, ini_base, common } => {
-                    info!("[session] Parsing INI {} for target {}...", filename, target);
+                InternalCommand::ParseIni { path, target, ini_base, common } => {
+                    info!("[session] Parsing INI for target {}...", target);
                     if let Some(nand) = self.active_nand.take() {
-                        match crate::core::data::xeini::parse_xe_ini(&content, &target, &ini_base, &common) {
-                            Ok(parsed_cfg) => {
-                                // collect FlashFS/Security assets from INI
-                                let mut file_entries = parsed_cfg.security.clone();
-                                file_entries.extend(parsed_cfg.flashfs.clone());
-                                for entry in file_entries {
-                                    if let Ok(data) = fs::read(&entry.path) {
-                                        let name = entry.path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                                        info!("[session] INI Discovery: Asset {} from {:?}", name, entry.path);
-                                        self.pending_assets.entry(name).or_insert(data);
-                                    }
-                                }
+                        match crate::core::data::xeini::parse_xe_ini(&path, &target) {
+                            Ok(ini) => {
+                                let data_dir = PathBuf::from("data");
+                                match IniSearch::new(ini.clone(), &ini_base, &common, &data_dir) {
+                                    Ok(search) => {
+                                        // Collect all extracted assets (CF/CG, FlashFS, bootloaders) into pending_assets
+                                        self.pending_assets.extend(search.result.extracted_assets);
 
-                                // apply bootloaders
-                                match crate::core::data::xeini::apply_xe_ini(nand, parsed_cfg, &self.pending_assets, None) {
-                                    Ok(updated_nand) => {
-                                        self.active_nand = Some(updated_nand);
-                                        info!("[session] INI bootloaders applied to NAND skeleton.");
+                                        // Apply bootloaders using the improved apply_xe_ini
+                                        match crate::core::data::xeini::apply_xe_ini(nand, ini, &self.pending_assets) {
+                                            Ok(updated_nand) => {
+                                                self.active_nand = Some(updated_nand);
+                                                info!("[session] INI bootloaders and assets applied to NAND skeleton.");
+                                            }
+                                            Err(e) => {
+                                                error!("[session] Failed to apply INI data: {}", e);
+                                                return Err(format!("Applied INI data failed: {}", e));
+                                            }
+                                        }
                                     }
                                     Err(e) => {
-                                        return Err(format!("Applied INI data failed due to bindings error: {}", e));
+                                        error!("[session] Configuration discovery failed: {}", e);
+                                        return Err(format!("Discovery failed: {}", e));
                                     }
                                 }
                             }
@@ -688,9 +690,9 @@ impl Session {
                     for queued_cmd in commands {
                         let priority = queued_cmd.command.priority_score();
                         match &queued_cmd.command {
-                            InternalCommand::ParseIni { filename, target, .. } => {
-                                info!("[session] SessionRun Executing (PriorityScore: {}, Seq: {}): ParseIni {{ filename: {:?}, target: {:?} }}",
-                                         priority, queued_cmd.sequence_id, filename, target);
+                            InternalCommand::ParseIni { path, target, .. } => {
+                                info!("[session] SessionRun Executing (PriorityScore: {}, Seq: {}): ParseIni {{ path: {:?}, target: {:?} }}",
+                                         priority, queued_cmd.sequence_id, path, target);
                             }
                             cmd => {
                                 info!("[session] SessionRun Executing (PriorityScore: {}, Seq: {}): {:?}",
@@ -710,8 +712,15 @@ impl Session {
                     self.active_nand = Some(blank);
                 }
                 InternalCommand::Update { path } => {
-                    // TODO: Stub — accepts either xboxupd.bin or STFS container, parses into CF/CG
-                    info!("[session] Update handler called for {:?} (stubbed, no-op).", path);
+                    info!("[session] Loading asset discovery from {:?}...", path);
+                    match fs::read(&path) {
+                        Ok(data) => {
+                            let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+                            self.pending_assets.insert(name.clone(), data);
+                            info!("[session] Discovered asset '{}' added to session pool.", name);
+                        }
+                        Err(e) => error!("[session] Failed to read asset at {:?}: {}", path, e),
+                    }
                 }
                 InternalCommand::FinalizeFlashfs => {
                     if !self.pending_assets.is_empty() {
@@ -740,7 +749,7 @@ impl Session {
                     info!("[session] Extracting STFS container from {:?} to {:?}...", path, target_dir);
                     match fs::read(&path) {
                         Ok(data) => {
-                            match crate::builder::tools::stfs::StfsContainer::new(&data) {
+                            match crate::core::data::stfs::StfsContainer::new(&data) {
                                 Ok(container) => {
                                     if let Err(e) = container.extract_all(&target_dir) {
                                         return Err(format!("STFS Extraction Error: {}", e));

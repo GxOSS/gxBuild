@@ -62,16 +62,17 @@ pub enum IniError {
 #[derive(Debug, Clone)]
 pub struct BuildIniEntry {
     pub filename: String,
-    pub path: PathBuf,
     pub hash: Option<String>,
     pub chain: u8,
 }
 
+#[derive(Debug, Clone)]
 pub struct BuildIniPatch {
     pub enabled: bool,
     pub path: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone)]
 pub struct XeBuildIni {
     pub name: String,
     pub buildtype: String,
@@ -168,7 +169,7 @@ impl OptionsIni {
     }
 }
 
-fn get_hash(path: impl AsRef<Path>) -> std::io::Result<String> {
+pub fn get_hash(path: impl AsRef<Path>) -> std::io::Result<String> {
     let data = fs::read(path)?;
     let mut hasher = Hasher::new();
     hasher.update(&data);
@@ -251,163 +252,16 @@ pub fn parse_options_ini(
 }
 
 pub fn parse_xe_ini(
-    content: &str,
+    ini_path: impl AsRef<Path>,
     target_section: &str,
-    ini_base_path: impl AsRef<Path>,
-    common_path: impl AsRef<Path>,
 ) -> Result<XeBuildIni, IniError> {
-    
-    info!("[ini] Parsing section '{}' from INI (base: {:?})", target_section, ini_base_path.as_ref());
-    
-    let ini_base = ini_base_path.as_ref(); 
-    let common_base = common_path.as_ref();
-    
-    let patches_dir = ini_base.join("data");
+    let ini_path = ini_path.as_ref();
+    info!("[ini] Parsing section '{}' from INI: {:?}", target_section, ini_path);
 
+    let content = fs::read_to_string(ini_path).map_err(|e| IniError::IoError(e))?;
+    
     let mut sections: HashMap<String, Vec<Vec<String>>> = HashMap::new();
     let mut current_section = String::new();
-
-    let mut patch_path = None;
-
-    let build_type = ini_base_path.as_ref()
-        .file_stem()
-        .and_then(|n| n.to_str())
-        .map(|s| s.trim_start_matches('_').to_lowercase())
-        .unwrap_or_default();
-
-    let console_type = target_section
-        .split('_')
-        .next()
-        .unwrap_or("")
-        .trim_end_matches("bl")
-        .to_lowercase();
-
-    let main_section_name = target_section
-        .split_once('_')
-        .map(|(prefix, suffix)| format!("{}_{}", prefix.trim_end_matches("bl"), suffix))
-        .unwrap_or_else(|| target_section.trim_end_matches("bl").to_string());
-    
-    let validate_and_resolve = |search_paths: &[&Path], filename: &str, expected_hash: Option<&str>, chain: u8| -> Result<BuildIniEntry, IniError> {
-        let mut full_path = None;
-
-        for base in search_paths {
-            let p = if filename.starts_with("..\\") || filename.starts_with("../") {
-                base.parent().unwrap_or(base).join(&filename[3..])
-            } else {
-                base.join(filename)
-            };
-            
-            if p.exists() {
-                full_path = Some(p);
-                break;
-            }
-        }
-
-        let full_path = full_path.ok_or_else(|| {
-             warn!("[ini] File not found: {}", filename);
-             IniError::FileNotFound(filename.to_string())
-        })?;
-
-        info!("[ini] File {} found at path: {}", filename, full_path.display());
-
-        if let Some(expected) = expected_hash {
-            if !expected.is_empty() {
-                let actual = get_hash(&full_path).map_err(IniError::IoError)?;
-                if actual.to_lowercase() != expected.to_lowercase() {
-                    return Err(IniError::HashMismatch(filename.to_string(), expected.to_string(), actual));
-                }
-            }
-        }
-        
-        Ok(BuildIniEntry {
-            filename: filename.to_string(),
-            path: full_path,
-            hash: expected_hash.map(|s| s.to_string()),
-            chain,
-        })
-    };
-    
-    // xeBuild auto patching
-    match build_type.as_str() {
-        "retail" => {
-            info!("[ini] Retail build type selected");
-        },
-    "glitch1" | "glitch2" | "glitch2m" | "glitch3" | "jtag" | "1f" | "2f" | "devgl" | "devkit" | "xdkbuild" | "rgbuild" => {
-            info!("[ini] {} build type selected", build_type);
-            match build_type.as_str() {
-                "glitch1" => {
-                    let p_path = match console_type.as_str() {
-                        "trinity" | "corona" => Some(patches_dir.join("patches_trinity.bin")),
-                        "zephyr" | "jasper" | "falcon" => Some(patches_dir.join("patches_fat.bin")),
-                        "xenon" => None,
-                        _ => None,
-                    };
-                    if let Some(ref p) = p_path {
-                        if !p.exists() {
-                            return Err(IniError::NoAutoPatches("Glitch1".to_string(), main_section_name, p.display().to_string()));
-                        } else {
-                            info!("[ini] Glitch1 Patches for platform {} found at path: {}", main_section_name, p.display());
-                        }
-                    }
-                    patch_path = p_path;
-                }
-                "glitch2" => {
-                    let p = patches_dir.join(format!("patches_g2{}.bin", main_section_name));
-                    if !p.exists() { 
-                        return Err(IniError::NoAutoPatches("Glitch2".to_string(), main_section_name, p.display().to_string()));
-                    } else {
-                        info!("[ini] Glitch2 Patches for platform {} found at path: {}", main_section_name, p.display());
-                        patch_path = Some(p);
-                    }
-                }
-                "glitch2m" | "devgl" | "xdkbuild" => {
-                    let p = patches_dir.join(format!("patches_g2m{}.bin", main_section_name));
-                    if !p.exists() { 
-                        return Err(IniError::NoAutoPatches(build_type.clone(), main_section_name, p.display().to_string()));
-                    } else {
-                        info!("[ini] {} Patches for platform {} found at path: {}", build_type, main_section_name, p.display());
-                        patch_path = Some(p);
-                    }
-                }
-                "glitch3" => {
-                    let p_g3 = patches_dir.join(format!("patches_g3{}.bin", main_section_name));
-                    let p_g2 = patches_dir.join(format!("patches_g2{}.bin", main_section_name));
-                    if !p_g3.exists() {
-                        if p_g2.exists() {
-                            warn!("[ini] Glitch3 Patches for platform {} not found at path: {}", main_section_name, p_g3.display());
-                            info!("[ini] Falling back to Glitch2 Patches for platform {} found at path: {}", main_section_name, p_g2.display());
-                            patch_path = Some(p_g2);
-                        } else {
-                            return Err(IniError::NoAutoPatches("Glitch3".to_string(), main_section_name, p_g3.display().to_string()));
-                        }
-                    } else {
-                        info!("[ini] Glitch3 Patches for platform {} found at path: {}", main_section_name, p_g3.display());
-                        patch_path = Some(p_g3);
-                    }
-                }
-                "devkit" => {
-                    let p = patches_dir.join(format!("patches_dev{}.bin", main_section_name));
-                    if !p.exists() { 
-                        return Err(IniError::NoAutoPatches("Devkit".to_string(), main_section_name, p.display().to_string()));
-                    } else {
-                        info!("[ini] Devkit Patches for platform {} found at path: {}", main_section_name, p.display());
-                        patch_path = Some(p);
-                    }
-                }
-                "rgbuild" => {
-                    let p = patches_dir.join(format!("patches_rg{}.bin", main_section_name));
-                    if !p.exists() { 
-                        return Err(IniError::NoAutoPatches("RGBuild".to_string(), main_section_name, p.display().to_string()));
-                    } else {
-                        info!("[ini] RGBuild Patches for platform {} found at path: {}", main_section_name, p.display());
-                        patch_path = Some(p);
-                    }
-                }
-                _ => {}
-            }
-        },
-        _ => return Err(IniError::BadBuildFormat(build_type)),
-    }
 
     for line in content.lines() {
         let line = line.trim();
@@ -425,8 +279,25 @@ pub fn parse_xe_ini(
         }
     }
 
-    let main_data_raw = sections.get(&target_section.to_lowercase())
-        .ok_or_else(|| IniError::SectionNotFound(target_section.to_string()))?;
+    // Determine the internal section name (insert "bl")
+    let main_section = if let Some((prefix, suffix)) = target_section.split_once('_') {
+        format!("{}bl_{}", prefix, suffix)
+    } else {
+        format!("{}bl", target_section)
+    };
+
+    // Determine the build type from filename
+    let mut build_type = ini_path.file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| s.trim_start_matches('_').to_lowercase())
+        .unwrap_or_else(|| "retail".to_string());
+    
+    if build_type == "glitch" {
+        build_type = "glitch1".to_string();
+    }
+
+    let main_data_raw = sections.get(&main_section.to_lowercase())
+        .ok_or_else(|| IniError::SectionNotFound(main_section.to_string()))?;
 
     let security_data_raw = sections.get("security")
         .cloned()
@@ -436,6 +307,14 @@ pub fn parse_xe_ini(
         .cloned()
         .unwrap_or_default();
 
+    let resolve = |filename: &str, expected_hash: Option<&str>, chain: u8| -> Result<BuildIniEntry, IniError> {        
+        Ok(BuildIniEntry {
+            filename: filename.to_string(),
+            hash: expected_hash.map(|s| s.to_string()),
+            chain,
+        })
+    };
+
     let mut main_entries = Vec::new();
     let mut counts = HashMap::new();
     for entry in main_data_raw {
@@ -444,83 +323,48 @@ pub fn parse_xe_ini(
         let count = counts.entry(prefix.clone()).or_insert(0);
         *count += 1;
 
-        main_entries.push(validate_and_resolve(&[ini_base, common_base], original_name, entry.get(1).map(|s| s.as_str()), *count - 1)?);
+        main_entries.push(resolve(original_name, entry.get(1).map(|s| s.as_str()), *count - 1)?);
     }
-
 
     let mut security_entries = Vec::new();
     for entry in security_data_raw {
         if !entry.is_empty() {
-            security_entries.push(validate_and_resolve(&[ini_base], &entry[0], None, 0)?);
+            security_entries.push(resolve(&entry[0], None, 0)?);
         }
     }
 
     let mut flashfs_entries = Vec::new();
-    let flashfs_subfolder = ini_base.join("flashfs");
-    let flashfs_paths = if flashfs_subfolder.exists() {
-        vec![ini_base, &flashfs_subfolder]
-    } else {
-        vec![ini_base]
-    };
-
     for entry in flashfs_data_raw {
         if entry.len() >= 2 {
-            flashfs_entries.push(validate_and_resolve(&flashfs_paths, &entry[0], Some(&entry[1]), 0)?);
+            flashfs_entries.push(resolve(&entry[0], Some(&entry[1]), 0)?);
         } else if entry.len() == 1 {
-            flashfs_entries.push(validate_and_resolve(&flashfs_paths, &entry[0], None, 0)?);
-        }
-    }
-
-    let mut patches_needed = BuildIniPatch {
-        enabled: build_type != "retail",
-        path: None,
-    };
-
-    if let Some(p) = patch_path {
-        patches_needed.path = Some(p);
-    }
-
-    // Validation for non-retail builds
-    if build_type != "retail" {
-        if security_entries.is_empty() {
-             return Err(IniError::NoSecurityFiles);
-        }
-        if flashfs_entries.is_empty() {
-             return Err(IniError::NoFlashFSFiles);
-        }
-        if patches_needed.path.is_none() {
-             return Err(IniError::NoPatches);
+            flashfs_entries.push(resolve(&entry[0], None, 0)?);
         }
     }
 
     let ini = XeBuildIni {
         name: target_section.to_string(),
-        buildtype: build_type,
+        buildtype: build_type.clone(),
         main: main_entries,
         security: security_entries,
         flashfs: flashfs_entries,
-        patch: patches_needed,
+        patch: BuildIniPatch { enabled: build_type != "retail", path: None },
         rebooter: counts.values().any(|&c| c > 1),
     };
 
-    info!("[ini] Parsed section '{}': {} main bootloader(s), {} security file(s), {} FlashFS asset(s)",
-        target_section, ini.main.len(), ini.security.len(), ini.flashfs.len());
     Ok(ini)
 }
 
 pub fn apply_xe_ini(
     mut nand: NandSkeleton,
     ini: XeBuildIni,
-    pending_assets: &HashMap<String, Vec<u8>>,
-    _expected_hash: Option<&str>)
+    pending_assets: &HashMap<String, Vec<u8>>)
     -> Result<NandSkeleton, IniError> {
     
-    // DIAGNOSTIC: Print all pending assets
     if !pending_assets.is_empty() {
-        info!("[ini] Discovered assets in memory: {:?}", pending_assets.keys().collect::<Vec<_>>());
+        info!("[ini] Applying {} discovered assets from memory...", pending_assets.len());
     }
 
-    // rebooter sanity check
     let mut notified = false;
 
     // process [main] bootloaders
@@ -528,16 +372,12 @@ pub fn apply_xe_ini(
         let filename = &entry.filename;
         let lower = filename.to_lowercase();
 
-        // Load the data (In-memory discovery assets > Disk files)
+        // Load the data (Only from memory in this new architecture)
         let data = if let Some(mem_data) = pending_assets.get(&lower) {
             mem_data.clone()
-        } else if let Ok(disk_data) = std::fs::read(&entry.path) {
-            disk_data
         } else {
-            // If not in memory and not on disk, we only error if it's NOT already in the NAND.
-            // This allows us to keep baseline bootloaders if no replacement was found.
-            info!("[ini] Note: '{}' not found in memory or at '{}', keeping baseline bootloader if present.",
-                filename, entry.path.display());
+            // In the new modular discovery architecture, filesearch.rs should have already
+            // placed these in the pending_assets map.
             continue;
         };
 
@@ -558,7 +398,7 @@ pub fn apply_xe_ini(
         
         let prefix = &lower;
 
-        if is_rebooter && notified == false {
+        if is_rebooter && !notified {
             info!("[ini] Rebooter chain detected");
             notified = true;
         }
@@ -593,16 +433,11 @@ pub fn apply_xe_ini(
     }
 
     // Process File Entries (Security & FlashFS)
-    let mut file_entries = ini.security.clone();
-    file_entries.extend(ini.flashfs.clone());
-
-    for entry in &file_entries {
-        let basen = entry.path.file_name().unwrap_or_default().to_string_lossy().to_string();
-        if basen.to_lowercase() == "fcrt.bin" {
-            if let Ok(file_content) = std::fs::read(&entry.path) {
-                nand.extra.fcrt = Some(file_content);
-            }
-        }
+    // In the new architecture, FlashFS entries are added directly to the FlashFS struct 
+    // by filesearch.rs. FCRT bin can still be merged here if present in pending_assets.
+    if let Some(fcrt_data) = pending_assets.get("fcrt.bin") {
+        nand.extra.fcrt = Some(fcrt_data.clone());
+        info!("[ini] Assigned FCRT.bin from memory");
     }
 
     Ok(nand)
