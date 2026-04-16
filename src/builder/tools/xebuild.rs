@@ -41,9 +41,6 @@ pub struct XeBuildBinary {
     pub generic: Option<XeBuildPatch>,
 }
 
-// This hash function probably needs to return a String
-// get_hash removed (unused)
-
 /// Reads patch records from any byte source (file, memory buffer, etc)
 /// Returns a Vec of sections, each section being a Vec<PatchRecord>.
 pub fn parse_patch_records(mut reader: impl Read) -> io::Result<Vec<Vec<PatchRecord>>> {
@@ -141,7 +138,7 @@ pub fn parse_xe_binary(path: &str) -> anyhow::Result<XeBuildBinary> {
 }
 
 /// Lowlevel function, apply section of patch binary to target data.
-fn apply_xe_buffer(patch: &XeBuildPatch, data: &mut Vec<u8>) -> anyhow::Result<()> {
+pub fn apply_xe_buffer(patch: &XeBuildPatch, data: &mut Vec<u8>) -> anyhow::Result<()> {
     for record in &patch.records {
         let offset = record.address as usize;
         for (i, &word) in record.data.iter().enumerate() {
@@ -159,21 +156,10 @@ fn apply_xe_buffer(patch: &XeBuildPatch, data: &mut Vec<u8>) -> anyhow::Result<(
     Ok(())
 }
 
-// Create or insert CDXell patch
-// apply_cdxell removed (unused)
-
 pub fn apply_xe_patch(patch: XeBuildBinary, nand: &mut NandSkeleton) -> anyhow::Result<()> {
     if let Some(khv) = patch.khv {
         info!("[xebuild] Queuing {} KHV patch record(s) into NAND options...", khv.records.len());
-        if let Some(patches) = &mut nand.options.patches {
-            for record in khv.records {
-                patches.khv.push(PatchRecord {
-                    address: record.address,
-                    amount: record.amount,
-                    data: record.data,
-                });
-            }
-        }
+        nand.bootloaders.khvpatch = Some(khv.records);
     }
 
     if let Some(cb) = patch.cb {

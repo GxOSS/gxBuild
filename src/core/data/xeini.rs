@@ -70,6 +70,7 @@ pub struct BuildIniEntry {
 pub struct BuildIniPatch {
     pub enabled: bool,
     pub path: Option<PathBuf>,
+    pub khv: Option<Vec<crate::builder::builder::PatchRecord>>,
 }
 
 #[derive(Debug, Clone)]
@@ -348,7 +349,7 @@ pub fn parse_xe_ini(
         main: main_entries,
         security: security_entries,
         flashfs: flashfs_entries,
-        patch: BuildIniPatch { enabled: build_type != "retail", path: None },
+        patch: BuildIniPatch { enabled: build_type != "retail", path: None, khv: None },
         rebooter: counts.values().any(|&c| c > 1),
     };
 
@@ -439,6 +440,8 @@ pub fn apply_xe_ini(
         nand.extra.fcrt = Some(fcrt_data.clone());
         info!("[ini] Assigned FCRT.bin from memory");
     }
+
+    nand.bootloaders.khvpatch = ini.patch.khv.clone();
 
     Ok(nand)
 }

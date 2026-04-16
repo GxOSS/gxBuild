@@ -99,6 +99,7 @@ pub struct NandBootloaders {
     pub sc: Option<BootloaderSc>,
     pub cd: Option<BootloaderCd>,
     pub ce: Option<BootloaderCe>,
+    pub khvpatch: Option<Vec<PatchRecord>>,
 }
 
 #[derive(Clone)]
@@ -130,7 +131,6 @@ pub struct PatchRecord {
 pub struct NandPatches {
     pub rglp: Option<Vec<u8>>,
     pub xebuild: Option<Vec<u8>>,
-    pub khv: Vec<PatchRecord>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -239,7 +239,7 @@ impl NandSkeleton {
                 smc_boot_offset: U32::new(0x2000),
             },
             extra: NandExtra { smc: Vec::new(), smc_config: Vec::new(), keyvault: Vec::new(), fcrt: None, power_on_cause_a: 0, power_on_cause_b: 0 },
-            bootloaders: NandBootloaders { cb: None, cb_a: None, cb_x: None, cb_b: None, sc: None, cd: None, ce: None },
+            bootloaders: NandBootloaders { cb: None, cb_a: None, cb_x: None, cb_b: None, sc: None, cd: None, ce: None, khvpatch: None },
             rebooter: None,
             update: NandUpdate { cf_0: None, cg_0: None, cf_1: None, cg_1: None },
             rebooter_update: None,
@@ -374,7 +374,7 @@ impl NandSkeleton {
     ) -> Result<(NandBootloaders, NandUpdate), String> {
         let mut bl = NandBootloaders {
             cb: None, cb_a: None, cb_x: None, cb_b: None,
-            sc: None, cd: None, ce: None,
+            sc: None, cd: None, ce: None, khvpatch: None,
         };
         let mut update = NandUpdate {
             cf_0: None, cg_0: None, cf_1: None, cg_1: None,

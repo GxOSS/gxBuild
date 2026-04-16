@@ -162,7 +162,7 @@ impl IniSearch {
             },
             _ => return Err(IniError::BadBuildFormat(ini.buildtype.clone())),
         }
-        ini.patch.path = patch_path;
+        ini.patch.path = patch_path.clone();
 
         // --- Security / Extra Discovery ---
         // Priority: 1. Data Folder
@@ -203,6 +203,17 @@ impl IniSearch {
                 let lower = entry.filename.to_lowercase();
                 if lower.starts_with("cf_") || lower.starts_with("sf_") { expected_cf = lower; }
                 else if lower.starts_with("cg_") || lower.starts_with("sg_") { expected_cg = lower; }
+            }
+
+            // --- Parse Auto Patch into Memory ---
+            let mut xe_patch = None;
+            if let Some(ref p) = patch_path {
+                if let Ok(parsed) = crate::builder::tools::xebuild::parse_xe_binary(p.to_str().unwrap_or_default()) {
+                    if let Some(khv) = parsed.khv.as_ref() {
+                        ini.patch.khv = Some(khv.records.clone());
+                    }
+                    xe_patch = Some(parsed);
+                }
             }
 
             for entry in &ini.main {
@@ -288,7 +299,28 @@ impl IniSearch {
                     }
                 }
 
-                if let Some(c) = content {
+                if let Some(mut c) = content {
+                    // Apply Patch BEFORE Hash!
+                    if let Some(ref parsed_patch) = xe_patch {
+                        if lower_name.starts_with("cb_") || lower_name.starts_with("cba_") || lower_name.starts_with("sb_") {
+                            if let Some(ref cb_patch) = parsed_patch.cb {
+                                if let Err(e) = crate::builder::tools::xebuild::apply_xe_buffer(cb_patch, &mut c) {
+                                    warn!("[ini] Failed to apply CB patches to {}: {}", filename, e);
+                                } else {
+                                    info!("[ini] Core patched CB payload '{}'.", filename);
+                                }
+                            }
+                        } else if lower_name.starts_with("cd_") || lower_name.starts_with("sd_") {
+                            if let Some(ref cd_patch) = parsed_patch.cd {
+                                if let Err(e) = crate::builder::tools::xebuild::apply_xe_buffer(cd_patch, &mut c) {
+                                    warn!("[ini] Failed to apply CD patches to {}: {}", filename, e);
+                                } else {
+                                    info!("[ini] Core patched CD payload '{}'.", filename);
+                                }
+                            }
+                        }
+                    }
+
                     if let Some(expected) = &entry.hash {
                         let mut hasher = crc32fast::Hasher::new();
                         hasher.update(&c);
