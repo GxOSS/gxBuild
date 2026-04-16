@@ -19,7 +19,7 @@ use log::{info, error};
 
 /// xeBuild v1.21.810 clone - System image builder
 #[derive(Parser, Debug)]
-#[command(name = "gxBuild", about = "Rust Xbox 360 Nand Manipulation Utility", version)]
+#[command(name = "gxBuild", about = "Rust Xbox 360 Nand Manipulation Utility", version, disable_help_flag = true)]
 pub struct GgxArgs {
     /// Operation mode (defaults to build)
     #[command(subcommand)]
@@ -203,10 +203,13 @@ pub fn ggx_cli() {
     };
 
     let mut is_verbose = false;
+    let mut no_enter = false;
     for group in &args.options {
         for (k, _) in group {
             if k.eq_ignore_ascii_case("verbose") {
                 is_verbose = true;
+            } else if k.eq_ignore_ascii_case("noenter") {
+                no_enter = true;
             }
         }
     }
@@ -219,11 +222,12 @@ pub fn ggx_cli() {
     
     let mut session = Session::new();
 
+    let mut session_prepared = true;
     match args.mode.clone() {
         Some(GgxMode::Build { .. }) | None => {
             if let Err(e) = handle_build(&args, &mut session) {
                 error!("[cli] Build Setup Failed: {}", e);
-                std::process::exit(1);
+                session_prepared = false;
             }
         }
         Some(GgxMode::Extract) => {
@@ -237,30 +241,37 @@ pub fn ggx_cli() {
         }
     }
 
-    if let Err(e) = session.run() {
-        error!("[cli] Session failed: {}", e);
-    } else if let Some(GgxMode::Build { .. }) | None = args.mode {
-        // Build succeeded, calculate SHA-1 if requested
-        let output_path = args.output.clone()
-            .unwrap_or_else(|| args.output_dir.clone().unwrap_or_else(|| PathBuf::from("updflash.bin")));
-        if output_path.exists() {
-            if let Ok(data) = std::fs::read(&output_path) {
-                if let Ok(hash) = crate::builder::deps::excrypt::sha(&[&data]) {
-                    let sha_str = hash.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-                    info!("[cli] Image SHA-1: {}", sha_str);
-
-                    if let Some(sha_p) = args.sha_file.clone() {
-                        if let Err(e) = std::fs::write(&sha_p, &sha_str) {
-                            error!("[cli] Failed to write SHA-1 to {:?}: {}", sha_p, e);
-                        } else {
-                            info!("[cli] SHA-1 written to {:?}", sha_p);
+    if session_prepared {
+        if let Err(e) = session.run() {
+            error!("[cli] Session failed: {}", e);
+        } else if let Some(GgxMode::Build { .. }) | None = args.mode {
+            // Build succeeded, calculate SHA-1 if requested
+            let output_path = args.output.clone()
+                .unwrap_or_else(|| args.output_dir.clone().unwrap_or_else(|| PathBuf::from("updflash.bin")));
+            if output_path.exists() {
+                if let Ok(data) = std::fs::read(&output_path) {
+                    if let Ok(hash) = crate::builder::deps::excrypt::sha(&[&data]) {
+                        let sha_str = hash.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                        info!("[cli] Image SHA-1: {}", sha_str);
+    
+                        if let Some(sha_p) = args.sha_file.clone() {
+                            if let Err(e) = std::fs::write(&sha_p, &sha_str) {
+                                error!("[cli] Failed to write SHA-1 to {:?}: {}", sha_p, e);
+                            } else {
+                                info!("[cli] SHA-1 written to {:?}", sha_p);
+                            }
                         }
                     }
                 }
             }
         }
     }
-    // Enter prompt is handled in handle_build via -o noenter
+
+    if !no_enter {
+        println!("\nPress Enter to exit...");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).ok();
+    }
 }
 
 fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
@@ -588,24 +599,6 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         .unwrap_or_else(|| args.output_dir.clone()
             .unwrap_or_else(|| PathBuf::from("updflash.bin")));
     session.build(output_path.clone(), 0); // Target 0 for now
-
-    // --- Options Processing ---
-    let mut no_enter = false;
-    for (key, _val) in args.options.iter().flat_map(|v| v.iter()) {
-        match key.as_str() {
-            "noenter" => no_enter = true,
-            "noinfo" => {},
-            "nolog" => {},
-            "unsafe" => {},
-            _ => {}
-        }
-    }
-
-    if !no_enter {
-        println!("\nPress Enter to exit...");
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input).ok();
-    }
 
     Ok(())
 }

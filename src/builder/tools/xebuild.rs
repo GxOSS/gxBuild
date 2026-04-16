@@ -63,22 +63,23 @@ pub fn parse_patch_records(mut reader: impl Read) -> io::Result<Vec<Vec<PatchRec
             continue;
         }
 
-        // word is amount of words to follow
-        let mut data = Vec::with_capacity(word as usize);
-        for _ in 0..word {
+        let address = word;
+
+        let mut amt_buf = [0u8; 4];
+        reader.read_exact(&mut amt_buf)?;
+        let amount = u32::from_be_bytes(amt_buf);
+        let count = amount as usize;
+
+        let mut data = Vec::with_capacity(count);
+        for _ in 0..count {
             let mut data_buf = [0u8; 4];
             reader.read_exact(&mut data_buf)?;
             data.push(u32::from_be_bytes(data_buf));
         }
 
-        // next word is address
-        let mut addr_buf = [0u8; 4];
-        reader.read_exact(&mut addr_buf)?;
-        let address = u32::from_be_bytes(addr_buf);
-
         cur_section.push(PatchRecord {
             address,
-            amount: word,
+            amount: amount,
             data,
         });
     }
@@ -87,11 +88,11 @@ pub fn parse_patch_records(mut reader: impl Read) -> io::Result<Vec<Vec<PatchRec
 }
 
 pub fn parse_xe_binary(path: &str) -> anyhow::Result<XeBuildBinary> {
-    let mut file = File::open(path)?;
-    let mut header = [0u8; 4];
-    file.read_exact(&mut header)?;
-
+    let file = File::open(path)?;
     info!("[xebuild] Parsing xeBuild binary: '{}'", path);
+
+    let mut sections = parse_patch_records(file)?;
+    let section_count = sections.len();
 
     let mut output = XeBuildBinary {
         xetype: XeBuildBinaryType::Unknown,
@@ -103,32 +104,25 @@ pub fn parse_xe_binary(path: &str) -> anyhow::Result<XeBuildBinary> {
         generic: None,
     };
 
-    if &header == b"JTAG" {
-        output.xetype = XeBuildBinaryType::Jtag;
-        let mut sections = parse_patch_records(&mut file)?;
-        info!("[xebuild] Detected JTAG patch binary ({} section(s))", sections.len());
-        if sections.is_empty() {
-            return Err(anyhow::anyhow!("Empty JTAG patch file"));
-        }
-        output.generic = Some(XeBuildPatch {
-            records: sections.remove(0),
-        });
-    } else if &header == b"RGH\0" || &header == b"RGH " {
+    if section_count == 1 {
+        output.xetype = XeBuildBinaryType::Addon;
+        info!("[xebuild] Detected Addon patch binary (1 section)");
+        output.khv = Some(XeBuildPatch { records: sections.remove(0) });
+    } else if section_count == 3 {
         output.xetype = XeBuildBinaryType::Rgh;
-        let mut sections = parse_patch_records(&mut file)?;
-        info!("[xebuild] Detected RGH patch binary ({} section(s): CB, CD, KHV)", sections.len());
-        if sections.len() < 3 {
-            return Err(anyhow::anyhow!("RGH patch file missing sections (expected 3+)"));
-        }
+        info!("[xebuild] Detected RGH patch binary (3 sections)");
+        output.cb = Some(XeBuildPatch { records: sections.remove(0) });
+        output.cd = Some(XeBuildPatch { records: sections.remove(0) });
+        output.khv = Some(XeBuildPatch { records: sections.remove(0) });
+    } else if section_count == 4 {
+        output.xetype = XeBuildBinaryType::Jtag;
+        info!("[xebuild] Detected JTAG patch binary (4 sections)");
+        output.onebl = Some(XeBuildPatch { records: sections.remove(0) });
         output.cb = Some(XeBuildPatch { records: sections.remove(0) });
         output.cd = Some(XeBuildPatch { records: sections.remove(0) });
         output.khv = Some(XeBuildPatch { records: sections.remove(0) });
     } else {
-        // Fallback or Addon?
-        output.xetype = XeBuildBinaryType::Addon;
-        file.seek(SeekFrom::Start(0))?;
-        let mut sections = parse_patch_records(&mut file)?;
-        info!("[xebuild] Detected Addon/unknown patch binary ({} section(s))", sections.len());
+        info!("[xebuild] Detected unknown patch binary ({} sections)", section_count);
         if !sections.is_empty() {
             output.khv = Some(XeBuildPatch { records: sections.remove(0) });
         }
@@ -139,11 +133,18 @@ pub fn parse_xe_binary(path: &str) -> anyhow::Result<XeBuildBinary> {
 
 /// Lowlevel function, apply section of patch binary to target data.
 pub fn apply_xe_buffer(patch: &XeBuildPatch, data: &mut Vec<u8>) -> anyhow::Result<()> {
-    for record in &patch.records {
+    info!("[xebuild] apply_xe_buffer: Attempting to apply {} records to buffer of size 0x{:X}", patch.records.len(), data.len());
+    let mut modified_words = 0;
+    
+    for (idx, record) in patch.records.iter().enumerate() {
         let offset = record.address as usize;
+        // info!("[xebuild]   -> Record {}: offset=0x{:X}", idx, offset);
+
         for (i, &word) in record.data.iter().enumerate() {
             let write_pos = offset + (i * 4);
             if write_pos + 4 > data.len() {
+                log::error!("[xebuild] Patch address 0x{:X} (record {}, word {}) is out of bounds for buffer of size 0x{:X}", 
+                            record.address, idx, i, data.len());
                 anyhow::bail!(
                     "Patch address 0x{:X} is out of bounds for buffer of size 0x{:X}",
                     record.address,
@@ -151,8 +152,11 @@ pub fn apply_xe_buffer(patch: &XeBuildPatch, data: &mut Vec<u8>) -> anyhow::Resu
                 );
             }
             data[write_pos..write_pos + 4].copy_from_slice(&word.to_be_bytes());
+            modified_words += 1;
         }
     }
+    
+    info!("[xebuild] apply_xe_buffer: Successfully modified {} words.", modified_words);
     Ok(())
 }
 

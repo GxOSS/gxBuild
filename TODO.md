@@ -1,9 +1,6 @@
 # GGXBuild TODO
 
-- move stfs to core
-- move discovery to nand_discovery
-- move file searching to file_discovery
-
+- Move autopatching back before hashing
 
 - Assemble-Shadow = Assemble Shadowboot image
 - Assemble-Xell = Assemble XeLL image
