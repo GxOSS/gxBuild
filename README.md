@@ -29,12 +29,14 @@ Documentation is hosted on the [GGX Project](https://ggx-project.github.io/gxBui
 I referenced ALLOT of projects in the building of this. 
 
 These are the projects i directly took code from:
- [xenon-bltool](https://github.com/InvoxiPlayGames/xenon-bltool) by [InxoviPlayGames](https://github.com/InvoxiPlayGames)
+ - [xenon-bltool](https://github.com/InvoxiPlayGames/xenon-bltool) by [InxoviPlayGames](https://github.com/InvoxiPlayGames)
 - [x360utils](https://github.com/Swizzy/x360Utils) by [Swizzy](https://github.com/Swizzy)
 - [RGBuild](https://github.com/RGLoader/RGBuild) by [emoose](https://github.com/stoker25) / [stoker25](https://github.com/stoker25), [tydye81](https://github.com/tydye81) and [sk1080](https://github.com/sk1080)
 - [J-Runner with Extras](https://github.com/J-Runner-with-Extras/J-Runner-with-Extras) by J-Runner Contributors
-- [RGH3](https://github.com/15432/RGH3) by [15432](https://github.com/15432)
 - [Xbox 360 Crypto](https://github.com/GoobyCorp/Xbox-360-Crypto) by [GoobyCorp](https://github.com/GoobyCorp)
+- [ImgBuild / Build.py]() by [GliGli]() [Tiros]()
+- [RGH2 Build.py]() by Team Xecuter
+- [RGH3](https://github.com/15432/RGH3) by [15432](https://github.com/15432)
 
 And these are the projects i referenced:
 
