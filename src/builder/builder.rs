@@ -102,12 +102,34 @@ pub struct NandBootloaders {
     pub khvpatch: Option<Vec<PatchRecord>>,
 }
 
+impl NandBootloaders {
+    pub fn clear(&mut self) {
+        self.cb = None;
+        self.cb_a = None;
+        self.cb_x = None;
+        self.cb_b = None;
+        self.sc = None;
+        self.cd = None;
+        self.ce = None;
+        self.khvpatch = None;
+    }
+}
+
 #[derive(Clone)]
 pub struct NandUpdate {
     pub cf_0: Option<BootloaderCf>,
     pub cg_0: Option<BootloaderCg>,
     pub cf_1: Option<BootloaderCf>,
     pub cg_1: Option<BootloaderCg>,
+}
+
+impl NandUpdate {
+    pub fn clear(&mut self) {
+        self.cf_0 = None;
+        self.cg_0 = None;
+        self.cf_1 = None;
+        self.cg_1 = None;
+    }
 }
 
 #[derive(Clone)]
@@ -232,7 +254,7 @@ impl NandSkeleton {
                 cf_offset: U32::new(0),
                 patch_slots: I16::new(0),
                 kv_version: U16::new(0),
-                kv_addr: U32::new(0x4000),
+                kv_addr: U32::new(if layout == NandLayout::Bb { 0x20000 } else { 0x4000 }),
                 patch_size: U32::new(0),
                 smc_config_offset: U32::new(0),
                 smc_boot_size: U32::new(0x2000),
@@ -246,6 +268,20 @@ impl NandSkeleton {
             flashfs: FlashFS { root: crate::builder::chain::flashfs::FileSystemRoot::new(0, 0), partitions: HashMap::new() },
             layout,
             total_blocks,
+        }
+    }
+
+    pub fn clear_bootloaders(&mut self) {
+        self.bootloaders.clear();
+        if let Some(ref mut r) = self.rebooter {
+            r.clear();
+        }
+    }
+
+    pub fn clear_update(&mut self) {
+        self.update.clear();
+        if let Some(ref mut r) = self.rebooter_update {
+            r.clear();
         }
     }
 
@@ -280,7 +316,8 @@ impl NandSkeleton {
         }
         info!("[builder] Extracting and decrypting Keyvault (Addr: 0x{:X}, Size: 0x{:X})...", kv_addr, kv_size);
         let mut kv = crate::builder::chain::kv::Keyvault::parse(&image[kv_addr..kv_addr + kv_size])?;
-        kv.decrypt(&cpukey)?;
+        let hashed = header.kv_version.get() >= 2;
+        kv.decrypt(&cpukey, hashed)?;
 
         // 3. Extract and decrypt SMC
         let smc_offset = header.smc_boot_offset.get() as usize;
@@ -534,6 +571,7 @@ impl NandSkeleton {
 
         let mut curr = bootchain_start;
         let mut stages = Vec::new();
+        if let Some(cb) = &self.bootloaders.cb { stages.push(cb.serialize()); }
         if let Some(cba) = &self.bootloaders.cb_a { stages.push(cba.serialize()); }
         if let Some(cbx) = &self.bootloaders.cb_x { stages.push(cbx.serialize()); }
         if let Some(cbb) = &self.bootloaders.cb_b { stages.push(cbb.serialize()); }
@@ -616,13 +654,14 @@ impl NandSkeleton {
         info!("[builder] Starting final image build...");
         let mut kv = crate::builder::chain::kv::Keyvault::parse(&skel.extra.keyvault)?;
         info!("[builder] Encrypting Keyvault...");
-        kv.encrypt(&cpukey, true)?;
+        let hashed = skel.header.kv_version.get() >= 2;
+        kv.encrypt(&cpukey, hashed)?;
         skel.extra.keyvault = kv.data;
 
         let mut smc = crate::builder::chain::smc::RawSmc::new(skel.extra.smc.clone());
         info!("[builder] Re-encrypting bootloader chain...");
         encrypt_chain(
-            skel.bootloaders.cb_a.as_mut().ok_or("Missing CB_A for encryption")?,
+            skel.bootloaders.cb_a.as_mut().or(skel.bootloaders.cb.as_mut()).ok_or("Missing primary CB (CB or CB_A) for encryption")?,
             skel.bootloaders.cb_x.as_mut(),
             skel.bootloaders.cb_b.as_mut(),
             skel.bootloaders.sc.as_mut(),

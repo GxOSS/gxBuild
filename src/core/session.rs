@@ -428,7 +428,7 @@ impl Session {
                         match crate::core::data::xeini::parse_xe_ini(&path, &target) {
                             Ok(ini) => {
                                 let data_dir = PathBuf::from("data");
-                                match IniSearch::new(ini.clone(), &ini_base, &common, &data_dir) {
+                                match IniSearch::new(ini.clone(), &ini_base, &common, &data_dir, &self.active_nand) {
                                     Ok(search) => {
                                         // Collect all extracted assets (CF/CG, FlashFS, bootloaders) into pending_assets
                                         self.pending_assets.extend(search.result.extracted_assets);
@@ -476,8 +476,6 @@ impl Session {
                 }
                 InternalCommand::ParseImage { path, key } => {
                     info!("[session] Parsing image {:?}...", path);
-                    // Clear pending assets from previous session to prevent leakage
-                    self.pending_assets.clear();
                     match fs::read(&path) {
                         Ok(raw_data) => {
                             // Use preprocess_nand_with_lba to track bad block remapping

@@ -362,6 +362,9 @@ pub fn apply_xe_ini(
     pending_assets: &HashMap<String, Vec<u8>>)
     -> Result<NandSkeleton, IniError> {
     
+    nand.clear_bootloaders();
+    nand.clear_update();
+
     if !pending_assets.is_empty() {
         info!("[ini] Applying {} discovered assets from memory...", pending_assets.len());
     }
@@ -404,15 +407,18 @@ pub fn apply_xe_ini(
             notified = true;
         }
 
-        if prefix.starts_with("cb_") || prefix.starts_with("cba_") || prefix.starts_with("sb_") {
-            target_bl.cb = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
-            info!("[ini] Assigned CB from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
-        } else if prefix.starts_with("cbx_") {
-            target_bl.cb_x = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
-            info!("[ini] Assigned CB_X from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
+        if prefix.starts_with("cba_") {
+            target_bl.cb_a = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] Assigned CB_A from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
         } else if prefix.starts_with("cbb_") {
             target_bl.cb_b = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
             info!("[ini] Assigned CB_B from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
+        } else if prefix.starts_with("cbx_") {
+            target_bl.cb_x = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] Assigned CB_X from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
+        } else if prefix.starts_with("cb_") || prefix.starts_with("sb_") {
+            target_bl.cb = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] Assigned CB from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
         } else if prefix.starts_with("sc_") {
             target_bl.sc = Some(crate::builder::chain::sc::BootloaderSc::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
             info!("[ini] Assigned SC from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
@@ -435,7 +441,17 @@ pub fn apply_xe_ini(
 
     // Process File Entries (Security & FlashFS)
     // In the new architecture, FlashFS entries are added directly to the FlashFS struct 
-    // by filesearch.rs. FCRT bin can still be merged here if present in pending_assets.
+    // by filesearch.rs. Security and Extra files are merged here.
+    if let Some(smc_data) = pending_assets.get("smc.bin") {
+        nand.extra.smc = smc_data.clone();
+        info!("[ini] Assigned SMC.bin from memory");
+    }
+
+    if let Some(kv_data) = pending_assets.get("keyvault.bin").or_else(|| pending_assets.get("kv.bin")) {
+        nand.extra.keyvault = kv_data.clone();
+        info!("[ini] Assigned Keyvault from memory");
+    }
+
     if let Some(fcrt_data) = pending_assets.get("fcrt.bin") {
         nand.extra.fcrt = Some(fcrt_data.clone());
         info!("[ini] Assigned FCRT.bin from memory");

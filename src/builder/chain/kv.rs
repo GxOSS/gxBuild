@@ -42,22 +42,37 @@ impl Keyvault {
         })
     }
 
-    pub fn decrypt(&mut self, cpukey: &[u8; 16]) -> Result<(), String> {
+    pub fn decrypt(&mut self, cpukey: &[u8; 16], hashed: bool) -> Result<(), String> {
         if self.data.len() < 0x10 {
             return Err("Keyvault too small for decryption".to_string());
         }
 
-        // 1. Extract the HMAC-SHA1 Nonce (first 16 bytes)
-        let mut nonce = [0u8; 16];
-        nonce.copy_from_slice(&self.data[..0x10]);
-
-        // 2. Derive the RC4 key: HMAC-SHA1(CPUKey, Nonce)
-        let hmac_res = excrypt::hmac_sha(cpukey, &[&nonce])
-            .map_err(|e| format!("Key derivation failed: {}", e))?;
-        
         let mut decrypt_key = [0u8; 16];
-        decrypt_key.copy_from_slice(&hmac_res[..16]);
-        info!("[builder] Keyvault Decryption Key Derived: {:02x?}", decrypt_key);
+
+        if hashed {
+            // KV2 / Hashed Decryption
+            // 1. Calculate salt: HMAC-SHA1(CPUKey, DecryptedData[0x10..] + {0x07, 0x12})
+            // Wait, decryption for hashed KV uses the salt (nonce) at [0..16]
+            let mut nonce = [0u8; 16];
+            nonce.copy_from_slice(&self.data[..0x10]);
+
+            // Derive key: HMAC-SHA1(CPUKey, Nonce[0..16])
+            let hmac_res = excrypt::hmac_sha(cpukey, &[&nonce])
+                .map_err(|e| format!("KV2 key derivation failed: {}", e))?;
+            decrypt_key.copy_from_slice(&hmac_res[..16]);
+            info!("[builder] KV2 Decryption Key Derived: {:02x?}", decrypt_key);
+        } else {
+            // KV1 / Standard Decryption
+            // 1. Extract the HMAC-SHA1 Nonce (first 16 bytes)
+            let mut nonce = [0u8; 16];
+            nonce.copy_from_slice(&self.data[..0x10]);
+
+            // 2. Derive the RC4 key: HMAC-SHA1(CPUKey, Nonce)
+            let hmac_res = excrypt::hmac_sha(cpukey, &[&nonce])
+                .map_err(|e| format!("Key derivation failed: {}", e))?;
+            decrypt_key.copy_from_slice(&hmac_res[..16]);
+            info!("[builder] Keyvault Decryption Key Derived: {:02x?}", decrypt_key);
+        }
 
         // 3. Decrypt the rest of the KV (0x10 to end) using RC4
         let mut rc4 = Rc4::new(&decrypt_key)
@@ -98,8 +113,9 @@ impl Keyvault {
             // 4. Store the salt in the first 16 bytes
             self.data[..16].copy_from_slice(&salt[..16]);
         } else {
-            // KV1 / Standard Encryption (Symmetric to Decryption)
-            self.decrypt(cpukey)?;
+            // KV1 / Standard Encryption (Symmetric to Decryption - just call the inner RC4 logic)
+            // No recursive call to itself which would use the wrong branch.
+            self.decrypt(cpukey, false)?;
         }
         Ok(())
     }

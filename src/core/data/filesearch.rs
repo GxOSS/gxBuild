@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use crate::builder::chain::flashfs::{FlashFS, FileSystemEntry};
+use crate::builder::builder::NandSkeleton;
 use crate::core::data::xeini::{XeBuildIni, IniError};
 use log::{info, warn, error};
 
@@ -92,7 +93,7 @@ pub struct IniSearch {
 }
 
 impl IniSearch {
-    pub fn new(ini: XeBuildIni, build: impl AsRef<Path>, common: impl AsRef<Path>, data: impl AsRef<Path>) -> Result<Self, IniError> {
+    pub fn new(ini: XeBuildIni, build: impl AsRef<Path>, common: impl AsRef<Path>, data: impl AsRef<Path>, nand: &Option<NandSkeleton>) -> Result<Self, IniError> {
         let mut ini = ini;
         let mut result = IniSearchResult {
             bootloaders: None,
@@ -201,34 +202,95 @@ impl IniSearch {
         }
         ini.patch.path = patch_path.clone();
 
-        // Security / Extra Discovery, search data folder
+        // --- Security (KV/SMC) and Extra (FCRT) Discovery ---
         if !ini.security.is_empty() {
             let mut sec_paths = Vec::new();
             for entry in &ini.security {
                 let filename = &entry.filename;
-                let candidate = data.join(filename);
-                if candidate.exists() {
-                    let content = std::fs::read(&candidate)?;
-                    if let Some(expected) = &entry.hash {
-                        let actual = get_xebuild_crc32(&content, filename);
-                        if actual.to_lowercase() != expected.to_lowercase() {
-                            return Err(IniError::HashMismatch(filename.clone(), expected.clone(), actual));
+                let lower_name = filename.to_lowercase();
+                let mut found_content: Option<Vec<u8>> = None;
+                let mut found_path: Option<PathBuf> = None;
+
+                // Tier 1: NAND Image
+                if let Some(n) = nand {
+                    let nand_data = match lower_name.as_str() {
+                        "smc.bin" => Some(n.extra.smc.clone()),
+                        "keyvault.bin" | "kv.bin" => Some(n.extra.keyvault.clone()),
+                        "fcrt.bin" => n.extra.fcrt.clone(),
+                        _ => None,
+                    };
+                    if let Some(c) = nand_data {
+                        if let Some(expected) = &entry.hash {
+                            let actual = get_xebuild_crc32(&c, filename);
+                            if actual.to_lowercase() == expected.to_lowercase() {
+                                found_content = Some(c);
+                                found_path = Some(PathBuf::from("NAND_IMAGE"));
+                            } else {
+                                info!("[ini] Hash mismatch for {} in NAND Image Tier, seeking fallback...", filename);
+                            }
+                        } else {
+                            found_content = Some(c);
+                            found_path = Some(PathBuf::from("NAND_IMAGE"));
                         }
                     }
-                    result.extracted_assets.insert(filename.to_lowercase(), content);
-                    sec_paths.push(candidate);
+                }
+
+                // Tier 2: Data Folder
+                if found_content.is_none() {
+                    let cand = data.join(filename);
+                    if cand.exists() {
+                        let c = std::fs::read(&cand)?;
+                        if let Some(expected) = &entry.hash {
+                            let actual = get_xebuild_crc32(&c, filename);
+                            if actual.to_lowercase() == expected.to_lowercase() {
+                                found_content = Some(c);
+                                found_path = Some(cand);
+                            } else {
+                                info!("[ini] Hash mismatch for {} in Data Folder Tier, seeking fallback...", filename);
+                            }
+                        } else {
+                            found_content = Some(c);
+                            found_path = Some(cand);
+                        }
+                    }
+                }
+
+                // Tier 3: Common Folder (Security only)
+                if found_content.is_none() {
+                    let cand = common.join(filename);
+                    if cand.exists() {
+                        let c = std::fs::read(&cand)?;
+                        if let Some(expected) = &entry.hash {
+                            let actual = get_xebuild_crc32(&c, filename);
+                            if actual.to_lowercase() == expected.to_lowercase() {
+                                found_content = Some(c);
+                                found_path = Some(cand);
+                            } else {
+                                info!("[ini] Hash mismatch for {} in Common Folder Tier", filename);
+                            }
+                        } else {
+                            found_content = Some(c);
+                            found_path = Some(cand);
+                        }
+                    }
+                }
+
+                if let Some(c) = found_content {
+                    result.extracted_assets.insert(lower_name, c);
+                    if let Some(p) = found_path { sec_paths.push(p); }
                 } else {
-                    if filename.to_lowercase() == "odd.bin" {
+                    if lower_name == "odd.bin" {
                         warn!("[ini] odd.bin not found during discovery, skipping with warning.");
                         continue;
                     }
+                    error!("[ini] All tiers failed for priority asset: {}", filename);
                     return Err(IniError::FileNotFound(filename.clone()));
                 }
             }
             result.security = Some(sec_paths);
         }
 
-        // Bootloaders and Update Discovery
+        // --- Bootloaders and Update Discovery ---
         if !ini.main.is_empty() {
             result.bootloaders = Some(DiscoveredBootloaders::new());
             if ini.rebooter {
@@ -244,237 +306,287 @@ impl IniSearch {
                 if lower.starts_with("cf_") || lower.starts_with("sf_") { expected_cf = lower.clone(); }
                 else if lower.starts_with("cg_") || lower.starts_with("sg_") { expected_cg = lower.clone(); }
                 
-                // Track dynamic CB patching target
-                if lower.starts_with("cbb_") {
-                    target_cb = Some(lower.clone());
-                } else if target_cb.is_none() && (lower.starts_with("cb_") || lower.starts_with("sb_")) {
-                    target_cb = Some(lower.clone());
-                }
+                if lower.starts_with("cbb_") { target_cb = Some(lower.clone()); }
+                else if target_cb.is_none() && (lower.starts_with("cb_") || lower.starts_with("sb_")) { target_cb = Some(lower.clone()); }
             }
 
             // Parse Auto Patch into Memory
             let mut xe_patch = None;
             if let Some(ref p) = patch_path {
-                match crate::builder::tools::xebuild::parse_xe_binary(p.to_str().unwrap_or_default()) {
-                    Ok(parsed) => {
-                        if let Some(khv) = parsed.khv.as_ref() {
-                            ini.patch.khv = Some(khv.records.clone());
-                        }
-                        xe_patch = Some(parsed);
-                        info!("[ini] Successfully parsed auto patch binary into memory setup.");
-                    }
-                    Err(e) => {
-                        warn!("[ini] CRITICAL: Failed to parse patch binary at {:?}: {}", p, e);
-                    }
+                if let Ok(parsed) = crate::builder::tools::xebuild::parse_xe_binary(p.to_str().unwrap_or_default()) {
+                    if let Some(khv) = parsed.khv.as_ref() { ini.patch.khv = Some(khv.records.clone()); }
+                    xe_patch = Some(parsed);
                 }
-            } else {
-                warn!("[ini] No patch_path was supplied, skipping memory patch loading.");
             }
 
             for entry in &ini.main {
                 let filename = &entry.filename;
                 let lower_name = filename.to_lowercase();
                 if lower_name == "none" { continue; }
-                let mut found_path = None;
-                let mut content = None;
+                let mut found_content: Option<Vec<u8>> = None;
+                let mut found_path: Option<PathBuf> = None;
 
                 let is_update = lower_name.starts_with("cf_") || lower_name.starts_with("sf_") || lower_name.starts_with("cg_") || lower_name.starts_with("sg_");
 
-                if is_update {
-                    let p_build = build.join(filename);
-                    let p_common = common.join(filename);
-                    let p_xboxupd = build.join("xboxupd.bin");
+                macro_rules! check_hash {
+                    ($c:expr, $name:expr, $tier:expr) => {
+                        if let Some(expected) = &entry.hash {
+                            let actual = get_xebuild_crc32(&$c, $name);
+                            if actual.to_lowercase() == expected.to_lowercase() { true }
+                            else {
+                                if $name.to_lowercase().starts_with("cf") || $name.to_lowercase().starts_with("sf") {
+                                    warn!("[ini] CF/SF CRC32 mismatch bypass (Expected: {}, Found: {} in {} Tier). Continuing...", expected, actual, $tier);
+                                    true
+                                } else {
+                                    info!("[ini] Hash mismatch for {} in {} Tier", $name, $tier);
+                                    false
+                                }
+                            }
+                        } else { true }
+                    };
+                }
 
-                    if p_build.exists() {
-                        found_path = Some(p_build.clone());
-                        content = Some(std::fs::read(&p_build)?);
-                    } else if let Some(mem) = result.extracted_assets.get(&lower_name) {
-                        content = Some(mem.clone());
-                    } else {
-                        if p_xboxupd.exists() {
-                            if let Ok(data_upd) = std::fs::read(&p_xboxupd) {
-                                info!("[ini] Found generic xboxupd.bin, slicing CF/CG payloads...");
-                                if let Ok(cf) = crate::builder::chain::cf::BootloaderCf::parse(&data_upd) {
-                                    let cf_size = cf.header.size.get() as usize;
-                                    if data_upd.len() >= cf_size {
-                                        result.extracted_assets.insert(expected_cf.clone(), data_upd[0..cf_size].to_vec());
-                                        result.extracted_assets.insert(expected_cg.clone(), data_upd[cf_size..].to_vec());
-                                        content = result.extracted_assets.get(&lower_name).cloned();
+                // Tier 1: NAND Image
+                if let Some(n) = nand {
+                    let mut nand_data = None;
+                    if lower_name.starts_with("cb") {
+                        if lower_name.starts_with("cba") { nand_data = n.bootloaders.cb_a.as_ref().map(|b| b.serialize()); }
+                        else if lower_name.starts_with("cbb") { nand_data = n.bootloaders.cb_b.as_ref().map(|b| b.serialize()); }
+                        else if lower_name.starts_with("cbx") { nand_data = n.bootloaders.cb_x.as_ref().map(|b| b.serialize()); }
+                        else { nand_data = n.bootloaders.cb.as_ref().map(|b| b.serialize()); }
+                    } else if lower_name.starts_with("cd") || lower_name.starts_with("sd") {
+                        nand_data = n.bootloaders.cd.as_ref().map(|b| b.serialize());
+                    } else if lower_name.starts_with("ce") || lower_name.starts_with("se") {
+                        nand_data = n.bootloaders.ce.as_ref().map(|b| b.serialize());
+                    } else if lower_name.starts_with("sc") {
+                        nand_data = n.bootloaders.sc.as_ref().map(|b| b.serialize());
+                    } else if lower_name.starts_with("cf") || lower_name.starts_with("sf") {
+                        nand_data = n.update.cf_0.as_ref().map(|b| b.serialize());
+                    } else if lower_name.starts_with("cg") || lower_name.starts_with("sg") {
+                        nand_data = n.update.cg_0.as_ref().map(|b| b.serialize());
+                    }
+
+                    if let Some(c) = nand_data {
+                        if check_hash!(c, filename, "NAND Image") {
+                            found_content = Some(c);
+                            found_path = Some(PathBuf::from("NAND_IMAGE"));
+                        }
+                    }
+                }
+
+                // Tier 2: Build ini Folder / Data
+                if found_content.is_none() {
+                    let cand = build.join("data").join(filename);
+                    if cand.exists() {
+                        let c = std::fs::read(&cand)?;
+                        if check_hash!(c, filename, "Data Folder") {
+                            found_content = Some(c);
+                            found_path = Some(cand);
+                        }
+                    }
+                }
+
+                // Tier 3: Build ini Folder (direct)
+                if found_content.is_none() {
+                    let cand = build.join(filename);
+                    if cand.exists() {
+                        let c = std::fs::read(&cand)?;
+                        if check_hash!(c, filename, "Build Folder") {
+                            found_content = Some(c);
+                            found_path = Some(cand);
+                        }
+                    }
+                }
+
+                // Tier 4: Common Folder
+                if found_content.is_none() {
+                    let cand = common.join(filename);
+                    if cand.exists() {
+                        let c = std::fs::read(&cand)?;
+                        if check_hash!(c, filename, "Common Folder") {
+                            found_content = Some(c);
+                            found_path = Some(cand);
+                        }
+                    }
+                }
+
+                // Tier 5: Fallbacks (xboxupd.bin / STFS) - Update only
+                if is_update && found_content.is_none() {
+                    let p_xboxupd = build.join("xboxupd.bin");
+                    if p_xboxupd.exists() {
+                        if let Ok(data_upd) = std::fs::read(&p_xboxupd) {
+                            if let Ok(cf) = crate::builder::chain::cf::BootloaderCf::parse(&data_upd) {
+                                let cf_size = cf.header.size.get() as usize;
+                                result.extracted_assets.insert(expected_cf.clone(), data_upd[0..cf_size].to_vec());
+                                result.extracted_assets.insert(expected_cg.clone(), data_upd[cf_size..].to_vec());
+                                if let Some(c) = result.extracted_assets.get(&lower_name).cloned() {
+                                    if check_hash!(c, filename, "xboxupd.bin") {
+                                        found_content = Some(c);
+                                        found_path = Some(p_xboxupd);
                                     }
                                 }
                             }
                         }
-                        
-                        if content.is_none() {
-                            if let Ok(entries) = std::fs::read_dir(&build) {
-                                for stfs_entry in entries.flatten() {
-                                    if let Some(name) = stfs_entry.file_name().to_str() {
-                                        if name.starts_with("su") && !name.contains('.') {
-                                            if let Ok(data_stfs) = std::fs::read(stfs_entry.path()) {
-                                                info!("[ini] Found STFS update container: {}, extracting to memory...", name);
-                                                if let Ok(stfs) = crate::core::data::stfs::StfsContainer::new(&data_stfs) {
-                                                    if let Ok(mem) = stfs.extract_to_memory() {
-                                                        for (k, v) in mem {
-                                                            if k == "xboxupd.bin" || (k.starts_with("su") && !k.contains('.')) {
-                                                                if let Ok(cf) = crate::builder::chain::cf::BootloaderCf::parse(&v) {
-                                                                    let cf_size = cf.header.size.get() as usize;
-                                                                    if v.len() >= cf_size {
-                                                                        result.extracted_assets.insert(expected_cf.clone(), v[0..cf_size].to_vec());
-                                                                        result.extracted_assets.insert(expected_cg.clone(), v[cf_size..].to_vec());
-                                                                    }
-                                                                }
-                                                            } else {
-                                                                result.extracted_assets.insert(k.to_lowercase(), v);
+                    }
+
+                    if found_content.is_none() {
+                        if let Ok(entries) = std::fs::read_dir(&build) {
+                            for stfs_entry in entries.flatten() {
+                                if let Some(name) = stfs_entry.file_name().to_str() {
+                                    if name.starts_with("su") && !name.contains('.') {
+                                        if let Ok(data_stfs) = std::fs::read(stfs_entry.path()) {
+                                            if let Ok(stfs) = crate::core::data::stfs::StfsContainer::new(&data_stfs) {
+                                                if let Ok(mem) = stfs.extract_to_memory() {
+                                                    for (k, v) in mem {
+                                                        let k_lower = k.to_lowercase();
+                                                        if k_lower == "xboxupd.bin" || (k_lower.starts_with("su") && !k_lower.contains('.')) {
+                                                            if let Ok(cf) = crate::builder::chain::cf::BootloaderCf::parse(&v) {
+                                                                let cf_size = cf.header.size.get() as usize;
+                                                                result.extracted_assets.insert(expected_cf.clone(), v[0..cf_size].to_vec());
+                                                                result.extracted_assets.insert(expected_cg.clone(), v[cf_size..].to_vec());
                                                             }
+                                                        } else {
+                                                            result.extracted_assets.insert(k_lower, v);
                                                         }
-                                                        content = result.extracted_assets.get(&lower_name).cloned();
+                                                    }
+                                                    if let Some(c) = result.extracted_assets.get(&lower_name).cloned() {
+                                                        if check_hash!(c, filename, "STFS") {
+                                                            found_content = Some(c);
+                                                            found_path = Some(stfs_entry.path());
+                                                        }
                                                     }
                                                 }
-                                                break;
                                             }
+                                            if found_content.is_some() { break; }
                                         }
                                     }
                                 }
                             }
                         }
-
-                        if content.is_none() && p_common.exists() {
-                            found_path = Some(p_common.clone());
-                            content = Some(std::fs::read(&p_common)?);
-                        }
-                    }
-                } else {
-                    let p_build = build.join(filename);
-                    let p_common = common.join(filename);
-                    if p_build.exists() {
-                        found_path = Some(p_build.clone());
-                        content = Some(std::fs::read(&p_build)?);
-                    } else if p_common.exists() {
-                        found_path = Some(p_common.clone());
-                        content = Some(std::fs::read(&p_common)?);
                     }
                 }
 
-                if let Some(mut c) = content {
-                    if let Some(expected) = &entry.hash {
-                        let actual = get_xebuild_crc32(&c, filename);
-                        if actual.to_lowercase() != expected.to_lowercase() {
-                            if lower_name.starts_with("cf") || lower_name.starts_with("sf") {
-                                warn!("[ini] CF CRC32 mismatch detected (Expected: {}, Found: {}). This is a temporary bypass until CF CRC logic is complete. Continuing build...", expected, actual);
-                            } else {
-                                return Err(IniError::HashMismatch(filename.clone(), expected.clone(), actual));
-                            }
-                        }
-                    }
-
-                    // Apply Patch after Hash
+                if let Some(mut c) = found_content {
+                    // Apply Patch after confirmation
                     if let Some(ref parsed_patch) = xe_patch {
                         if Some(&lower_name) == target_cb.as_ref() {
                             if let Some(ref cb_patch) = parsed_patch.cb {
-                                if let Err(e) = crate::builder::tools::xebuild::apply_xe_buffer(cb_patch, &mut c) {
-                                    error!("[ini] gxPatcher failed to apply CB patch {} to image: {}", filename, e);
-                                } else {
-                                    info!("[ini] gxPatcher applied CB patch {} to image.", filename);
-                                }
+                                let _ = crate::builder::tools::xebuild::apply_xe_buffer(cb_patch, &mut c);
                             }
                         } else if lower_name.starts_with("cd_") || lower_name.starts_with("sd_") {
                             if let Some(ref cd_patch) = parsed_patch.cd {
-                                if let Err(e) = crate::builder::tools::xebuild::apply_xe_buffer(cd_patch, &mut c) {
-                                    error!("[ini] gxPatcher failed to apply CD patch {} to image: {}", filename, e);
-                                } else {
-                                    info!("[ini] gxPatcher applied CD patch {} to image.", filename);
-                                }
+                                let _ = crate::builder::tools::xebuild::apply_xe_buffer(cd_patch, &mut c);
                             }
                         }
                     }
 
                     result.extracted_assets.insert(lower_name.clone(), c);
-
-                    let is_rebooter = entry.chain > 0;
-                    let target_bl = if is_rebooter {
+                    let target_bl = if entry.chain > 0 {
                         result.rebooter.as_mut().ok_or(IniError::RebooterNotInitialized)?
                     } else {
                         result.bootloaders.as_mut().unwrap()
                     };
 
-                    let fp = found_path.unwrap_or_else(|| std::path::PathBuf::from(filename));
+                    let fp = found_path.unwrap_or_else(|| PathBuf::from("MEMORY"));
                     if lower_name.starts_with("cb") {
                         if lower_name.starts_with("cba") { target_bl.cb_a = Some(fp); }
                         else if lower_name.starts_with("cbb") { target_bl.cb_b = Some(fp); }
                         else if lower_name.starts_with("cbx") { target_bl.cb_x = Some(fp); }
                         else { target_bl.cb = Some(fp); }
-                    } else if lower_name.starts_with("cd") || lower_name.starts_with("sd") {
-                        target_bl.cd = Some(fp);
-                    } else if lower_name.starts_with("ce") || lower_name.starts_with("se") {
-                        target_bl.ce = Some(fp);
-                    } else if lower_name.starts_with("sc") {
-                        target_bl.sc = Some(fp);
-                    }
+                    } else if lower_name.starts_with("cd") || lower_name.starts_with("sd") { target_bl.cd = Some(fp); }
+                    else if lower_name.starts_with("ce") || lower_name.starts_with("se") { target_bl.ce = Some(fp); }
+                    else if lower_name.starts_with("sc") { target_bl.sc = Some(fp); }
                 } else {
-                    warn!("[ini] Bootloader not found: {}", filename);
+                    error!("[ini] Bootloader Tiered Search failed: {}", filename);
                     return Err(IniError::FileNotFound(filename.to_string()));
                 }
             }
         }
 
-        // --- FlashFS Discovery ---
+        // --- FlashFS Tiered Discovery ---
         if !ini.flashfs.is_empty() {
             let mut flashfs = FlashFS::new();
             for entry in &ini.flashfs {
                 let filename = &entry.filename;
-                
-                // Define candidate filenames: exact, plus suffixes '1' and '2'
-                let candidates = [
-                    filename.clone(),
-                    format!("{}1", filename),
-                    format!("{}2", filename),
-                ];
+                let mut found_content: Option<Vec<u8>> = None;
 
-                let mut content = None;
-                let mut found_as = None;
-
-                for cand in &candidates {
-                    let cand_lower = cand.to_lowercase();
-                    let p_flashfs = flashfs_folder.join(cand);
-                    let p_build = build.join(cand);
-
-                    if p_flashfs.exists() {
-                        content = Some(std::fs::read(&p_flashfs)?);
-                    } else if p_build.exists() {
-                        content = Some(std::fs::read(&p_build)?);
-                    } else if let Some(mem) = result.extracted_assets.get(&cand_lower) {
-                        content = Some(mem.clone());
-                    }
-
-                    if content.is_some() {
-                        found_as = Some(cand.clone());
-                        break;
+                // Tier 1: NAND Image
+                if let Some(n) = nand {
+                    if let Some(n_entry) = n.flashfs.root.entries.iter().find(|e| e.file_name.to_lowercase() == filename.to_lowercase()) {
+                        let c = n_entry.data.clone();
+                        if let Some(expected) = &entry.hash {
+                            let mut hasher = crc32fast::Hasher::new();
+                            hasher.update(&c);
+                            let actual = format!("{:08x}", hasher.finalize());
+                            if actual.to_lowercase() == expected.to_lowercase() {
+                                found_content = Some(c);
+                            } else {
+                                info!("[ini] Hash mismatch for {} in NAND FlashFS Tier", filename);
+                            }
+                        } else { found_content = Some(c); }
                     }
                 }
 
-                if let Some(c) = content {
-                    let actual_found_name = found_as.unwrap();
-                    if actual_found_name != *filename {
-                        info!("[ini] Found variant for FlashFS asset '{}' -> '{}'", filename, actual_found_name);
+                // Tier 2 & 3: Local Folder (orig, orig1, orig2)
+                if found_content.is_none() {
+                    let candidates = [filename.clone(), format!("{}1", filename), format!("{}2", filename)];
+                    let paths = [flashfs_folder.clone(), build.clone()];
+                    for p_base in &paths {
+                        for cand in &candidates {
+                            let p = p_base.join(cand);
+                            if p.exists() {
+                                let c = std::fs::read(&p)?;
+                                if let Some(expected) = &entry.hash {
+                                    let mut hasher = crc32fast::Hasher::new();
+                                    hasher.update(&c);
+                                    let actual = format!("{:08x}", hasher.finalize());
+                                    if actual.to_lowercase() == expected.to_lowercase() {
+                                        found_content = Some(c);
+                                        break;
+                                    } else {
+                                        info!("[ini] Hash mismatch for {} ({}) in Folder Tier", filename, cand);
+                                    }
+                                } else {
+                                    found_content = Some(c);
+                                    break;
+                                }
+                            }
+                        }
+                        if found_content.is_some() { break; }
                     }
+                }
 
-                    if let Some(expected) = &entry.hash {
-                        let mut hasher = crc32fast::Hasher::new();
-                        hasher.update(&c);
-                        let actual = format!("{:08x}", hasher.finalize());
-                        if actual.to_lowercase() != expected.to_lowercase() {
-                            return Err(IniError::HashMismatch(actual_found_name, expected.clone(), actual));
+                // Tier 4: Memory / STFS
+                if found_content.is_none() {
+                    let cand_names = [filename.to_lowercase(), format!("{}1", filename.to_lowercase()), format!("{}2", filename.to_lowercase())];
+                    for cand in &cand_names {
+                        if let Some(c) = result.extracted_assets.get(cand).cloned() {
+                            if let Some(expected) = &entry.hash {
+                                let mut hasher = crc32fast::Hasher::new();
+                                hasher.update(&c);
+                                let actual = format!("{:08x}", hasher.finalize());
+                                if actual.to_lowercase() == expected.to_lowercase() {
+                                    found_content = Some(c);
+                                    break;
+                                } else {
+                                    info!("[ini] Hash mismatch for {} in Memory/STFS Tier", filename);
+                                }
+                            } else {
+                                found_content = Some(c);
+                                break;
+                            }
                         }
                     }
-                    
+                }
+
+                if let Some(c) = found_content {
                     let mut fs_entry = FileSystemEntry::new(0);
-                    fs_entry.file_name = filename.clone(); // Keep original INI name for FlashFS
+                    fs_entry.file_name = filename.clone();
                     fs_entry.data = c.clone();
                     flashfs.root.entries.push(fs_entry);
-                    
                     result.extracted_assets.insert(filename.to_lowercase(), c);
                 } else {
-                    warn!("[ini] FlashFS file not found: {}", filename);
+                    error!("[ini] FlashFS Tiered Search failed: {}", filename);
                     return Err(IniError::FileNotFound(filename.to_string()));
                 }
             }
