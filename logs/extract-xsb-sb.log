@@ -1,0 +1,78 @@
+---------------------------------------------------------------
+     xeBuild v1.21.810
+---------------------------------------------------------------
+base path changed to C:\Users\Exposure\Downloads\J-Runner-with-Extras\xeBuild
+---- { Extract Mode } ----
+***** NOTE: Most errors/warnings will be due to the fact extract mode does not process 1BL and CPU keys! *****
+
+
+------ Checking .\smallblock-xsb-xebuild.bin ------
+.\smallblock-xsb-xebuild.bin file size: 0x1080000
+nanddump header checks passed OK!
+Loading NAND dump (0x1080000 bytes)...done!
+Detecting NAND controller type from dump data...
+	NAND dump is from a small block machine
+	NAND dump uses small block controller
+parsing dump into user and spare...
+done!
+KeyVault cannot be 0x0 bytes, using 0x4000
+decrypting KeyVault at address 0x4000 of size 0x4000
+keyvault decrypt failed, discarding
+decrypting SMC at address 0x1000 of size 0x3000
+SMC decrypted OK, will use if no external smc.bin is provided
+seeking smc config in dump...found at offset 0xf7c000! Using if no smc config is provided.
+***** WARNING: could not find a non-zero CF LDV to use, setting it to 1 but that may be incorrect!
+Scanning for mobile data and fsroot...Mobiles found:
+    fsroot      version 01 found at offset 0x00e44000 len 0x4000 page 0x00007220
+seeking security files...
+crl.bin found in sector 0x38b size 0xa00...verify failed! Discarding data.
+dae.bin found in sector 0x38c size 0xad30...
+******* ERROR: dae hash incorrect, could not decrypt!
+verify failed! Discarding data.
+extended.bin found in sector 0x38f size 0x4000...verify failed! Discarding data.
+secdata.bin found in sector 0x390 size 0x400...verify failed! Discarding data.
+done!
+Dump load success!
+
+---------------------------------------------------------------
+flash fs file list:
+---------------------------------------------------------------
+sector: 0x0034 offset: 0x000d0000 size: 0x0006bfe0 timestamp: 0x5c8c6f51 name: sysupdate.xexp1
+sector: 0x004f offset: 0x0013c000 size: 0x00014000 timestamp: 0x5c8c6f51 name: aac.xexp1
+sector: 0x0054 offset: 0x00150000 size: 0x00061000 timestamp: 0x5c8c6f51 name: bootanim.xex
+sector: 0x006d offset: 0x001b4000 size: 0x0000c000 timestamp: 0x5c8c6f51 name: createprofile.xex
+sector: 0x0070 offset: 0x001c0000 size: 0x005b2000 timestamp: 0x5c8c6f51 name: dash.xex
+sector: 0x01dd offset: 0x00774000 size: 0x0000a000 timestamp: 0x5c8c6f51 name: deviceselector.xex
+sector: 0x01e0 offset: 0x00780000 size: 0x0001b000 timestamp: 0x5c8c6f51 name: gamerprofile.xex
+sector: 0x01e7 offset: 0x0079c000 size: 0x0001d000 timestamp: 0x5c8c6f51 name: hud.xex
+sector: 0x01ef offset: 0x007bc000 size: 0x00014000 timestamp: 0x5c8c6f51 name: huduiskin.xex
+sector: 0x01f4 offset: 0x007d0000 size: 0x00008000 timestamp: 0x5c8c6f51 name: mfgbootlauncher.xex
+sector: 0x01f6 offset: 0x007d8000 size: 0x0000c000 timestamp: 0x5c8c6f51 name: minimediaplayer.xex
+sector: 0x01f9 offset: 0x007e4000 size: 0x0000f000 timestamp: 0x5c8c6f51 name: nomni.xexp1
+sector: 0x01fd offset: 0x007f4000 size: 0x00002000 timestamp: 0x5c8c6f51 name: nomnifwk.xexp1
+sector: 0x01fe offset: 0x007f8000 size: 0x00005000 timestamp: 0x5c8c6f51 name: nomnifwm.xexp1
+sector: 0x0200 offset: 0x00800000 size: 0x00006000 timestamp: 0x5c8c6f51 name: SegoeXbox-Light.xtt
+sector: 0x0202 offset: 0x00808000 size: 0x0001a000 timestamp: 0x5c8c6f51 name: signin.xex
+sector: 0x0209 offset: 0x00824000 size: 0x00007000 timestamp: 0x5c8c6f51 name: updater.xex
+sector: 0x020b offset: 0x0082c000 size: 0x0000b000 timestamp: 0x5c8c6f51 name: vk.xex
+sector: 0x020e offset: 0x00838000 size: 0x00250000 timestamp: 0x5c8c6f51 name: xam.xex
+sector: 0x02a2 offset: 0x00a88000 size: 0x0011b000 timestamp: 0x5c8c6f51 name: xenonclatin.xtt
+sector: 0x02e9 offset: 0x00ba4000 size: 0x00018000 timestamp: 0x5c8c6f51 name: xenonclatin.xttp1
+sector: 0x02ef offset: 0x00bbc000 size: 0x001a8000 timestamp: 0x5c8c6f51 name: xenonjklatin.xtt
+sector: 0x0359 offset: 0x00d64000 size: 0x00007000 timestamp: 0x5c8c6f51 name: xenonjklatin.xttp1
+sector: 0x035b offset: 0x00d6c000 size: 0x00017000 timestamp: 0x5c8c6f51 name: ximecore.xex
+sector: 0x0361 offset: 0x00d84000 size: 0x00090000 timestamp: 0x5c8c6f51 name: ximedic.xex
+sector: 0x0385 offset: 0x00e14000 size: 0x00002800 timestamp: 0x5c8c6f51 name: ximedic.xexp1
+sector: 0x0386 offset: 0x00e18000 size: 0x0000b800 timestamp: 0x5c8c6f51 name: launch.xex
+sector: 0x0389 offset: 0x00e24000 size: 0x00004800 timestamp: 0x5c8c6f51 name: lhelper.xex
+sector: 0x038b offset: 0x00e2c000 size: 0x00000a00 timestamp: 0x5c8c6f51 name: crl.bin
+sector: 0x038c offset: 0x00e30000 size: 0x0000ad30 timestamp: 0x5c8c6f51 name: dae.bin
+sector: 0x038f offset: 0x00e3c000 size: 0x00004000 timestamp: 0x5c8c6f51 name: extended.bin
+sector: 0x0390 offset: 0x00e40000 size: 0x00000400 timestamp: 0x5c8c6f51 name: secdata.bin
+---------------------------------------------------------------
+checking boot image (update mode test):
+---------------------------------------------------------------
+C v31422 at 0x4000 size 0x303e91af (CB)
+---------------------------------------------------------------
+    xeBuild Finished. Have a nice day.
+---------------------------------------------------------------

@@ -19,6 +19,10 @@ pub enum NandLayout {
     Emmc,
 }
 
+/// Anchor block offsets for eMMC NANDs (48MB/4GB). 
+/// These contain the FlashFS root block and sequence number.
+pub const EMMC_ANCHOR_OFFSETS: [usize; 4] = [0x2fe0000, 0x2fe4000, 0x2fe8000, 0x2fec000];
+
 /// Spare metadata format type — defines byte layout of the 16-byte spare area per page.
 /// Based on x360Utils NANDSpare.MetaType detection.
 #[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]

@@ -621,21 +621,43 @@ impl FlashFS {
         let total_blocks = layout.total_blocks(image.len());
         let pages_per_block = layout.logical_pages_per_block();
         let mut best: std::collections::HashMap<u8, (usize, u32)> = std::collections::HashMap::new();
+        
+        // Phase 1: EMMC Anchor Discovery
+        if *layout == NandLayout::Emmc {
+            for &offset in &EMMC_ANCHOR_OFFSETS {
+                if offset + 0x20 > image.len() { continue; }
+                let sig = &image[offset..offset + 4];
+                if sig == b"ANCH" {
+                    let mut cursor = Cursor::new(&image[offset + 4..offset + 20]);
+                    let _v = cursor.read_u32::<BigEndian>().unwrap_or(0);
+                    let block = cursor.read_u32::<BigEndian>().unwrap_or(0) as usize;
+                    let seq = cursor.read_u32::<BigEndian>().unwrap_or(0);
+                    
+                    let newer = match best.get(&0x30) { Some(&(_, b_seq)) => seq > b_seq, None => true };
+                    if newer {
+                        info!("[flashfs] EMMC Anchor found at 0x{:X}: block {}, version {}", offset, block, seq);
+                        best.insert(0x30, (block, seq));
+                    }
+                }
+            }
+        }
 
         info!("[flashfs] FlashFS scan: {} blocks to examine, {} known bad blocks", total_blocks, lba_map.bad_blocks.len());
 
-        // Phase 1: walk spare data, skipping known bad blocks from LBA map
-        for block in 0..total_blocks {
-            // Skip blocks known to be bad
-            if lba_map.is_bad(block) { continue; }
-            if is_bad_block(image, block, layout) { continue; }
-            if let Some(spare) = get_page_spare(image, block * pages_per_block, layout) {
-                let parsed = FsSpareData::parse(&spare, layout);
-                let btype = parsed.fs_block_type;
-                if btype == 0x30 || btype == 0x2C || (0x31..=0x39).contains(&btype) {
-                    let seq = parsed.fs_sequence;
-                    let newer = match best.get(&btype) { Some(&(_, b_seq)) => seq > b_seq, None => true };
-                    if newer { best.insert(btype, (block, seq)); }
+        // Phase 1.5: walk spare data (Small Block / Big Block only), skipping known bad blocks from LBA map
+        if *layout != NandLayout::Emmc {
+            for block in 0..total_blocks {
+                // Skip blocks known to be bad
+                if lba_map.is_bad(block) { continue; }
+                if is_bad_block(image, block, layout) { continue; }
+                if let Some(spare) = get_page_spare(image, block * pages_per_block, layout) {
+                    let parsed = FsSpareData::parse(&spare, layout);
+                    let btype = parsed.fs_block_type;
+                    if btype == 0x30 || btype == 0x2C || (0x31..=0x39).contains(&btype) {
+                        let seq = parsed.fs_sequence;
+                        let newer = match best.get(&btype) { Some(&(_, b_seq)) => seq > b_seq, None => true };
+                        if newer { best.insert(btype, (block, seq)); }
+                    }
                 }
             }
         }

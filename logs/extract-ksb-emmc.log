@@ -1,0 +1,96 @@
+---------------------------------------------------------------
+     xeBuild v1.21.810
+---------------------------------------------------------------
+base path changed to C:\Users\Exposure\Downloads\J-Runner-with-Extras\xeBuild
+---- { Extract Mode } ----
+***** NOTE: Most errors/warnings will be due to the fact extract mode does not process 1BL and CPU keys! *****
+
+
+------ Checking .\updflash.bin ------
+.\updflash.bin file size: 0x3000000
+nanddump header checks passed OK!
+Loading NAND dump (0x3000000 bytes)...done!
+Detecting NAND controller type from dump data...
+	NAND dump is from a mmc machine
+	NAND dump uses big block controller
+decrypting KeyVault at address 0x4000 of size 0x4000
+keyvault decrypt failed, discarding
+decrypting SMC at address 0x800 of size 0x3800
+SMC decrypted OK, will use if no external smc.bin is provided
+seeking smc config in dump...found at offset 0x2ffc000! Using if no smc config is provided.
+***** WARNING: CB decrypt failed! Unable to get pairing data!
+***** WARNING: could not find a non-zero CF LDV to use, setting it to 1 but that may be incorrect!
+Scanning for mobile data and fsroot...attempting to find valid anchor block
+anchor block v 1 at 0x2fe8000 is valid
+anchor block v 2 at 0x2fec000 is valid
+anchor block v 2 at 0x2fec000 is selected
+Mobiles found:
+    fsroot      version 01 found at offset 0x00e74000 len 0x4000 page 0x00000000
+    mobileB.dat version 01 found at offset 0x00e68000 len 0x0800 page 0x00000001
+    mobileC.dat version 01 found at offset 0x00e6c000 len 0x0200 page 0x00000002
+    mobileE.dat version 01 found at offset 0x00e70000 len 0x0800 page 0x00000004
+extracting MobileB.dat from page 0x1 (offset 0xe68000), size 2048 (0x800) bytes
+extracting MobileC.dat from page 0x2 (offset 0xe6c000), size 512 (0x200) bytes
+extracting MobileE.dat from page 0x4 (offset 0xe70000), size 2048 (0x800) bytes
+Statistics.settings found at offset 0x2ff8000, size 4096 (0x1000) bytes
+Manufacturing.data found at offset 0x2ff4000, size 4096 (0x1000) bytes
+seeking security files...
+crl.bin found in sector 0x393 size 0xa00...verify failed! Discarding data.
+dae.bin found in sector 0x394 size 0xad30...
+******* ERROR: dae hash incorrect, could not decrypt!
+verify failed! Discarding data.
+extended.bin found in sector 0x397 size 0x4000...verify failed! Discarding data.
+fcrt.bin found in sector 0x398 size 0x4000...pub key to verify signature is not available, skipping!
+
+******* ERROR: FCRT hash check failed, could not decrypt!
+verify failed! Discarding data.
+secdata.bin found in sector 0x399 size 0x400...verify failed! Discarding data.
+done!
+**** Warning: error getting CD Nonce, offset 0x9ef0 aborting!
+Dump load success!
+
+---------------------------------------------------------------
+flash fs file list:
+---------------------------------------------------------------
+sector: 0x0034 offset: 0x000d0000 size: 0x0006bfe0 timestamp: 0x5b779989 name: sysupdate.xexp1
+sector: 0x004f offset: 0x0013c000 size: 0x00014000 timestamp: 0x5b779989 name: aac.xexp1
+sector: 0x0054 offset: 0x00150000 size: 0x00061000 timestamp: 0x5b779989 name: bootanim.xex
+sector: 0x006d offset: 0x001b4000 size: 0x0000c000 timestamp: 0x5b779989 name: createprofile.xex
+sector: 0x0070 offset: 0x001c0000 size: 0x005b2000 timestamp: 0x5b779989 name: dash.xex
+sector: 0x01dd offset: 0x00774000 size: 0x0000a000 timestamp: 0x5b779989 name: deviceselector.xex
+sector: 0x01e0 offset: 0x00780000 size: 0x0001b000 timestamp: 0x5b779989 name: gamerprofile.xex
+sector: 0x01e7 offset: 0x0079c000 size: 0x0001d000 timestamp: 0x5b779989 name: hud.xex
+sector: 0x01ef offset: 0x007bc000 size: 0x00014000 timestamp: 0x5b779989 name: huduiskin.xex
+sector: 0x01f4 offset: 0x007d0000 size: 0x00008000 timestamp: 0x5b779989 name: mfgbootlauncher.xex
+sector: 0x01f6 offset: 0x007d8000 size: 0x0000c000 timestamp: 0x5b779989 name: minimediaplayer.xex
+sector: 0x01f9 offset: 0x007e4000 size: 0x0000f000 timestamp: 0x5b779989 name: nomni.xexp1
+sector: 0x01fd offset: 0x007f4000 size: 0x00002000 timestamp: 0x5b779989 name: nomnifwk.xexp1
+sector: 0x01fe offset: 0x007f8000 size: 0x00005000 timestamp: 0x5b779989 name: nomnifwm.xexp1
+sector: 0x0200 offset: 0x00800000 size: 0x00006000 timestamp: 0x5b779989 name: SegoeXbox-Light.xtt
+sector: 0x0202 offset: 0x00808000 size: 0x0001a000 timestamp: 0x5b779989 name: signin.xex
+sector: 0x0209 offset: 0x00824000 size: 0x00007000 timestamp: 0x5b779989 name: updater.xex
+sector: 0x020b offset: 0x0082c000 size: 0x0000b000 timestamp: 0x5b779989 name: vk.xex
+sector: 0x020e offset: 0x00838000 size: 0x0026e000 timestamp: 0x5b779989 name: xam.xex
+sector: 0x02aa offset: 0x00aa8000 size: 0x0011b000 timestamp: 0x5b779989 name: xenonclatin.xtt
+sector: 0x02f1 offset: 0x00bc4000 size: 0x00018000 timestamp: 0x5b779989 name: xenonclatin.xttp1
+sector: 0x02f7 offset: 0x00bdc000 size: 0x001a8000 timestamp: 0x5b779989 name: xenonjklatin.xtt
+sector: 0x0361 offset: 0x00d84000 size: 0x00007000 timestamp: 0x5b779989 name: xenonjklatin.xttp1
+sector: 0x0363 offset: 0x00d8c000 size: 0x00017000 timestamp: 0x5b779989 name: ximecore.xex
+sector: 0x0369 offset: 0x00da4000 size: 0x00090000 timestamp: 0x5b779989 name: ximedic.xex
+sector: 0x038d offset: 0x00e34000 size: 0x00002800 timestamp: 0x5b779989 name: ximedic.xexp1
+sector: 0x038e offset: 0x00e38000 size: 0x0000b800 timestamp: 0x5b779989 name: launch.xex
+sector: 0x0391 offset: 0x00e44000 size: 0x00004800 timestamp: 0x5b779989 name: lhelper.xex
+sector: 0x0393 offset: 0x00e4c000 size: 0x00000a00 timestamp: 0x5b779989 name: crl.bin
+sector: 0x0394 offset: 0x00e50000 size: 0x0000ad30 timestamp: 0x5b779989 name: dae.bin
+sector: 0x0397 offset: 0x00e5c000 size: 0x00004000 timestamp: 0x5b779989 name: extended.bin
+sector: 0x0398 offset: 0x00e60000 size: 0x00004000 timestamp: 0x5b779989 name: fcrt.bin
+sector: 0x0399 offset: 0x00e64000 size: 0x00000400 timestamp: 0x5b779989 name: secdata.bin
+---------------------------------------------------------------
+checking boot image (update mode test):
+---------------------------------------------------------------
+CB v10918 at 0x8000 size 0x1af0 (CB)
+CB v15432 at 0x9af0 size 0x400 (dual CB)
+CB v13121 at 0x9ef0 size 0x7b40 (CD)
+---------------------------------------------------------------
+    xeBuild Finished. Have a nice day.
+---------------------------------------------------------------
