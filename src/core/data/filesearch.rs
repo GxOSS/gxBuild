@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use crate::builder::chain::flashfs::{FlashFS, FileSystemEntry};
 use crate::core::data::xeini::{XeBuildIni, IniError};
-use log::{info, warn};
+use log::{info, warn, error};
 
 
 // Search for files listed in INI
@@ -46,11 +46,40 @@ fn get_xebuild_crc32(data: &[u8], filename: &str) -> String {
                 lower_name.starts_with("se") || lower_name.starts_with("sf") || 
                 lower_name.starts_with("sg");
 
+    if !is_bl {
+        return format!("{:08x}", crc32fast::hash(data));
+    }
+
+    // Determine zeroing length based on xeBuild's canonical rules:
+    // - CB_A / SB: 16-byte nonce/HMAC zone skip (0x10..0x20).
+    // - CB_B / CD: 256-byte generic RSA signature skip (0x10..0x110).
+    // - CE / CF / CG: No skip (Full unpatched CRC32).
+    let is_cba_or_sb = lower_name.starts_with("cba_") || lower_name.starts_with("sb_");
+    let is_generic_bl = lower_name.starts_with("cbb_") || lower_name.starts_with("cd_") || 
+                        lower_name.starts_with("sc_") || lower_name.starts_with("sd_");
+    let is_system_bl = lower_name.starts_with("ce_") || lower_name.starts_with("cf_") || 
+                       lower_name.starts_with("cg_") || lower_name.starts_with("se_") || 
+                       lower_name.starts_with("sf_") || lower_name.starts_with("sg_");
+
+    let zero_len = if is_cba_or_sb { 
+        0x10 
+    } else if is_generic_bl {
+        0x100
+    } else if is_system_bl {
+        0x0 // No zeroing for CE, CF, CG etc.
+    } else {
+        0x10 // Default to 16-byte nonce skip if unknown
+    };
+
+    if zero_len == 0 {
+        return format!("{:08x}", crc32fast::hash(data));
+    }
+
     let mut hasher = crc32fast::Hasher::new();
-    if is_bl && data.len() >= 0x20 {
+    if data.len() >= 0x10 + zero_len {
         hasher.update(&data[..0x10]);
-        hasher.update(&[0u8; 16]);
-        hasher.update(&data[0x20..]);
+        hasher.update(&vec![0u8; zero_len]);
+        hasher.update(&data[0x10 + zero_len..]);
     } else {
         hasher.update(data);
     }
@@ -94,7 +123,7 @@ impl IniSearch {
         
         let flashfs_folder = build.join("flashfs");
         
-        // --- Auto Patcher Integration ---
+        // Auto Patcher
         // Patches Priority: 1. Build/bin Folder, 2. Build/../bin Folder
         let platform = ini.name.split('_').next().unwrap_or(&ini.name).to_lowercase();
         let mut patch_path: Option<PathBuf> = None;
@@ -185,8 +214,7 @@ impl IniSearch {
         }
         ini.patch.path = patch_path.clone();
 
-        // --- Security / Extra Discovery ---
-        // Priority: 1. Data Folder
+        // Security / Extra Discovery, search data folder
         if !ini.security.is_empty() {
             let mut sec_paths = Vec::new();
             for entry in &ini.security {
@@ -209,7 +237,7 @@ impl IniSearch {
             result.security = Some(sec_paths);
         }
 
-        // --- Bootloaders (Main and Update) Discovery ---
+        // Bootloaders and Update Discovery
         if !ini.main.is_empty() {
             result.bootloaders = Some(DiscoveredBootloaders::new());
             if ini.rebooter {
@@ -233,7 +261,7 @@ impl IniSearch {
                 }
             }
 
-            // --- Parse Auto Patch into Memory ---
+            // Parse Auto Patch into Memory
             let mut xe_patch = None;
             if let Some(ref p) = patch_path {
                 match crate::builder::tools::xebuild::parse_xe_binary(p.to_str().unwrap_or_default()) {
@@ -343,22 +371,22 @@ impl IniSearch {
                         }
                     }
 
-                    // Apply Patch AFTER Hash
+                    // Apply Patch after Hash
                     if let Some(ref parsed_patch) = xe_patch {
                         if Some(&lower_name) == target_cb.as_ref() {
                             if let Some(ref cb_patch) = parsed_patch.cb {
                                 if let Err(e) = crate::builder::tools::xebuild::apply_xe_buffer(cb_patch, &mut c) {
-                                    warn!("[ini] Failed to apply CB patches to {}: {}", filename, e);
+                                    error!("[ini] gxPatcher failed to apply CB patch {} to image: {}", filename, e);
                                 } else {
-                                    info!("[ini] Core patched CB payload '{}'.", filename);
+                                    info!("[ini] gxPatcher applied CB patch {} to image.", filename);
                                 }
                             }
                         } else if lower_name.starts_with("cd_") || lower_name.starts_with("sd_") {
                             if let Some(ref cd_patch) = parsed_patch.cd {
                                 if let Err(e) = crate::builder::tools::xebuild::apply_xe_buffer(cd_patch, &mut c) {
-                                    warn!("[ini] Failed to apply CD patches to {}: {}", filename, e);
+                                    error!("[ini] gxPatcher failed to apply CD patch {} to image: {}", filename, e);
                                 } else {
-                                    info!("[ini] Core patched CD payload '{}'.", filename);
+                                    info!("[ini] gxPatcher applied CD patch {} to image.", filename);
                                 }
                             }
                         }

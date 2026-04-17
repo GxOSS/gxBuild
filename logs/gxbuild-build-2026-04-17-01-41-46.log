@@ -1,0 +1,117 @@
+[2026-04-17 01:41:46] [[32mINFO[0m] 
+=============================================================
+gxBuild - Rust Xbox 360 Nand Manipulation Utility
+by ExposureMG
+
+This program is distributed under the GPL v2 License
+This program has NO WARRANTY
+=============================================================
+
+[2026-04-17 01:41:46] [[32mINFO[0m] [ini] Parsing section 'trinity' from INI: "standalone\\17559\\_glitch2.ini"
+[2026-04-17 01:41:46] [[32mINFO[0m] [cli] Build Configuration
+[2026-04-17 01:41:46] [[32mINFO[0m] [cli]   Type:      glitch2
+[2026-04-17 01:41:46] [[32mINFO[0m] [cli]   Console:   trinity
+[2026-04-17 01:41:46] [[32mINFO[0m] [cli]   Section:   trinity
+[2026-04-17 01:41:46] [[32mINFO[0m] [cli]   INI Dir:   "standalone\\17559"
+[2026-04-17 01:41:46] [[32mINFO[0m] [cli]   Data Dir:  "standalone\\data"
+[2026-04-17 01:41:46] [[32mINFO[0m] [cli]   Common:    "standalone\\17559\\../common"
+[2026-04-17 01:41:46] [[32mINFO[0m] [cli]   INI File:  "standalone\\17559\\_glitch2.ini"
+[2026-04-17 01:41:46] [[32mINFO[0m] [cli] Discovering 39 assets from INI targets...
+[2026-04-17 01:41:46] [[32mINFO[0m] [cli] CF/CG not found on disk, searching update containers...
+[2026-04-17 01:41:46] [[32mINFO[0m] [cli] Found STFS container in INI dir: "standalone\\17559\\su20076000_00000000"
+[2026-04-17 01:41:46] [[32mINFO[0m] [cli] Scanning Data Dir (nand/key/smc/fcrt/kv): "standalone\\data"
+[2026-04-17 01:41:46] [[32mINFO[0m] [cli] Auto-discovered source NAND image from "standalone\\data\\nanddump1.bin"
+[2026-04-17 01:41:46] [[32mINFO[0m] [cli] Discovered security asset: "standalone\\data\\fcrt.bin" (16384 bytes)
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Running 16 queued commands...
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Executing (PriorityScore: 150, Seq: 12): ParseImage { path: "standalone\\data\\nanddump1.bin", key: None }
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Parsing image "standalone\\data\\nanddump1.bin"...
+[2026-04-17 01:41:46] [[32mINFO[0m] [blocks] Detected NAND Layout: Sb (Image Size: 0x1080000)
+[2026-04-17 01:41:46] [[32mINFO[0m] [blocks] Detected spare metadata format: MetaType1
+[2026-04-17 01:41:46] [[32mINFO[0m] [blocks] Detected NAND Layout: Sb (Image Size: 0x1080000)
+[2026-04-17 01:41:46] [[32mINFO[0m] [blocks] Detected NAND Layout: Sb (Image Size: 0x1080000)
+[2026-04-17 01:41:46] [[32mINFO[0m] [blocks] Multi-Core Prep: Stripping Physical Spares/ECC to create Clean Buffer...
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Detected 0 bad block(s) during preprocessing
+[2026-04-17 01:41:46] [[32mINFO[0m] [flashfs] FlashFS scan: 1024 blocks to examine, 0 known bad blocks
+[2026-04-17 01:41:46] [[32mINFO[0m] [blocks] Detected NAND Layout: Sb (Image Size: 0x1080000)
+[2026-04-17 01:41:46] [[32mINFO[0m] [blocks] Multi-Core Prep: Stripping Physical Spares/ECC to create Clean Buffer...
+[2026-04-17 01:41:46] [[32mINFO[0m] [flashfs] Root found: block 893, version 1
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] NAND magic:       0xFF4F
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] NAND build:       1888
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] CB offset:        0x8000
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] CF offset:        0x70000
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] Copyright:        � 2004-2010 Microsoft Corporation. All rights reserved.
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] KV offset:        0x4000
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] KV size:          0x4000
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] SMC boot size:    0x3000
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] SMC boot offset:  0x1000
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] Extracting and decrypting Keyvault (Addr: 0x4000, Size: 0x4000)...
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] Keyvault Decryption Key Derived: [ec, ee, e3, 9d, 92, 28, 5a, 88, ba, 47, 1f, 1a, 58, 2a, 34, e5]
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] Keyvault decrypted: version=41910, serial=#����٧d���
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] Extracting and decrypting SMC (Addr: 0x1000, Size: 0x3000)...
+[2026-04-17 01:41:46] [[32mINFO[0m] [smc] Raw SMC Metadata: Type 0xE5, Ver 118.114
+[2026-04-17 01:41:46] [[32mINFO[0m] [smc] Raw SMC Metadata: Type 0x51, Ver 3.1
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] Walking bootloader chain starting at offset 0x8000...
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] CB_A at 0x00008000 (v9231, 0x2000 bytes)
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] CB_B at 0x0000A000 (v9231, 0x7A30 bytes)
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] CD at 0x00011A30 (v9231, 0x5080 bytes)
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] CE at 0x00016AB0 (v1888, 0x5606A bytes)
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] Invalid bootloader size at 0x0006CB20 (0x0), stopping chain walk
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] CF not found after CE, trying CF_Ptr at 0x00070000
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] CF_1 at 0x00070000 (v17559, 0x4560 bytes)
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] CG_1 at 0x00074560 (v17559, 0x77A76 bytes)
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] Decrypting bootloader chain...
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] Decrypting CB with 1BL Key...
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] Decrypting CB using derived key: [fe, a2, 4c, 7e, ac, 3a, 56, ab, b6, 3d, e1, 6f, ac, 2b, 38, e3]
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] CB decryption verified successfully (zero-region check passed).
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] Decrypting CD and CE...
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] CD Decryption Key Derived: [91, 2a, dd, 5a, 6c, b2, fe, 36, b8, ab, fb, a9, f4, 30, 1a, 08]
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] CF Decryption Key Derived: [4b, d7, 77, de, f0, c1, e3, bc, b2, 86, ba, 5d, 83, 1f, 0d, e8]
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] CF slot 0 decryption verified successfully.
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] Slot 0 Updates decrypted.
+[2026-04-17 01:41:46] [[32mINFO[0m] [builder] Bootloader chain successfully decrypted.
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] CB_A decryption verified (zero-region check passed).
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] CF_0 decryption verified.
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] LBA Map: 1024 total blocks, 0 bad blocks remapped
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Successfully parsed NAND from "standalone\\data\\nanddump1.bin" (Layout: Sb)
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Executing (PriorityScore: 145, Seq: 13): ParseKey { key: [213, 228, 188, 15, 182, 164, 108, 57, 140, 205, 33, 222, 33, 225, 79, 79] }
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] CPU Key set (16 bytes).
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Executing (PriorityScore: 110, Seq: 1): Update { path: "standalone\\17559\\../common\\ce_1888.bin" }
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Loading asset discovery from "standalone\\17559\\../common\\ce_1888.bin"...
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Discovered asset 'ce_1888.bin' added to session pool.
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Executing (PriorityScore: 110, Seq: 2): Update { path: "standalone\\17559\\../common\\cba_9188.bin" }
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Loading asset discovery from "standalone\\17559\\../common\\cba_9188.bin"...
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Discovered asset 'cba_9188.bin' added to session pool.
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Executing (PriorityScore: 110, Seq: 3): Update { path: "standalone\\17559\\..\\launch.ini" }
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Loading asset discovery from "standalone\\17559\\..\\launch.ini"...
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Discovered asset 'launch.ini' added to session pool.
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Executing (PriorityScore: 110, Seq: 4): Update { path: "standalone\\17559\\../common\\cd_9452.bin" }
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Loading asset discovery from "standalone\\17559\\../common\\cd_9452.bin"...
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Discovered asset 'cd_9452.bin' added to session pool.
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Executing (PriorityScore: 110, Seq: 5): Update { path: "standalone\\17559\\..\\launch.xex" }
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Loading asset discovery from "standalone\\17559\\..\\launch.xex"...
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Discovered asset 'launch.xex' added to session pool.
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Executing (PriorityScore: 110, Seq: 6): Update { path: "standalone\\17559\\../common\\ximedic.xex" }
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Loading asset discovery from "standalone\\17559\\../common\\ximedic.xex"...
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Discovered asset 'ximedic.xex' added to session pool.
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Executing (PriorityScore: 110, Seq: 7): Update { path: "standalone\\17559\\../common\\xenonclatin.xtt" }
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Loading asset discovery from "standalone\\17559\\../common\\xenonclatin.xtt"...
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Discovered asset 'xenonclatin.xtt' added to session pool.
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Executing (PriorityScore: 110, Seq: 8): Update { path: "standalone\\17559\\../common\\xenonjklatin.xtt" }
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Loading asset discovery from "standalone\\17559\\../common\\xenonjklatin.xtt"...
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Discovered asset 'xenonjklatin.xtt' added to session pool.
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Executing (PriorityScore: 110, Seq: 9): Update { path: "standalone\\17559\\../common\\cbb_9188.bin" }
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Loading asset discovery from "standalone\\17559\\../common\\cbb_9188.bin"...
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Discovered asset 'cbb_9188.bin' added to session pool.
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Executing (PriorityScore: 110, Seq: 10): Update { path: "standalone\\17559\\..\\lhelper.xex" }
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Loading asset discovery from "standalone\\17559\\..\\lhelper.xex"...
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Discovered asset 'lhelper.xex' added to session pool.
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Executing (PriorityScore: 110, Seq: 11): Update { path: "standalone\\17559\\su20076000_00000000" }
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Loading asset discovery from "standalone\\17559\\su20076000_00000000"...
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Discovered asset 'su20076000_00000000' added to session pool.
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Executing (PriorityScore: 100, Seq: 14): ParseIni { path: "standalone\\17559\\_glitch2.ini", target: "trinity" }
+[2026-04-17 01:41:46] [[32mINFO[0m] [session] Parsing INI for target trinity...
+[2026-04-17 01:41:46] [[32mINFO[0m] [ini] Parsing section 'trinity' from INI: "standalone\\17559\\_glitch2.ini"
+[2026-04-17 01:41:46] [[32mINFO[0m] [ini] glitch2 build type selected
+[2026-04-17 01:41:46] [[32mINFO[0m] [ini] Glitch2 Patches for platform trinity found at path: standalone\17559\bin\patches_g2trinity.bin
+[2026-04-17 01:41:46] [[31mERROR[0m] [session] Configuration discovery failed: [ini] File not found: crl.bin
+[2026-04-17 01:41:46] [[31mERROR[0m] [cli] Session failed: Discovery failed: [ini] File not found: crl.bin

@@ -10,7 +10,7 @@
 */
 
 use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, Read};
 use crate::builder::builder::*;
 use log::info;
 
@@ -89,7 +89,7 @@ pub fn parse_patch_records(mut reader: impl Read) -> io::Result<Vec<Vec<PatchRec
 
 pub fn parse_xe_binary(path: &str) -> anyhow::Result<XeBuildBinary> {
     let file = File::open(path)?;
-    info!("[xebuild] Parsing xeBuild binary: '{}'", path);
+    info!("[gxpatcher] Parsing xeBuild binary: '{}'", path);
 
     let mut sections = parse_patch_records(file)?;
     let section_count = sections.len();
@@ -106,23 +106,23 @@ pub fn parse_xe_binary(path: &str) -> anyhow::Result<XeBuildBinary> {
 
     if section_count == 1 {
         output.xetype = XeBuildBinaryType::Addon;
-        info!("[xebuild] Detected Addon patch binary (1 section)");
+        info!("[gxpatcher] Detected Addon patch binary (1 section)");
         output.khv = Some(XeBuildPatch { records: sections.remove(0) });
     } else if section_count == 3 {
         output.xetype = XeBuildBinaryType::Rgh;
-        info!("[xebuild] Detected RGH patch binary (3 sections)");
+        info!("[gxpatcher] Detected RGH patch binary (3 sections)");
         output.cb = Some(XeBuildPatch { records: sections.remove(0) });
         output.cd = Some(XeBuildPatch { records: sections.remove(0) });
         output.khv = Some(XeBuildPatch { records: sections.remove(0) });
     } else if section_count == 4 {
         output.xetype = XeBuildBinaryType::Jtag;
-        info!("[xebuild] Detected JTAG patch binary (4 sections)");
+        info!("[gxpatcher] Detected JTAG patch binary (4 sections)");
         output.onebl = Some(XeBuildPatch { records: sections.remove(0) });
         output.cb = Some(XeBuildPatch { records: sections.remove(0) });
         output.cd = Some(XeBuildPatch { records: sections.remove(0) });
         output.khv = Some(XeBuildPatch { records: sections.remove(0) });
     } else {
-        info!("[xebuild] Detected unknown patch binary ({} sections)", section_count);
+        info!("[gxpatcher] Detected unknown patch binary ({} sections)", section_count);
         if !sections.is_empty() {
             output.khv = Some(XeBuildPatch { records: sections.remove(0) });
         }
@@ -133,49 +133,62 @@ pub fn parse_xe_binary(path: &str) -> anyhow::Result<XeBuildBinary> {
 
 /// Lowlevel function, apply section of patch binary to target data.
 pub fn apply_xe_buffer(patch: &XeBuildPatch, data: &mut Vec<u8>) -> anyhow::Result<()> {
-    info!("[xebuild] apply_xe_buffer: Attempting to apply {} records to buffer of size 0x{:X}", patch.records.len(), data.len());
+    info!("[gxpatcher] apply_xe_buffer: Attempting to apply {} records to buffer of size 0x{:X}", patch.records.len(), data.len());
     let mut modified_words = 0;
     
     for (idx, record) in patch.records.iter().enumerate() {
         let offset = record.address as usize;
-        // info!("[xebuild]   -> Record {}: offset=0x{:X}", idx, offset);
+        // info!("[gxpatcher]   -> Record {}: offset=0x{:X}", idx, offset);
 
         for (i, &word) in record.data.iter().enumerate() {
             let write_pos = offset + (i * 4);
+            
+            // If the patch address is beyond the current buffer, resize it (padding with zeros)
+            // Safety: 4MB limit to prevent runaway allocation if a patch record is corrupt.
             if write_pos + 4 > data.len() {
-                log::error!("[xebuild] Patch address 0x{:X} (record {}, word {}) is out of bounds for buffer of size 0x{:X}", 
-                            record.address, idx, i, data.len());
-                anyhow::bail!(
-                    "Patch address 0x{:X} is out of bounds for buffer of size 0x{:X}",
-                    record.address,
-                    data.len()
-                );
+                if write_pos + 4 > 0x400000 {
+                    anyhow::bail!("Patch address 0x{:X} exceeds 4MB safety limit", write_pos);
+                }
+                data.resize(write_pos + 4, 0);
             }
+
             data[write_pos..write_pos + 4].copy_from_slice(&word.to_be_bytes());
             modified_words += 1;
         }
     }
     
-    info!("[xebuild] apply_xe_buffer: Successfully modified {} words.", modified_words);
+    info!("[gxpatcher] apply_xe_buffer: Successfully modified {} words.", modified_words);
     Ok(())
 }
 
 pub fn apply_xe_patch(patch: XeBuildBinary, nand: &mut NandSkeleton) -> anyhow::Result<()> {
     if let Some(khv) = patch.khv {
-        info!("[xebuild] Queuing {} KHV patch record(s) into NAND options...", khv.records.len());
+        info!("[gxpatcher] Queuing {} KHV patch record(s) into NAND options...", khv.records.len());
         nand.bootloaders.khvpatch = Some(khv.records);
     }
 
     if let Some(cb) = patch.cb {
-        if let Some(cb_bl) = &mut nand.bootloaders.cb {
-            info!("[xebuild] Applying {} RGH patch record(s) to CB ({} bytes)", cb.records.len(), cb_bl.data.len());
-            apply_xe_buffer(&cb, &mut cb_bl.data)?;
+        if patch.xetype == XeBuildBinaryType::Rgh {
+            if let Some(cbb_bl) = &mut nand.bootloaders.cb_b {
+                info!("[gxpatcher] Applying RGH Section 0 patch record(s) to CB_B ({} bytes)", cbb_bl.data.len());
+                apply_xe_buffer(&cb, &mut cbb_bl.data)?;
+            } else if let Some(cb_bl) = &mut nand.bootloaders.cb {
+                // Fallback to CB if CB_B isn't present (glitch1)
+                info!("[gxpatcher] Applying RGH Section 0 patch record(s) to CB ({} bytes)", cb_bl.data.len());
+                apply_xe_buffer(&cb, &mut cb_bl.data)?;
+            }
+        } else {
+            // JTAG or other types
+            if let Some(cb_bl) = &mut nand.bootloaders.cb {
+                info!("[gxpatcher] Applying patch record(s) to CB ({} bytes)", cb_bl.data.len());
+                apply_xe_buffer(&cb, &mut cb_bl.data)?;
+            }
         }
     }
 
     if let Some(cd) = patch.cd {
         if let Some(cd_bl) = &mut nand.bootloaders.cd {
-            info!("[xebuild] Applying {} RGH patch record(s) to CD ({} bytes)", cd.records.len(), cd_bl.data.len());
+            info!("[gxpatcher] Applying {} RGH patch record(s) to CD ({} bytes)", cd.records.len(), cd_bl.data.len());
             apply_xe_buffer(&cd, &mut cd_bl.data)?;
         }
     }
