@@ -25,10 +25,35 @@ pub struct KeyvaultRecord {
     pub dvd_key: [u8; 16],          // 0x100 - DVD encryption key
 }
 
+#[derive(Clone, Debug)]
+pub struct KeyvaultMetadata {
+    pub serial: String,
+    pub region: u16,
+    pub dvd_key: [u8; 16],
+    pub console_id: [u8; 5],
+    pub mf_date: String,
+    pub osig: String,
+    pub fcrt: bool,
+    pub console_type: u32,
+    pub version: u16,
+}
+
 #[derive(Clone)]
 pub struct Keyvault {
     pub data: Vec<u8>,
+    pub is_decrypted: bool,
+    pub metadata: Option<KeyvaultMetadata>,
 }
+
+// Offsets for Keyvault patching (including 16-byte HMAC header)
+pub const OFFSET_REGION: usize = 0xC8;      // 2 bytes (Big Endian)
+pub const OFFSET_SERIAL: usize = 0xB0;      // 12 bytes (ASCIIString)
+pub const OFFSET_DVD_KEY: usize = 0x100;    // 16 bytes (Binary)
+pub const OFFSET_CONSOLE_ID: usize = 0x9CA; // 5 bytes (Binary)
+pub const OFFSET_MF_DATE: usize = 0x9E4;    // 8 bytes (ASCIIString)
+pub const OFFSET_DRIVE_INQUIRY: usize = 0xC8A; // 40 bytes (Binary)
+pub const OFFSET_OSIG_STR: usize = 0xC92;   // 32 bytes (ASCIIString, inside Inquiry)
+pub const OFFSET_FCRT_FLAG: usize = 0x2C;   // 4 bytes (Hardware Flags)
 
 impl Keyvault {
     pub const SIZE: usize = 0x4000;
@@ -37,9 +62,61 @@ impl Keyvault {
         if data.len() < Self::SIZE {
             return Err(format!("Keyvault data too small: {} bytes (expected {})", data.len(), Self::SIZE));
         }
-        Ok(Self {
+        let mut kv = Self {
             data: data[..Self::SIZE].to_vec(),
-        })
+            is_decrypted: false,
+            metadata: None,
+        };
+        
+        // Automatic detection of pre-decrypted Keyvaults
+        if kv.check_decrypted_signatures() {
+            info!("[builder] Pre-decrypted Keyvault detected via signatures.");
+            kv.is_decrypted = true;
+            let _ = kv.refresh_metadata();
+        }
+
+        Ok(kv)
+    }
+
+    /// Parses the raw buffer into the structured metadata view.
+    /// Only works if the Keyvault is decrypted.
+    pub fn refresh_metadata(&mut self) -> Result<(), String> {
+        if !self.is_decrypted {
+            self.metadata = None;
+            return Err("Cannot refresh metadata on encrypted Keyvault".to_string());
+        }
+
+        let record = self.get_record()?;
+
+        // Hardware flags at 0x2C
+        let flags = u32::from_be_bytes(self.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG+4].try_into().unwrap());
+
+        let meta = KeyvaultMetadata {
+            serial: self.get_serial(),
+            region: u16::from_be_bytes(self.data[OFFSET_REGION..OFFSET_REGION+2].try_into().unwrap()),
+            dvd_key: self.data[OFFSET_DVD_KEY..OFFSET_DVD_KEY+16].try_into().unwrap(),
+            console_id: self.data[OFFSET_CONSOLE_ID..OFFSET_CONSOLE_ID+5].try_into().unwrap(),
+            mf_date: self.get_mf_date(),
+            osig: self.get_osig(),
+            fcrt: (flags & 0x100) != 0 || (flags == 0x100), // Flexible check for FCRT bit/value
+            console_type: u32::from_be_bytes(self.data[0x9E0..0x9E4].try_into().unwrap()),
+            version: record.version.get(),
+        };
+
+        self.metadata = Some(meta);
+        Ok(())
+    }
+
+    /// Heuristic to detect if the data is already decrypted by looking for 
+    /// "OSIG" and "DRM" signatures in the certificates.
+    fn check_decrypted_signatures(&self) -> bool {
+        if self.data.len() < 0x2000 { return false; }
+
+        // Raw NAND Offsets for signatures in a decrypted KV
+        let osig_sig = &self.data[0xC82..0xC86];  // "OSIG"
+        let drm_sig = &self.data[0x1F64..0x1F67]; // "DRM"
+
+        (osig_sig == b"OSIG") || (drm_sig == b"DRM")
     }
 
     pub fn decrypt(&mut self, cpukey: &[u8; 16], hashed: bool) -> Result<(), String> {
@@ -85,6 +162,8 @@ impl Keyvault {
             info!("[builder] Keyvault decrypted: version={}, serial={}", rec.version.get(), self.get_serial());
         };
 
+        self.is_decrypted = true;
+        let _ = self.refresh_metadata();
         Ok(())
     }
 
@@ -117,6 +196,8 @@ impl Keyvault {
             // No recursive call to itself which would use the wrong branch.
             self.decrypt(cpukey, false)?;
         }
+        self.is_decrypted = false;
+        self.metadata = None;
         Ok(())
     }
 
@@ -142,9 +223,9 @@ impl Keyvault {
     }
 
     pub fn get_osig(&self) -> String {
-        let start = 0xC92;
-        let end = start + 28;
-        if self.data.len() > end {
+        let start = OFFSET_OSIG_STR;
+        let end = start + 32;
+        if self.data.len() >= end {
             String::from_utf8_lossy(&self.data[start..end]).trim_matches(char::from(0)).to_string()
         } else {
             "Unknown".to_string()
@@ -162,7 +243,7 @@ impl Keyvault {
     }
 
     pub fn get_mf_date(&self) -> String {
-        let start = 0x9E4;
+        let start = OFFSET_MF_DATE;
         let end = start + 8;
         if self.data.len() > end {
             String::from_utf8_lossy(&self.data[start..end]).trim_matches(char::from(0)).to_string()
@@ -171,5 +252,196 @@ impl Keyvault {
         }
     }
 
+    // --- Patching Methods ---
+
+    fn ensure_decrypted(&self) -> Result<(), String> {
+        if !self.is_decrypted {
+            return Err("Keyvault patching requires decrypted data. Call decrypt() first.".to_string());
+        }
+        Ok(())
+    }
+
+    pub fn set_region(&mut self, region_code: u16) -> Result<(), String> {
+        self.ensure_decrypted()?;
+        let bytes = region_code.to_be_bytes();
+        self.data[OFFSET_REGION..OFFSET_REGION+2].copy_from_slice(&bytes);
+        let _ = self.refresh_metadata();
+        Ok(())
+    }
+
+    pub fn set_serial(&mut self, serial: &str) -> Result<(), String> {
+        self.ensure_decrypted()?;
+        let bytes = serial.as_bytes();
+        let len = bytes.len().min(12);
+        self.data[OFFSET_SERIAL..OFFSET_SERIAL+12].fill(0);
+        self.data[OFFSET_SERIAL..OFFSET_SERIAL+len].copy_from_slice(&bytes[..len]);
+        let _ = self.refresh_metadata();
+        Ok(())
+    }
+
+    pub fn set_mf_date(&mut self, date: &str) -> Result<(), String> {
+        self.ensure_decrypted()?;
+        let bytes = date.as_bytes();
+        let len = bytes.len().min(8);
+        self.data[OFFSET_MF_DATE..OFFSET_MF_DATE+8].fill(0);
+        self.data[OFFSET_MF_DATE..OFFSET_MF_DATE+len].copy_from_slice(&bytes[..len]);
+        let _ = self.refresh_metadata();
+        Ok(())
+    }
+
+    pub fn set_osig(&mut self, osig: &str) -> Result<(), String> {
+        self.ensure_decrypted()?;
+        if osig.len() != 32 {
+            return Err(format!("OSIG string must be exactly 32 characters (got {})", osig.len()));
+        }
+        self.data[OFFSET_OSIG_STR..OFFSET_OSIG_STR+32].copy_from_slice(osig.as_bytes());
+        let _ = self.refresh_metadata();
+        Ok(())
+    }
+
+    pub fn set_console_id(&mut self, id: &[u8; 5]) -> Result<(), String> {
+        self.ensure_decrypted()?;
+        self.data[OFFSET_CONSOLE_ID..OFFSET_CONSOLE_ID+5].copy_from_slice(id);
+        let _ = self.refresh_metadata();
+        Ok(())
+    }
+
+    pub fn set_dvd_key(&mut self, key: &[u8; 16]) -> Result<(), String> {
+        self.ensure_decrypted()?;
+        self.data[OFFSET_DVD_KEY..OFFSET_DVD_KEY+16].copy_from_slice(key);
+        let _ = self.refresh_metadata();
+        Ok(())
+    }
+
+    /// Patches the FCRT requirement in the Keyvault.
+    /// Setting this to false (bit cleared) is often required for custom builds 
+    /// to bypass mandatory DVD drive matching.
+    pub fn apply_fcrt_patch(&mut self, enabled: bool) -> Result<(), String> {
+        self.ensure_decrypted()?;
+        // Bit 8 of DWORD at 0x2C is usually the FCRT flag
+        // However, many tools just zero the whole DWORD or set specific bits.
+        // Consistent with J-Runner / xeBuild patches.
+        let val: u32 = if enabled { 0x0100 } else { 0x0000 };
+        let bytes = val.to_be_bytes();
+        self.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG+4].copy_from_slice(&bytes);
+        let _ = self.refresh_metadata();
+        Ok(())
+    }
+
     // kv.get_record().map(|r| r.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_kv_decryption_detection() {
+        let mut data = vec![0u8; 0x4000];
+        // Inject OSIG signature at decrypted offset
+        data[0xC82..0xC86].copy_from_slice(b"OSIG");
+        
+        let kv = Keyvault::parse(&data).unwrap();
+        assert!(kv.is_decrypted, "Should detect decrypted KV via OSIG signature");
+
+        let mut data2 = vec![0u8; 0x4000];
+        data2[0x1F64..0x1F67].copy_from_slice(b"DRM");
+        let kv2 = Keyvault::parse(&data2).unwrap();
+        assert!(kv2.is_decrypted, "Should detect decrypted KV via DRM signature");
+    }
+
+    #[test]
+    fn test_kv_patching_guards() {
+        let data = vec![0u8; 0x4000];
+        let mut kv = Keyvault::parse(&data).unwrap();
+        assert!(!kv.is_decrypted);
+        
+        // Attempt patching on encrypted KV
+        let res = kv.set_region(0x02FE);
+        assert!(res.is_err(), "Patching should fail on encrypted KV");
+        assert_eq!(res.unwrap_err(), "Keyvault patching requires decrypted data. Call decrypt() first.");
+    }
+
+    #[test]
+    fn test_kv_region_patch() {
+        let mut data = vec![0u8; 0x4000];
+        data[0xC82..0xC86].copy_from_slice(b"OSIG"); // Force decrypted state
+        let mut kv = Keyvault::parse(&data).unwrap();
+        
+        kv.set_region(0x02FE).unwrap();
+        assert_eq!(&kv.data[OFFSET_REGION..OFFSET_REGION+2], &[0x02, 0xFE]);
+    }
+
+    #[test]
+    fn test_kv_serial_patch() {
+        let mut data = vec![0u8; 0x4000];
+        data[0xC82..0xC86].copy_from_slice(b"OSIG");
+        let mut kv = Keyvault::parse(&data).unwrap();
+        
+        kv.set_serial("123456789012").unwrap();
+        assert_eq!(&kv.data[OFFSET_SERIAL..OFFSET_SERIAL+12], b"123456789012");
+        
+        kv.set_serial("SHORT").unwrap();
+        assert_eq!(&kv.data[OFFSET_SERIAL..OFFSET_SERIAL+5], b"SHORT");
+        assert_eq!(kv.data[OFFSET_SERIAL+5], 0, "Should be null padded");
+    }
+
+    #[test]
+    fn test_kv_osig_patch() {
+        let mut data = vec![0u8; 0x4000];
+        data[0xC82..0xC86].copy_from_slice(b"OSIG");
+        let mut kv = Keyvault::parse(&data).unwrap();
+        
+        // Test invalid length
+        let res = kv.set_osig("TOO_SHORT");
+        assert!(res.is_err());
+        
+        let valid_osig = "PLDS    DG-16D2S        74850C  "; // Exactly 32 chars
+        kv.set_osig(valid_osig).unwrap();
+        assert_eq!(&kv.data[OFFSET_OSIG_STR..OFFSET_OSIG_STR+32], valid_osig.as_bytes());
+    }
+
+    #[test]
+    fn test_kv_fcrt_patch() {
+        let mut data = vec![0u8; 0x4000];
+        data[0xC82..0xC86].copy_from_slice(b"OSIG");
+        let mut kv = Keyvault::parse(&data).unwrap();
+        
+        kv.apply_fcrt_patch(false).unwrap();
+        assert_eq!(&kv.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG+4], &[0, 0, 0, 0]);
+        
+        kv.apply_fcrt_patch(true).unwrap();
+        assert_eq!(&kv.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG+4], &[0, 0, 1, 0]); // 0x0100 BE
+    }
+
+    #[test]
+    fn test_kv_metadata_sync() {
+        let mut data = vec![0u8; 0x4000];
+        data[0xC82..0xC86].copy_from_slice(b"OSIG"); // Force decrypted state
+        let mut kv = Keyvault::parse(&data).unwrap();
+        
+        // Check initial parsed metadata
+        assert!(kv.metadata.is_some());
+        assert_eq!(kv.metadata.as_ref().unwrap().region, 0);
+
+        // Patch and verify sync
+        kv.set_region(0x01FE).unwrap();
+        assert_eq!(kv.metadata.as_ref().unwrap().region, 0x01FE);
+
+        kv.set_serial("987654321098").unwrap();
+        assert_eq!(kv.metadata.as_ref().unwrap().serial, "987654321098");
+    }
+
+    #[test]
+    fn test_kv_encryption_clears_metadata() {
+        let mut data = vec![0u8; 0x4000];
+        data[0xC82..0xC86].copy_from_slice(b"OSIG");
+        let mut kv = Keyvault::parse(&data).unwrap();
+        assert!(kv.metadata.is_some());
+
+        kv.is_decrypted = true; // Simulating state for manual test
+        kv.encrypt(&[0u8; 16], false).unwrap();
+        assert!(kv.metadata.is_none());
+        assert!(!kv.is_decrypted);
+    }
 }

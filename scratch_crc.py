@@ -16,7 +16,7 @@ def patch_file(data, patch_data):
             idx += 4
     return data
 
-cbb = bytearray(open('standalone/17559/../common/cf_1888.bin', 'rb').read())
+cbb = bytearray(open('standalone/17559/../common/SE_17489.bin', 'rb').read())
 patch = open('standalone/17559/bin/patches_g2trinity.bin', 'rb').read()
 
 import io

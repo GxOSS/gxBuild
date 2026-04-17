@@ -237,7 +237,7 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
     let mut cg = BootloaderCg::parse(&xboxupd_bytes[cf_size..])?;
 
     if !cg.is_decrypted() {
-        cg.decrypt(&meta.cg_hmac);
+        cg.decrypt(&meta.cg_nonce);
     }
     if !cg.is_decrypted() {
         return Err("Failed to decrypt CG header.".to_string());
@@ -249,7 +249,7 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
     let mut cg_rotsum = [0u8; 0x14];
     cg.calculate_rotsum(&mut cg_rotsum);
 
-    if cg_rotsum != meta.cg_hash {
+    if cg_rotsum != meta.cg_digest {
         return Err("CG checking hash mismatch against CF signature metadata".to_string());
     }
 

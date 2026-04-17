@@ -1,27 +1,41 @@
 # GGXBuild TODO
 
-- PD
+## Current Release (1.22)
 
-- Move autopatching back before hashing
+Xell:
+- Xell chain file
+- Assemble xell image skeleton method
+- Xell discovery and injection from filesearch
 
-- Assemble-Shadow = Assemble Shadowboot image
-- Assemble-Xell = Assemble XeLL image
-- Assemble-Rebooter = Assemble rebooter image using second bootloaders struct
-- LZX Recompression
+Smc:
+- SMC discovery
+- SMC Config Placement
+- SMC Config Patching
 
 FlashFS:
 - eMMC
-- BB
-- Testing
+- mobile partitions
+- FlashFS metadata
+- FlashFS placement
 
-Weak Files:
-- kv.rs
-- discovery.rs
+Keyvault:
+- Keyvault placement
 
-Parsing:
-- Shadowboot
+Image Building:
+- Fix CRC32
+- Place CDXeLL KHV patches
 
-Patching:
-- Keyvault
-- SMC
-- RGLP
+## Next Release (1.23)
+
+## gxBuild
+
+- Shadowboot parsing & building
+- Rebooter image parsing & building (started)
+- CAB LZX Recompression with LibLZX
+
+### gxDevkit
+
+- Parse and build CF and CG to / from kernel and hypervisor
+- Apply CF and CG to K/HV
+- Patch assembly and dissasembly
+- Loaderpatch / RGLP to GGX

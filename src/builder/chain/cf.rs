@@ -27,11 +27,28 @@ use log::info;
 
 #[derive(Clone, Debug)]
 pub struct CfMetadata {
-    pub base_version: u16,
+    // Stage 1 (Plain - Offset 0x0 in payload / 0x10 Absolute)
+    pub source_version: u16,
     pub target_version: u16,
+    pub reserved_prefix: u32,
     pub cg_size: u32,
-    pub cg_hmac: [u8; 16],
-    pub cg_hash: [u8; 0x14],
+    pub hmac_salt: [u8; 16],
+
+    // Stage 2 (Decrypted - 7BL Bridge - Offset 0x20 in payload / 0x30 Absolute)
+    pub cg_blocks_used: u16,
+    pub cg_block_numbers: Vec<u16>, // 223 entries
+    
+    // Stage 2 (Decrypted - PerBoxData)
+    pub reserved_per_box: [u8; 0x2B],
+    pub update_slot: u8,
+    pub pairing_data: [u8; 3],
+    pub lockdown_value: u8,
+    pub per_box_digest: [u8; 0x10],
+    
+    // Stage 2 (Decrypted - Chain Bridge)
+    pub signature: [u8; 0x100],
+    pub cg_nonce: [u8; 0x10],
+    pub cg_digest: [u8; 0x14],
 }
 
 #[derive(Clone)]
@@ -55,25 +72,90 @@ impl BootloaderCf {
     }
 
     pub fn populate_metadata(&mut self) {
-        if self.data.len() < 0x344 { return; } // Need enough for cg_hash at 0x330 + 0x14
+        if !self.is_decrypted() || self.data.len() < 0x344 { return; }
 
-        let base_version = BigEndian::read_u16(&self.data[0x0..0x2]);
+        // Stage 1 (Plain)
+        let source_version = BigEndian::read_u16(&self.data[0x0..0x2]);
         let target_version = BigEndian::read_u16(&self.data[0x4..0x6]);
+        let reserved_prefix = BigEndian::read_u32(&self.data[0x8..0xC]);
         let cg_size = BigEndian::read_u32(&self.data[0xC..0x10]);
+        let mut hmac_salt = [0u8; 16];
+        hmac_salt.copy_from_slice(&self.data[0x10..0x20]);
 
-        let mut cg_hmac = [0u8; 16];
-        cg_hmac.copy_from_slice(&self.data[0x320..0x330]);
+        // Stage 2 (Decrypted region starts at 0x20)
+        let cg_blocks_used = BigEndian::read_u16(&self.data[0x20..0x22]);
+        let mut cg_block_numbers = Vec::with_capacity(223);
+        for i in 0..223 {
+            let offset = 0x22 + (i * 2);
+            cg_block_numbers.push(BigEndian::read_u16(&self.data[offset..offset+2]));
+        }
 
-        let mut cg_hash = [0u8; 0x14];
-        cg_hash.copy_from_slice(&self.data[0x330..0x344]);
+        let mut reserved_per_box = [0u8; 0x2B];
+        reserved_per_box.copy_from_slice(&self.data[0x1E0..0x20B]);
+        let update_slot = self.data[0x20B];
+        let mut pairing_data = [0u8; 3];
+        pairing_data.copy_from_slice(&self.data[0x20C..0x20F]);
+        let lockdown_value = self.data[0x20F];
+        let mut per_box_digest = [0u8; 0x10];
+        per_box_digest.copy_from_slice(&self.data[0x210..0x220]);
+
+        let mut signature = [0u8; 0x100];
+        signature.copy_from_slice(&self.data[0x220..0x320]);
+
+        let mut cg_nonce = [0u8; 0x10];
+        cg_nonce.copy_from_slice(&self.data[0x320..0x330]);
+
+        let mut cg_digest = [0u8; 0x14];
+        cg_digest.copy_from_slice(&self.data[0x330..0x344]);
 
         self.metadata = Some(CfMetadata {
-            base_version,
+            source_version,
             target_version,
+            reserved_prefix,
             cg_size,
-            cg_hmac,
-            cg_hash,
+            hmac_salt,
+            cg_blocks_used,
+            cg_block_numbers,
+            reserved_per_box,
+            update_slot,
+            pairing_data,
+            lockdown_value,
+            per_box_digest,
+            signature,
+            cg_nonce,
+            cg_digest,
         });
+    }
+
+    pub fn sync_metadata(&mut self) {
+        if let Some(ref meta) = self.metadata {
+            if self.data.len() < 0x344 { return; }
+
+            // Stage 1
+            BigEndian::write_u16(&mut self.data[0x0..0x2], meta.source_version);
+            BigEndian::write_u16(&mut self.data[0x4..0x6], meta.target_version);
+            BigEndian::write_u32(&mut self.data[0x8..0xC], meta.reserved_prefix);
+            BigEndian::write_u32(&mut self.data[0xC..0x10], meta.cg_size);
+            self.data[0x10..0x20].copy_from_slice(&meta.hmac_salt);
+
+            // Stage 2
+            BigEndian::write_u16(&mut self.data[0x20..0x22], meta.cg_blocks_used);
+            for (i, &block) in meta.cg_block_numbers.iter().enumerate() {
+                if i >= 223 { break; }
+                let offset = 0x22 + (i * 2);
+                BigEndian::write_u16(&mut self.data[offset..offset+2], block);
+            }
+
+            self.data[0x1E0..0x20B].copy_from_slice(&meta.reserved_per_box);
+            self.data[0x20B] = meta.update_slot;
+            self.data[0x20C..0x20F].copy_from_slice(&meta.pairing_data);
+            self.data[0x20F] = meta.lockdown_value;
+            self.data[0x210..0x220].copy_from_slice(&meta.per_box_digest);
+
+            self.data[0x220..0x320].copy_from_slice(&meta.signature);
+            self.data[0x320..0x330].copy_from_slice(&meta.cg_nonce);
+            self.data[0x330..0x344].copy_from_slice(&meta.cg_digest);
+        }
     }
 
     pub fn is_decrypted(&self) -> bool {
@@ -124,7 +206,22 @@ impl BootloaderCf {
         info!("[builder] {} size: 0x{:x}", indicator, self.header.size.get());
         info!("[builder] {} entrypoint: 0x{:x}", indicator, self.header.entrypoint.get());
 
-        if self.data.len() >= 0x10 {
+        if let Some(ref meta) = self.metadata {
+            info!("[builder] {} source build: {}", indicator, meta.source_version);
+            info!("[builder] {} target build: {}", indicator, meta.target_version);
+            info!("[builder] {}-G size: 0x{:x}", indicator, meta.cg_size);
+            
+            if self.is_decrypted() {
+                info!("[builder] {} slot: {}", indicator, meta.update_slot);
+                info!("[builder] {} pairing: {:02x?}", indicator, meta.pairing_data);
+                info!("[builder] {} CG block count: {}", indicator, meta.cg_blocks_used);
+                if meta.cg_blocks_used > 0 {
+                    info!("[builder] {} CG first block: {}", indicator, meta.cg_block_numbers[0]);
+                }
+                info!("[builder] {}-G nonce: {:02x?}", indicator, meta.cg_nonce);
+                info!("[builder] {}-G digest: {:02x?}", indicator, meta.cg_digest);
+            }
+        } else if self.data.len() >= 0x10 {
             let base_ver = BigEndian::read_u16(&self.data[0x0..0x2]);
             let target_ver = BigEndian::read_u16(&self.data[0x4..0x6]);
             let cg_size = BigEndian::read_u32(&self.data[0xC..0x10]);
@@ -134,16 +231,7 @@ impl BootloaderCf {
             info!("[builder] {}-G size: 0x{:x}", indicator, cg_size);
         }
 
-        if self.is_decrypted() {
-            if let Some(ref meta) = self.metadata {
-                info!("[builder] {}-G key: {:02x?}", indicator, meta.cg_hmac);
-                info!("[builder] {}-G checksum: {:02x?}", indicator, meta.cg_hash);
-            } else if self.data.len() >= 0x344 {
-                info!("[builder] {}-G key: {:02x?}", indicator, &self.data[0x320..0x330]);
-                info!("[builder] {}-G checksum: {:02x?}", indicator, &self.data[0x330..0x344]);
-            }
-            info!("[builder] {} signature: (requires keys to verify)", indicator);
-        } else {
+        if !self.is_decrypted() {
             info!("[builder] {} is encrypted", indicator);
         }
     }

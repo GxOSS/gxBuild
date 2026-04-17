@@ -89,11 +89,12 @@ pub struct IniSearch {
     pub build: PathBuf,
     pub common: PathBuf,
     pub data: PathBuf,
+    pub unsafe_mode: bool,
     pub result: IniSearchResult,
 }
 
 impl IniSearch {
-    pub fn new(ini: XeBuildIni, build: impl AsRef<Path>, common: impl AsRef<Path>, data: impl AsRef<Path>, nand: &Option<NandSkeleton>) -> Result<Self, IniError> {
+    pub fn new(ini: XeBuildIni, build: impl AsRef<Path>, common: impl AsRef<Path>, data: impl AsRef<Path>, nand: &Option<NandSkeleton>, unsafe_mode: bool) -> Result<Self, IniError> {
         let mut ini = ini;
         let mut result = IniSearchResult {
             bootloaders: None,
@@ -225,6 +226,10 @@ impl IniSearch {
                             if actual.to_lowercase() == expected.to_lowercase() {
                                 found_content = Some(c);
                                 found_path = Some(PathBuf::from("NAND_IMAGE"));
+                            } else if unsafe_mode {
+                                warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in NAND Image Tier). Continuing...", filename, expected, actual);
+                                found_content = Some(c);
+                                found_path = Some(PathBuf::from("NAND_IMAGE"));
                             } else {
                                 info!("[ini] Hash mismatch for {} in NAND Image Tier, seeking fallback...", filename);
                             }
@@ -245,6 +250,10 @@ impl IniSearch {
                             if actual.to_lowercase() == expected.to_lowercase() {
                                 found_content = Some(c);
                                 found_path = Some(cand);
+                            } else if unsafe_mode {
+                                warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Data Folder Tier). Continuing...", filename, expected, actual);
+                                found_content = Some(c);
+                                found_path = Some(cand);
                             } else {
                                 info!("[ini] Hash mismatch for {} in Data Folder Tier, seeking fallback...", filename);
                             }
@@ -263,6 +272,10 @@ impl IniSearch {
                         if let Some(expected) = &entry.hash {
                             let actual = get_xebuild_crc32(&c, filename);
                             if actual.to_lowercase() == expected.to_lowercase() {
+                                found_content = Some(c);
+                                found_path = Some(cand);
+                            } else if unsafe_mode {
+                                warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Common Folder Tier). Continuing...", filename, expected, actual);
                                 found_content = Some(c);
                                 found_path = Some(cand);
                             } else {
@@ -313,8 +326,14 @@ impl IniSearch {
             // Parse Auto Patch into Memory
             let mut xe_patch = None;
             if let Some(ref p) = patch_path {
-                if let Ok(parsed) = crate::builder::tools::xebuild::parse_xe_binary(p.to_str().unwrap_or_default()) {
-                    if let Some(khv) = parsed.khv.as_ref() { ini.patch.khv = Some(khv.records.clone()); }
+                if let Ok(parsed) = crate::core::data::gxp::parse_patch_binary(p) {
+                    if let Some(khv) = parsed.khv.as_ref() { 
+                        ini.patch.khv = Some(khv.records.iter().map(|r| crate::builder::builder::PatchRecord {
+                            address: r.address,
+                            amount: r.amount,
+                            data: r.data.clone(),
+                        }).collect()); 
+                    }
                     xe_patch = Some(parsed);
                 }
             }
@@ -334,8 +353,12 @@ impl IniSearch {
                             let actual = get_xebuild_crc32(&$c, $name);
                             if actual.to_lowercase() == expected.to_lowercase() { true }
                             else {
-                                if $name.to_lowercase().starts_with("cf") || $name.to_lowercase().starts_with("sf") {
-                                    warn!("[ini] CF/SF CRC32 mismatch bypass (Expected: {}, Found: {} in {} Tier). Continuing...", expected, actual, $tier);
+                                if unsafe_mode {
+                                    warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in {} Tier). Continuing...", $name, expected, actual, $tier);
+                                    true
+                                } else if $name.to_lowercase().starts_with("cf") || $name.to_lowercase().starts_with("sf") ||
+                                   $name.to_lowercase().starts_with("cg") || $name.to_lowercase().starts_with("sg") {
+                                    warn!("[ini] CF/SF/CG/SG CRC32 mismatch bypass (Expected: {}, Found: {} in {} Tier). Continuing...", expected, actual, $tier);
                                     true
                                 } else {
                                     info!("[ini] Hash mismatch for {} in {} Tier", $name, $tier);
@@ -471,11 +494,13 @@ impl IniSearch {
                     if let Some(ref parsed_patch) = xe_patch {
                         if Some(&lower_name) == target_cb.as_ref() {
                             if let Some(ref cb_patch) = parsed_patch.cb {
-                                let _ = crate::builder::tools::xebuild::apply_xe_buffer(cb_patch, &mut c);
+                                let _ = crate::core::data::gxp::apply_records(&cb_patch.records, &mut c);
+                            } else if let Some(ref cbb_patch) = parsed_patch.cb_b {
+                                let _ = crate::core::data::gxp::apply_records(&cbb_patch.records, &mut c);
                             }
                         } else if lower_name.starts_with("cd_") || lower_name.starts_with("sd_") {
                             if let Some(ref cd_patch) = parsed_patch.cd {
-                                let _ = crate::builder::tools::xebuild::apply_xe_buffer(cd_patch, &mut c);
+                                let _ = crate::core::data::gxp::apply_records(&cd_patch.records, &mut c);
                             }
                         }
                     }
@@ -520,6 +545,9 @@ impl IniSearch {
                             let actual = format!("{:08x}", hasher.finalize());
                             if actual.to_lowercase() == expected.to_lowercase() {
                                 found_content = Some(c);
+                            } else if unsafe_mode {
+                                warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in NAND FlashFS Tier). Continuing...", filename, expected, actual);
+                                found_content = Some(c);
                             } else {
                                 info!("[ini] Hash mismatch for {} in NAND FlashFS Tier", filename);
                             }
@@ -541,6 +569,10 @@ impl IniSearch {
                                     hasher.update(&c);
                                     let actual = format!("{:08x}", hasher.finalize());
                                     if actual.to_lowercase() == expected.to_lowercase() {
+                                        found_content = Some(c);
+                                        break;
+                                    } else if unsafe_mode {
+                                        warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Folder Tier). Continuing...", filename, expected, actual);
                                         found_content = Some(c);
                                         break;
                                     } else {
@@ -566,6 +598,10 @@ impl IniSearch {
                                 hasher.update(&c);
                                 let actual = format!("{:08x}", hasher.finalize());
                                 if actual.to_lowercase() == expected.to_lowercase() {
+                                    found_content = Some(c);
+                                    break;
+                                } else if unsafe_mode {
+                                    warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Memory/STFS Tier). Continuing...", filename, expected, actual);
                                     found_content = Some(c);
                                     break;
                                 } else {
@@ -598,6 +634,7 @@ impl IniSearch {
             build,
             common,
             data,
+            unsafe_mode,
             result,
         })
     }

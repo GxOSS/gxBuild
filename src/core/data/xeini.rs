@@ -127,6 +127,7 @@ pub struct OptionsIni {
 
 impl OptionsIni {
     pub fn new() -> Self {
+        // Todo: set sane defaults
         OptionsIni {
             ctype: String::from("options"),
             _1blkey: String::from("00000000000000000000000000000000"),

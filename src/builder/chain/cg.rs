@@ -73,6 +73,17 @@ impl BootloaderCg {
         });
     }
 
+    pub fn sync_metadata(&mut self) {
+        if let Some(ref meta) = self.metadata {
+            if self.data.len() < 0x40 { return; }
+
+            BigEndian::write_u32(&mut self.data[0x10..0x14], meta.original_size);
+            self.data[0x14..0x28].copy_from_slice(&meta.original_hash);
+            BigEndian::write_u32(&mut self.data[0x28..0x2C], meta.new_size);
+            self.data[0x2C..0x40].copy_from_slice(&meta.new_hash);
+        }
+    }
+
     pub fn is_decrypted(&self) -> bool {
         if self.data.len() < 0x14 { return false; }
         // original_size is at offset 0x10 into payload (absolute 0x20)

@@ -234,11 +234,11 @@ impl BootloaderCe {
 
     pub fn apply_update(&mut self, cf: &BootloaderCf, cg: &BootloaderCg) -> Result<(), String> {
         let cf_meta = cf.metadata.as_ref().ok_or("CF metadata missing")?;
-        if cf_meta.base_version != self.header.version.get() {
+        if cf_meta.source_version != self.header.version.get() {
             return Err(format!(
                 "Mismatching base kernel version (CE is {}, CF expects {})",
                 self.header.version.get(),
-                cf_meta.base_version
+                cf_meta.source_version
             ));
         }
 

@@ -17,12 +17,12 @@ use crate::builder::builder::NandSkeleton;
 use std::fs;
 #[cfg(feature = "python")]
 use crate::core::interface::python::{python_interpreter, python_shell, python_script};
-use crate::builder::tools::xebuild::{parse_xe_binary, apply_xe_patch};
+use crate::core::data::gxp::parse_patch_binary;
 use crate::core::data::filesearch::IniSearch;
 use log::{info, error};
 #[derive(Debug)]
 pub enum InternalCommand { 
-    ParseIni { path: PathBuf, target: String, ini_base: PathBuf, common: PathBuf },
+    ParseIni { path: PathBuf, target: String, ini_base: PathBuf, common: PathBuf, data: PathBuf },
     ParseImage { path: PathBuf, key: Option<[u8; 16]> },
     ParseKey { key: [u8; 16] },
     ParseKeybin { key: Option<[u8; 16]> },
@@ -162,6 +162,8 @@ pub struct Session {
     pub pending_assets: HashMap<String, Vec<u8>>,
     /// Dummy state object for passing over to extract commands
     pub active_nand: Option<NandSkeleton>,
+    /// Global xeBuild options / preferences
+    pub options: crate::core::data::xeini::OptionsIni,
 }
 
 impl Session {
@@ -171,6 +173,7 @@ impl Session {
             next_seq_id: 0,
             pending_assets: HashMap::new(),
             active_nand: None,
+            options: crate::core::data::xeini::OptionsIni::new(),
         }
     }
 
@@ -293,12 +296,13 @@ impl Session {
         result
     }
 
-    pub fn parse_ini(&mut self, path: impl AsRef<Path>, target: String, ini_base: impl AsRef<Path>, common: impl AsRef<Path>) {
+    pub fn parse_ini(&mut self, path: impl AsRef<Path>, target: String, ini_base: impl AsRef<Path>, common: impl AsRef<Path>, data: impl AsRef<Path>) {
         self.enqueue(InternalCommand::ParseIni { 
             path: path.as_ref().to_path_buf(), 
             target, 
             ini_base: ini_base.as_ref().to_path_buf(), 
-            common: common.as_ref().to_path_buf() 
+            common: common.as_ref().to_path_buf(),
+            data: data.as_ref().to_path_buf() 
         });
     }
 
@@ -422,13 +426,12 @@ impl Session {
                         error!("[session] No active NAND loaded to build!");
                     }
                 }
-                InternalCommand::ParseIni { path, target, ini_base, common } => {
+                InternalCommand::ParseIni { path, target, ini_base, common, data } => {
                     info!("[session] Parsing INI for target {}...", target);
                     if let Some(nand) = self.active_nand.take() {
                         match crate::core::data::xeini::parse_xe_ini(&path, &target) {
                             Ok(ini) => {
-                                let data_dir = PathBuf::from("data");
-                                match IniSearch::new(ini.clone(), &ini_base, &common, &data_dir, &self.active_nand) {
+                                match IniSearch::new(ini.clone(), &ini_base, &common, &data, &self.active_nand, self.options.gxunsafe) {
                                     Ok(search) => {
                                         // Collect all extracted assets (CF/CG, FlashFS, bootloaders) into pending_assets
                                         self.pending_assets.extend(search.result.extracted_assets);
@@ -562,27 +565,26 @@ impl Session {
                 }
                 InternalCommand::ParsePatch { path } => {
                     info!("[session] Parsing patch binary from {:?}...", path);
-                    match parse_xe_binary(path.to_str().unwrap_or_default()) {
-                        Ok(xe_patch) => {
-                            info!("[session] Successfully parsed patch: Type {:?}, {} KHV records", 
-                                     xe_patch.xetype, 
-                                     xe_patch.khv.as_ref().map(|k| k.records.len()).unwrap_or(0));
+                    match parse_patch_binary(path) {
+                        Ok(patch) => {
+                            info!("[session] Successfully parsed patch: Type {:?}, Legacy: {}", 
+                                     patch.header.patch_type, patch.is_legacy);
                         }
                         Err(e) => error!("[session] Failed to parse patch binary: {}", e),
                     }
                 }
-                InternalCommand::ApplyPatch { path, ptype, target } => {
-                    info!("[session] Applying patch {:?} (type {}, target {:?})...", path, ptype, target);
+                InternalCommand::ApplyPatch { path, .. } => {
+                    info!("[session] Applying patch {:?} (GXP Logic)...", path);
                     if let Some(nand) = &mut self.active_nand {
-                        match parse_xe_binary(path.to_str().unwrap_or_default()) {
-                            Ok(xe_patch) => {
-                                if let Err(e) = apply_xe_patch(xe_patch, nand) {
+                        match parse_patch_binary(path) {
+                            Ok(patch) => {
+                                if let Err(e) = nand.apply_patch(patch) {
                                     error!("[session] Failed to apply patch: {}", e);
                                 } else {
-                                    info!("[session] Successfully applied patch and routed KHV to NAND options.");
+                                    info!("[session] Successfully applied patch and routed components.");
                                 }
                             }
-                            Err(e) => error!("[session] Failed to parse xePatch binary: {}", e),
+                            Err(e) => error!("[session] Failed to parse patch binary: {}", e),
                         }
                     } else {
                         error!("[session] No active NAND loaded to patch.");

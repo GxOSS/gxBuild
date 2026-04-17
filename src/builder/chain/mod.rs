@@ -272,9 +272,9 @@ pub fn decrypt_chain(
         } else {
             log::warn!("[builder] CF slot 0 decryption verification failed.");
         }
-        if cf.data.len() >= 0x20 {
+        if cf.data.len() >= 0x330 {
             let mut cg_hmac = [0u8; 16];
-            cg_hmac.copy_from_slice(&cf.data[0x10..0x20]);
+            cg_hmac.copy_from_slice(&cf.data[0x320..0x330]);
             cg.decrypt(&cg_hmac);
         }
         info!("[builder] Slot 0 Updates decrypted.");
@@ -287,9 +287,9 @@ pub fn decrypt_chain(
         } else {
             log::warn!("[builder] CF slot 1 decryption verification failed.");
         }
-        if cf.data.len() >= 0x20 {
+        if cf.data.len() >= 0x330 {
             let mut cg_hmac = [0u8; 16];
-            cg_hmac.copy_from_slice(&cf.data[0x10..0x20]);
+            cg_hmac.copy_from_slice(&cf.data[0x320..0x330]);
             cg.decrypt(&cg_hmac);
         }
         info!("[builder] Slot 1 Updates decrypted.");
@@ -300,15 +300,15 @@ pub fn decrypt_chain(
 
 pub fn encrypt_chain(
     cb: &mut cb::BootloaderCb,
-    cb_x: Option<&mut cb::BootloaderCb>,
-    cb_b: Option<&mut cb::BootloaderCb>,
+    mut cb_x: Option<&mut cb::BootloaderCb>,
+    mut cb_b: Option<&mut cb::BootloaderCb>,
     _sc: Option<&mut sc::BootloaderSc>,
     cd: &mut cd::BootloaderCd,
     ce: &mut ce::BootloaderCe,
-    cf_0: Option<&mut cf::BootloaderCf>,
-    cg_0: Option<&mut cg::BootloaderCg>,
-    cf_1: Option<&mut cf::BootloaderCf>,
-    cg_1: Option<&mut cg::BootloaderCg>,
+    mut cf_0: Option<&mut cf::BootloaderCf>,
+    mut cg_0: Option<&mut cg::BootloaderCg>,
+    mut cf_1: Option<&mut cf::BootloaderCf>,
+    mut cg_1: Option<&mut cg::BootloaderCg>,
     smc: &mut RawSmc,
     cpukey: &[u8; 16],
 ) -> Result<(), String> {
@@ -326,6 +326,18 @@ pub fn encrypt_chain(
     cb_key.copy_from_slice(&derived[..16]);
     info!("[builder] Derived CB Key for re-encryption: {:02x?}", cb_key);
 
+    // Sync metadata back to buffers before calculating digest/re-encrypting
+    cb.sync_metadata();
+    if let Some(ref mut cb_x_bl) = cb_x { cb_x_bl.sync_metadata(); }
+    if let Some(ref mut cb_b_bl) = cb_b { cb_b_bl.sync_metadata(); }
+
+    cd.sync_metadata();
+
+    if let Some(ref mut cf) = cf_0 { cf.sync_metadata(); }
+    if let Some(ref mut cg) = cg_0 { cg.sync_metadata(); }
+    if let Some(ref mut cf) = cf_1 { cf.sync_metadata(); }
+    if let Some(ref mut cg) = cg_1 { cg.sync_metadata(); }
+
     let digest = fix_per_box_digest(&smc.data, &cb.header, &cb.data, &cb_key, cpukey)?;
     if cb.data.len() >= 0x20 {
         cb.data[0x10..0x20].copy_from_slice(&digest);
@@ -336,8 +348,8 @@ pub fn encrypt_chain(
     if let (Some(cf), Some(cg)) = (cf_1, cg_1) {
         // Read CG HMAC from decrypted CF before re-encrypting
         let mut cg_hmac = [0u8; 16];
-        if cf.data.len() >= 0x20 {
-            cg_hmac.copy_from_slice(&cf.data[0x10..0x20]);
+        if cf.data.len() >= 0x330 {
+            cg_hmac.copy_from_slice(&cf.data[0x320..0x330]);
         }
         // Re-encrypt CG first (it uses the HMAC as key)
         cg.decrypt(&cg_hmac);
@@ -350,8 +362,8 @@ pub fn encrypt_chain(
     if let (Some(cf), Some(cg)) = (cf_0, cg_0) {
         // Read CG HMAC from decrypted CF before re-encrypting
         let mut cg_hmac = [0u8; 16];
-        if cf.data.len() >= 0x20 {
-            cg_hmac.copy_from_slice(&cf.data[0x10..0x20]);
+        if cf.data.len() >= 0x330 {
+            cg_hmac.copy_from_slice(&cf.data[0x320..0x330]);
         }
         // Re-encrypt CG first (it uses the HMAC as key)
         cg.decrypt(&cg_hmac);

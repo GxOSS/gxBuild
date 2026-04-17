@@ -15,7 +15,7 @@ use clap::{Parser, Subcommand, ValueEnum, CommandFactory};
 use std::path::PathBuf;
 use crate::core::session::{Session, InternalCommand};
 use crate::core::logger;
-use log::{info, error};
+use log::{info, error, warn};
 
 /// xeBuild v1.21.810 clone - System image builder
 #[derive(Parser, Debug)]
@@ -291,6 +291,42 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     let resolved_common_dir = args.common_dir.clone()
         .unwrap_or_else(|| ini_dir.join("../common"));
 
+    // --- Options INI Loading (<data>/options.ini) ---
+    let options_path = data_dir.join("options.ini");
+    if options_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&options_path) {
+            match crate::core::data::xeini::parse_options_ini(&content) {
+                Ok(opts) => {
+                    session.options = opts;
+                    info!("[cli] Loaded defaults from {:?}", options_path);
+                }
+                Err(e) => warn!("[cli] Failed to parse options.ini: {}", e),
+            }
+        }
+    }
+
+    // --- CLI Options Overrides (-o) ---
+    for group in &args.options {
+        for (k, v) in group {
+            match k.to_lowercase().as_str() {
+                "unsafe" => {
+                    session.options.gxunsafe = v.eq_ignore_ascii_case("true");
+                    if session.options.gxunsafe {
+                        warn!("[cli] Unsafe Mode enabled via CLI override.");
+                    }
+                }
+                "nomobile" => session.options.nomobile = v.eq_ignore_ascii_case("true"),
+                "noenter" => session.options.noenter = v.eq_ignore_ascii_case("true"),
+                "cputemp" => session.options.cputemp = v.clone(),
+                _ => {} // Other options can be wired as needed
+            }
+        }
+    }
+
+    if session.options.gxunsafe {
+        warn!("[cli] UNEXPECTED BEHAVIOR ENABLED: Unsafe Mode is active. CRC32 mismatches will be bypassed.");
+    }
+
     // Resolve INI file path: <ini_dir>/_<type>.ini
     let build_type_str = format!("{:?}", build_type).to_lowercase();
     let ini_suffix = args.ini_ext.as_ref().map(|ext| format!("_{}", ext)).unwrap_or_default();
@@ -516,8 +552,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     }
 
     // --- Enqueue INI Parsing ---
-    // --- Enqueue INI Parsing ---
-    session.parse_ini(&ini_path, console_section, &ini_dir, &resolved_common_dir);
+    session.parse_ini(&ini_path, console_section, &ini_dir, &resolved_common_dir, &data_dir);
 
     // --- STFS / System Update Discovery has been moved to IniSearch ---
 

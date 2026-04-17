@@ -28,10 +28,31 @@ use log::info;
 
 #[derive(Clone, Debug)]
 pub struct CbMetadata {
+    // Basic / Legacy
     pub ldv: u8,
-    pub b_flags: u16,         // Often unused in v2
+    pub b_flags: u16,         
+    
+    // PerBoxData (Offset 0x10 in payload)
+    pub pairing_data: [u8; 3],
+    pub lockdown_value: u8,
+    pub reserved_per_box: [u8; 0xC],
+    pub per_box_digest: [u8; 0x10],
+
+    // Chain Metadata (Decrypted)
     pub signature: [u8; 0x100],
-    pub cd_cbb_hash: [u8; 0x14],
+    pub rsa_pub_key: [u8; 0x110],
+    pub nonce_3bl: [u8; 0x10],
+    pub salt_3bl: [u8; 0xA],
+    pub salt_4bl: [u8; 0xA],
+    pub digest_4bl: [u8; 0x14],
+
+    // Hardware/Debug Hooks
+    pub post_output_addr: u64,
+    pub sb_flash_addr: u64,
+    pub soc_mmio_addr: u64,
+    
+    // Security/Policy
+    pub console_allow: [u8; 4],
 }
 
 #[derive(Clone)]
@@ -92,26 +113,83 @@ impl BootloaderCb {
     }
 
     pub fn populate_metadata(&mut self) {
-        if !self.is_decrypted() || self.data.len() < 0x3B6 { return; }
+        if !self.is_decrypted() || self.data.len() < 0x3B0 { return; }
 
+        // Mappings (+0x10 from RGBuild DecryptedData offsets)
+        let pairing_data: [u8; 3] = self.data[0x10..0x13].try_into().unwrap();
+        let lockdown_value = self.data[0x13];
+        let reserved_per_box: [u8; 0xC] = self.data[0x14..0x20].try_into().unwrap();
+        let per_box_digest: [u8; 0x10] = self.data[0x20..0x30].try_into().unwrap();
+        
         let mut signature = [0u8; 0x100];
-        // signature is after header (16), key (16), padding (32) = 64 bytes (Absolute 0x40)
-        // 0x40 - 0x10 (pay start) = 0x30 relative
         signature.copy_from_slice(&self.data[0x30..0x130]); 
 
-        let mut next_hash = [0u8; 0x14];
-        // cd_cbb_hash is at Absolute 0x39C. Rel = 0x38C
-        next_hash.copy_from_slice(&self.data[0x38C..0x3A0]); 
+        let post_output_addr = u64::from_be_bytes(self.data[0x240..0x248].try_into().unwrap());
+        let sb_flash_addr = u64::from_be_bytes(self.data[0x248..0x250].try_into().unwrap());
+        let soc_mmio_addr = u64::from_be_bytes(self.data[0x250..0x258].try_into().unwrap());
 
-        // more_globals[1] (LDV) is at Absolute 0x3B1. Rel = 0x3A1
-        let ldv = self.data[0x3A1];
+        let mut rsa_pub_key = [0u8; 0x110];
+        rsa_pub_key.copy_from_slice(&self.data[0x258..0x368]);
+
+        let mut nonce_3bl = [0u8; 0x10];
+        nonce_3bl.copy_from_slice(&self.data[0x368..0x378]);
+
+        let mut salt_3bl = [0u8; 0xA];
+        salt_3bl.copy_from_slice(&self.data[0x378..0x382]);
+
+        let mut salt_4bl = [0u8; 0xA];
+        salt_4bl.copy_from_slice(&self.data[0x382..0x38C]);
+
+        let mut digest_4bl = [0u8; 0x14];
+        digest_4bl.copy_from_slice(&self.data[0x38C..0x3A0]);
+
+        let mut console_allow = [0u8; 4];
+        console_allow.copy_from_slice(&self.data[0x3A0..0x3A4]);
 
         self.metadata = Some(CbMetadata {
-            ldv,
-            b_flags: 0, 
+            ldv: lockdown_value,
+            b_flags: self.header.flags.get(), 
+            pairing_data,
+            lockdown_value,
+            reserved_per_box,
+            per_box_digest,
             signature,
-            cd_cbb_hash: next_hash,
+            post_output_addr,
+            sb_flash_addr,
+            soc_mmio_addr,
+            rsa_pub_key,
+            nonce_3bl,
+            salt_3bl,
+            salt_4bl,
+            digest_4bl,
+            console_allow,
         });
+    }
+
+    /// Synchronizes the high-level metadata object back into the raw bootloader payload.
+    /// This ensures that any edits made to the metadata are carried over to the final image.
+    pub fn sync_metadata(&mut self) {
+        if let Some(ref meta) = self.metadata {
+            if self.data.len() < 0x3A4 { return; }
+
+            self.data[0x10..0x13].copy_from_slice(&meta.pairing_data);
+            self.data[0x13] = meta.lockdown_value;
+            self.data[0x14..0x20].copy_from_slice(&meta.reserved_per_box);
+            self.data[0x20..0x30].copy_from_slice(&meta.per_box_digest);
+            
+            self.data[0x30..0x130].copy_from_slice(&meta.signature);
+
+            self.data[0x240..0x248].copy_from_slice(&meta.post_output_addr.to_be_bytes());
+            self.data[0x248..0x250].copy_from_slice(&meta.sb_flash_addr.to_be_bytes());
+            self.data[0x250..0x258].copy_from_slice(&meta.soc_mmio_addr.to_be_bytes());
+
+            self.data[0x258..0x368].copy_from_slice(&meta.rsa_pub_key);
+            self.data[0x368..0x378].copy_from_slice(&meta.nonce_3bl);
+            self.data[0x378..0x382].copy_from_slice(&meta.salt_3bl);
+            self.data[0x382..0x38C].copy_from_slice(&meta.salt_4bl);
+            self.data[0x38C..0x3A0].copy_from_slice(&meta.digest_4bl);
+            self.data[0x3A0..0x3A4].copy_from_slice(&meta.console_allow);
+        }
     }
 
     pub fn is_decrypted(&self) -> bool {
@@ -176,11 +254,17 @@ impl BootloaderCb {
         if self.is_decrypted() {
             if let Some(ref meta) = self.metadata {
                 info!("[builder] {} LDV: {}", indicator, meta.ldv);
-                info!("[builder] {} next hash: {:02x?}", indicator, meta.cd_cbb_hash);
+                info!("[builder] {} Pairing: {:02x?}", indicator, meta.pairing_data);
+                info!("[builder] {} Post Addr: 0x{:08X}", indicator, meta.post_output_addr);
+                info!("[builder] {} SB Flash: 0x{:08X}", indicator, meta.sb_flash_addr);
+                info!("[builder] {} SOC MMIO: 0x{:08X}", indicator, meta.soc_mmio_addr);
+                info!("[builder] {} Nonce 3BL: {:02x?}", indicator, meta.nonce_3bl);
+                info!("[builder] {} Allow Mask: {:02x?}", indicator, meta.console_allow);
+                info!("[builder] {} Next Digest: {:02x?}", indicator, meta.digest_4bl);
             } else {
                 // Fallback to raw indexing if metadata wasn't populated
-                info!("[builder] {} LDV: {}", indicator, self.data[0x391]);
-                info!("[builder] {} next hash: {:02x?}", indicator, &self.data[0x37C..0x390]);
+                info!("[builder] {} LDV: {}", indicator, self.data[0x13]);
+                info!("[builder] {} next hash: {:02x?}", indicator, &self.data[0x38C..0x3A0]);
             }
             if self.data.len() >= 0x30 && self.data[0x30] != 0 {
                 info!("[builder] {} signature: (requires keys to verify)", indicator);

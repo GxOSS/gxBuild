@@ -13,6 +13,7 @@ use log::{info, error};
 use crate::core::data::blocks::*;
 use crate::builder::chain::*;
 use crate::builder::chain::flashfs::FlashFS;
+use crate::core::data::gxp::{GxpBinary, GxpPatchType, apply_records};
 
 pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
     if hex.len() % 2 != 0 {
@@ -677,5 +678,55 @@ impl NandSkeleton {
         smc.encrypt();
         skel.extra.smc = smc.data;
         skel.assemble_logical()
+    }
+
+    /// Appplies a GXP or legacy patchset to the relevant sections of this NAND skeleton.
+    pub fn apply_patch(&mut self, patch: GxpBinary) -> Result<(), String> {
+        if let Some(khv) = patch.khv {
+            info!("[builder] Routing {} KHV patch records to options slot...", khv.records.len());
+            self.bootloaders.khvpatch = Some(khv.records.iter().map(|r| PatchRecord {
+                address: r.address,
+                amount: r.amount,
+                data: r.data.clone(),
+            }).collect());
+        }
+
+        if let Some(cb_b) = patch.cb_b {
+            if patch.header.patch_type == GxpPatchType::Rgh4Section {
+                if let Some(cbb_bl) = &mut self.bootloaders.cb_b {
+                    info!("[builder] Applying RGH Section 0 patches to CB_B");
+                    apply_records(&cb_b.records, &mut cbb_bl.data).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+
+        if let Some(cb) = patch.cb {
+            // Logic: If only CB is present, apply to CB. If CB_A and CB_B are present, apply to CB_B.
+            if matches!(patch.header.patch_type, GxpPatchType::Jtag4Section | GxpPatchType::Rgh3Section) {
+                if self.bootloaders.cb_a.is_some() && self.bootloaders.cb_b.is_some() {
+                    if let Some(cbb_bl) = &mut self.bootloaders.cb_b {
+                        info!("[builder] Split CB detected: Applying primary patch section to CB_B");
+                        apply_records(&cb.records, &mut cbb_bl.data).map_err(|e| e.to_string())?;
+                    }
+                } else if let Some(cb_bl) = &mut self.bootloaders.cb {
+                    info!("[builder] Singular CB detected: Applying patches to CB");
+                    apply_records(&cb.records, &mut cb_bl.data).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+
+        if let Some(cd) = patch.cd {
+            if let Some(cd_bl) = &mut self.bootloaders.cd {
+                info!("[builder] Applying patches to CD (Filesystem Driver)");
+                apply_records(&cd.records, &mut cd_bl.data).map_err(|e| e.to_string())?;
+            }
+        }
+
+        if let Some(smc) = patch.smc {
+            info!("[builder] Applying {} records to decrypted SMC buffer", smc.records.len());
+            apply_records(&smc.records, &mut self.extra.smc).map_err(|e| e.to_string())?;
+        }
+
+        Ok(())
     }
 }

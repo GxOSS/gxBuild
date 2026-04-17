@@ -27,8 +27,11 @@ use log::info;
 
 #[derive(Clone, Debug)]
 pub struct CdMetadata {
-    pub cf_salt: [u8; 10],
-    pub ce_hash: [u8; 0x14],
+    pub signature: [u8; 0x100],
+    pub rsa_pub_key: [u8; 0x110],
+    pub nonce_6bl: [u8; 0x10],
+    pub salt_6bl: [u8; 10],
+    pub digest_5bl: [u8; 0x14],
 }
 
 #[derive(Clone)]
@@ -52,18 +55,42 @@ impl BootloaderCd {
     }
 
     pub fn populate_metadata(&mut self) {
-        if self.data.len() < 0x250 { return; } // ce_hash ends at 0x23C + 0x14 = 0x250 rel to 0x10
+        if !self.is_decrypted() || self.data.len() < 0x250 { return; }
 
-        let mut cf_salt = [0u8; 10];
-        cf_salt.copy_from_slice(&self.data[0x230..0x23A]); // Absolute 0x240
+        let mut signature = [0u8; 0x100];
+        signature.copy_from_slice(&self.data[0x10..0x110]);
 
-        let mut ce_hash = [0u8; 0x14];
-        ce_hash.copy_from_slice(&self.data[0x23C..0x250]); // Absolute 0x24C
+        let mut rsa_pub_key = [0u8; 0x110];
+        rsa_pub_key.copy_from_slice(&self.data[0x110..0x220]);
+
+        let mut nonce_6bl = [0u8; 0x10];
+        nonce_6bl.copy_from_slice(&self.data[0x220..0x230]);
+
+        let mut salt_6bl = [0u8; 10];
+        salt_6bl.copy_from_slice(&self.data[0x230..0x23A]);
+
+        let mut digest_5bl = [0u8; 0x14];
+        digest_5bl.copy_from_slice(&self.data[0x23C..0x250]);
 
         self.metadata = Some(CdMetadata {
-            cf_salt,
-            ce_hash,
+            signature,
+            rsa_pub_key,
+            nonce_6bl,
+            salt_6bl,
+            digest_5bl,
         });
+    }
+
+    pub fn sync_metadata(&mut self) {
+        if let Some(ref meta) = self.metadata {
+            if self.data.len() < 0x250 { return; }
+
+            self.data[0x10..0x110].copy_from_slice(&meta.signature);
+            self.data[0x110..0x220].copy_from_slice(&meta.rsa_pub_key);
+            self.data[0x220..0x230].copy_from_slice(&meta.nonce_6bl);
+            self.data[0x230..0x23A].copy_from_slice(&meta.salt_6bl);
+            self.data[0x23C..0x250].copy_from_slice(&meta.digest_5bl);
+        }
     }
 
     pub fn is_decrypted(&self) -> bool {
@@ -97,22 +124,15 @@ impl BootloaderCd {
         info!("[builder] {} size: 0x{:x}", indicator, self.header.size.get());
         info!("[builder] {} entrypoint: 0x{:x}", indicator, self.header.entrypoint.get());
 
-        if self.data.len() >= 0x23A {
-            info!(
-                "[builder] {} cfsalt: {}",
-                indicator,
-                String::from_utf8_lossy(&self.data[0x230..0x23A])
-            );
+        if let Some(ref meta) = self.metadata {
+            if self.is_decrypted() {
+                info!("[builder] {}-F nonce: {:02x?}", indicator, meta.nonce_6bl);
+                info!("[builder] {}-F salt: {:02x?}", indicator, meta.salt_6bl);
+                info!("[builder] {}-E digest: {:02x?}", indicator, meta.digest_5bl);
+            }
         }
 
-        if self.is_decrypted() {
-            if let Some(ref meta) = self.metadata {
-                info!("[builder] {}-E hash: {:02x?}", indicator, meta.ce_hash);
-            } else {
-                // Fallback to raw indexing if metadata wasn't populated
-                info!("[builder] {}-E hash: {:02x?}", indicator, &self.data[0x23C..0x250]);
-            }
-        } else {
+        if !self.is_decrypted() {
             info!("[builder] {} is encrypted", indicator);
         }
     }

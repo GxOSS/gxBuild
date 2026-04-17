@@ -250,6 +250,42 @@ impl FileSystemRoot {
         if self.block_number >= 0 && (self.block_number as usize) < self.block_map.len() {
             self.block_map[self.block_number as usize] = 0x1FFF;
         }
+
+        // Calibrate BlockOffset for Big-Block NANDs by searching for .xex headers
+        if *layout == NandLayout::Bb {
+            self.calibrate_block_offset(image, layout);
+        }
+    }
+
+    /// Calibrates the physical BlockOffset for Big-Block (MetaType2) NANDs.
+    /// Ported from RGBuild::NANDImage.cs (LoadFileSystem): 
+    /// Searches for "XEX2" or "XEX1" headers at common offsets (0xAE0, 0x2E0) 
+    /// relative to an existing .xex file's starting block.
+    pub fn calibrate_block_offset(&mut self, image: &[u8], layout: &NandLayout) {
+        if *layout != NandLayout::Bb { return; }
+
+        let pages_per_block = layout.logical_pages_per_block();
+        let logical_block_size = pages_per_block * 0x200;
+
+        for entry in self.entries.iter().filter(|e| !e.deleted && e.file_name.to_lowercase().ends_with(".xex")) {
+            let base_block = entry.block_number;
+            
+            // Common offsets to check: 0xAE0, 0x2E0, 0x0
+            for &offset in &[0xAE0u16, 0x2E0u16, 0x0u16] {
+                let physical_block = base_block.wrapping_add(offset) as usize;
+                let page_offset = physical_block * logical_block_size;
+                
+                if page_offset + 4 <= image.len() {
+                    let sig = &image[page_offset..page_offset + 4];
+                    if sig == b"XEX2" || sig == b"XEX1" {
+                        info!("[flashfs] Calibrated BlockOffset: 0x{:X} (Found {} signature at block {})", 
+                               offset, String::from_utf8_lossy(sig), physical_block);
+                        self.block_offset = offset;
+                        return;
+                    }
+                }
+            }
+        }
     }
 
     pub fn create_defaults(&mut self, image_len: usize, layout: &NandLayout, fs_start_block: u16) {
@@ -466,6 +502,58 @@ impl FileSystemRoot {
         self.set_chain_data(image, layout, entry.block_number, data);
         entry.size = data.len() as u32;
         entry.data = data.to_vec();
+    }
+
+    /// Surgically replaces the content of an existing file.
+    pub fn replace_file(&mut self, image: &mut [u8], layout: &NandLayout, name: &str, data: &[u8]) -> Result<(), String> {
+        let entry_idx = self.entries.iter().position(|e| e.file_name == name && !e.deleted)
+            .ok_or_else(|| format!("File not found or already deleted: {}", name))?;
+        
+        // Use a temporary entry reference to update data
+        let mut entry = self.entries[entry_idx].clone();
+        self.set_entry_data(image, layout, &mut entry, data);
+        self.entries[entry_idx] = entry;
+        
+        info!("[flashfs] Replaced asset: {} (New Size: 0x{:X})", name, data.len());
+        Ok(())
+    }
+
+    /// Injects a new file into the filesystem root.
+    pub fn inject_file(&mut self, image: &mut [u8], layout: &NandLayout, name: &str, data: &[u8]) -> Result<(), String> {
+        if self.entries.iter().any(|e| e.file_name == name && !e.deleted) {
+            return Err(format!("File already exists: {}. Use replace instead.", name));
+        }
+
+        let mut new_entry = FileSystemEntry::new(0);
+        new_entry.file_name = name.to_string();
+        self.set_entry_data(image, layout, &mut new_entry, data);
+        self.entries.push(new_entry);
+
+        info!("[flashfs] Injected new asset: {} (Size: 0x{:X})", name, data.len());
+        Ok(())
+    }
+
+    /// Forensically deletes a file by marking it with the 0x05 prefix and freeing its chain.
+    pub fn delete_file(&mut self, name: &str) -> Result<(), String> {
+        let entry_idx = self.entries.iter().position(|e| e.file_name == name && !e.deleted)
+            .ok_or_else(|| format!("File not found: {}", name))?;
+        
+        let start_block = self.entries[entry_idx].block_number;
+        if start_block != 0 {
+            self.free_block_chain(start_block);
+        }
+        
+        self.entries[entry_idx].deleted = true;
+        // The 0x05 prefix is handled during write_into/write_logical
+        info!("[flashfs] Forensically deleted asset: {}", name);
+        Ok(())
+    }
+
+    /// High-level extraction of a filesystem asset.
+    pub fn extract_asset(&self, name: &str) -> Option<Vec<u8>> {
+        self.entries.iter()
+            .find(|e| e.file_name == name && !e.deleted)
+            .map(|e| e.data.clone())
     }
 
     pub fn write_logical(&mut self, image: &mut [u8], layout: &NandLayout) {
