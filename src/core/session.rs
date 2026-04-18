@@ -277,6 +277,100 @@ impl Session {
         self.enqueue(InternalCommand::SessionRun);
     }
 
+    /// Pulls hardware/image defaults from the active NAND into the session options.
+    /// Only populates options that are currently None.
+    pub fn extract_options_from_nand(&mut self) {
+        if let Some(nand) = &self.active_nand {
+            info!("[session] Extracting hardware defaults from active NAND image...");
+            
+            // CPU Key
+            if self.options.cpukey.is_none() {
+                if let Some(key) = nand.cpukey {
+                    self.options.cpukey = Some(key.iter().map(|b| format!("{:02x}", b)).collect());
+                }
+            }
+
+            // Motherboard / Console Type mapping
+            if self.options.ctype.is_none() {
+                self.options.ctype = Some(format!("{:?}", nand.options.motherboard).to_lowercase());
+            }
+
+            // Keyvault Metadata (Region, DVD Key, etc.)
+            // We can re-parse the KV to get the latest info
+            if let Ok(mut kv) = crate::builder::chain::kv::Keyvault::parse(&nand.extra.keyvault) {
+                // If it was decrypted in the skeleton, we can read it
+                let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
+                if let Ok(_) = kv.decrypt(&cpukey, nand.header.kv_version.get() >= 2) {
+                    if let Some(meta) = kv.metadata {
+                        if self.options.avregion.is_none() {
+                            self.options.avregion = Some(format!("0x{:04X}", meta.region));
+                        }
+                        if self.options.dvdkey.is_none() {
+                            self.options.dvdkey = Some(meta.dvd_key.iter().map(|b| format!("{:02x}", b)).collect());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Pushes the final merged session options back into the NAND skeleton's 
+    /// Keyvault and SMC buffers before a build.
+    pub fn sync_options_to_nand(&mut self) -> Result<(), String> {
+        if let Some(nand) = &mut self.active_nand {
+            info!("[session] Syncing merged options to NAND components...");
+
+            // 1. Structural/Process Overrides
+            if let Some(noremap) = self.options.noremap {
+                nand.options.noremap = noremap;
+            }
+
+            // 2. CPU Key
+            if let Some(key_str) = &self.options.cpukey {
+                if let Ok(key_bytes) = crate::builder::builder::hex_to_bytes(key_str) {
+                    if key_bytes.len() == 16 {
+                        let mut arr = [0u8; 16];
+                        arr.copy_from_slice(&key_bytes);
+                        nand.cpukey = Some(arr);
+                    }
+                }
+            }
+
+            // 3. Keyvault Overrides (Region, DVD Key)
+            let mut kv = crate::builder::chain::kv::Keyvault::parse(&nand.extra.keyvault)?;
+            let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
+            
+            // Decrypt with current session key if possible
+            if let Err(e) = kv.decrypt(&cpukey, nand.header.kv_version.get() >= 2) {
+                warn!("[session] Failed to decrypt Keyvault for option patching: {}", e);
+            } else {
+                if let Some(region_str) = &self.options.avregion {
+                    let region = if region_str.starts_with("0x") {
+                        u16::from_str_radix(&region_str[2..], 16).map_err(|e| format!("Invalid region hex: {}", e))?
+                    } else {
+                        region_str.parse::<u16>().map_err(|e| format!("Invalid region dec: {}", e))?
+                    };
+                    kv.set_region(region)?;
+                }
+
+                if let Some(dvdkey_str) = &self.options.dvdkey {
+                    if let Ok(key_bytes) = crate::builder::builder::hex_to_bytes(dvdkey_str) {
+                        if key_bytes.len() == 16 {
+                            let mut arr = [0u8; 16];
+                            arr.copy_from_slice(&key_bytes);
+                            kv.set_dvd_key(&arr)?;
+                        }
+                    }
+                }
+                
+                // Re-encrypt and store
+                kv.encrypt(&cpukey, nand.header.kv_version.get() >= 2)?;
+                nand.extra.keyvault = kv.data;
+            }
+        }
+        Ok(())
+    }
+
     /// Execute a specific queued command by its sequence_id, then remove it from the queue.
     /// Returns `Ok(true)` if found and executed successfully, `Ok(false)` if not found,
     /// or `Err` if the command was found but failed during execution.
@@ -406,6 +500,9 @@ impl Session {
                 }
                 InternalCommand::Build { output, target: _target } => {
                     info!("[session] Building NAND image to '{}'...", output.display());
+                    // Sync options before build
+                    self.sync_options_to_nand()?;
+                    
                     if let Some(nand) = &self.active_nand {
                         let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
                         let layout = nand.layout;
@@ -510,6 +607,7 @@ impl Session {
                                             info!("[session] LBA Map: {} total blocks, {} bad blocks remapped",
                                                 lba_map.logical_to_physical.len(), lba_map.bad_blocks.len());
                                             self.active_nand = Some(nand);
+                                            self.extract_options_from_nand();
                                             info!("[session] Successfully parsed NAND from {:?} (Layout: {:?})", path, layout);
                                         }
                                         Err(e) => error!("[session] Failed to interpret clean NAND: {}", e),

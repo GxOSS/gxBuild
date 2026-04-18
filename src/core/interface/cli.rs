@@ -134,6 +134,7 @@ pub enum CliBuildType {
     glitch,
     glitch2,
     glitch2m,
+    glitch3,
     devkit,
 }
 
@@ -297,30 +298,49 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         if let Ok(content) = std::fs::read_to_string(&options_path) {
             match crate::core::data::xeini::parse_options_ini(&content) {
                 Ok(opts) => {
-                    session.options = opts;
-                    info!("[cli] Loaded defaults from {:?}", options_path);
+                    session.options.merge(opts);
+                    info!("[cli] Merged defaults from {:?}", options_path);
                 }
                 Err(e) => warn!("[cli] Failed to parse options.ini: {}", e),
             }
         }
     }
 
-    // --- CLI Options Overrides (-o) ---
+    // --- CLI Command-Line Specific Overrides ---
+    let mut cli_overrides = crate::core::data::xeini::OptionsIni::new();
+    if let Some(key) = &args.cpukey {
+        cli_overrides.cpukey = Some(key.clone());
+    }
+    if let Some(region) = &args.avregion {
+        cli_overrides.avregion = Some(region.clone());
+    }
+    session.options.merge(cli_overrides);
+
+    // --- CLI Generic Options Overrides (-o) ---
     for group in &args.options {
         for (k, v) in group {
+            let mut o = crate::core::data::xeini::OptionsIni::new();
             match k.to_lowercase().as_str() {
                 "unsafe" => {
-                    session.options.gxunsafe = v.eq_ignore_ascii_case("true");
-                    if session.options.gxunsafe {
+                    o.gxunsafe = Some(v.eq_ignore_ascii_case("true"));
+                    if o.gxunsafe.unwrap_or(false) {
                         warn!("[cli] Unsafe Mode enabled via CLI override.");
                     }
                 }
-                "nomobile" => session.options.nomobile = v.eq_ignore_ascii_case("true"),
-                "noenter" => session.options.noenter = v.eq_ignore_ascii_case("true"),
-                "cputemp" => session.options.cputemp = v.clone(),
-                _ => {} // Other options can be wired as needed
+                "nomobile" => o.nomobile = Some(v.eq_ignore_ascii_case("true")),
+                "noenter" => o.noenter = Some(v.eq_ignore_ascii_case("true")),
+                "noremap" => o.noremap = Some(v.eq_ignore_ascii_case("true")),
+                "nandmu" => o.nandmu = Some(v.eq_ignore_ascii_case("true")),
+                "cputemp" => o.cputemp = Some(v.clone()),
+                "gputemp" => o.gputemp = Some(v.clone()),
+                "edramtemp" => o.edramtemp = Some(v.clone()),
+                "cpufan" => o.cpufan = Some(v.clone()),
+                "gpufan" => o.gpufan = Some(v.clone()),
+                _ => warn!("[cli] Unhandled generic option override: {}", k),
             }
+            session.options.merge(o);
         }
+    }
     }
 
     if session.options.gxunsafe {

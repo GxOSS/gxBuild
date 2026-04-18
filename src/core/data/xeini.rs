@@ -84,90 +84,132 @@ pub struct XeBuildIni {
     pub rebooter: bool,
 }
 
+#[derive(Debug, Clone)]
 pub struct OptionsIni {
-    pub ctype: String,
-    pub _1blkey: String,
-    pub cpukey: String,
-    pub cfldv: String,
-    pub dvdkey: String,
-    pub xellbutton: String,
-    pub xellbutton2: String,
-    pub cygnos: bool,
-    pub demon: bool,
-    pub smcnoeject: bool,
-    pub smcnoblink: bool,
-    pub patchsmc: bool,
-    pub olddvd: bool,
-    pub nodvd: bool,
-    pub dualboot: bool,
-    pub nomobile: bool,
-    pub noremap: bool,
-    pub noecdremap: bool,
-    pub nandmu: bool,
-    pub nosecurity: bool,
-    pub nosusecurity: bool,
-    pub smcnocheck: bool,
-    pub cputemp: String,
-    pub gputemp: String,
-    pub edramtemp: String,
-    pub overcputemp: String,
-    pub overgputemp: String,
-    pub overedramtemp: String,
-    pub cpufan: String,
-    pub gpufan: String,
-    pub avregion: String,
-    pub gameregion: String,
-    pub dvdregion: String,
-    pub macid: String,
-    pub noenter: bool,
-    pub nolog: bool,
-    pub noinfo: bool,
-    pub gxunsafe: bool,
+    pub ctype: Option<String>,
+    pub _1blkey: Option<String>,
+    pub cpukey: Option<String>,
+    pub cfldv: Option<String>,
+    pub dvdkey: Option<String>,
+    pub xellbutton: Option<String>,
+    pub xellbutton2: Option<String>,
+    pub cygnos: Option<bool>,
+    pub demon: Option<bool>,
+    pub smcnoeject: Option<bool>,
+    pub smcnoblink: Option<bool>,
+    pub patchsmc: Option<bool>,
+    pub olddvd: Option<bool>,
+    pub nodvd: Option<bool>,
+    pub dualboot: Option<bool>,
+    pub nomobile: Option<bool>,
+    pub noremap: Option<bool>,
+    pub noecdremap: Option<bool>,
+    pub nandmu: Option<bool>,
+    pub nosecurity: Option<bool>,
+    pub nosusecurity: Option<bool>,
+    pub smcnocheck: Option<bool>,
+    pub cputemp: Option<String>,
+    pub gputemp: Option<String>,
+    pub edramtemp: Option<String>,
+    pub overcputemp: Option<String>,
+    pub overgputemp: Option<String>,
+    pub overedramtemp: Option<String>,
+    pub cpufan: Option<String>,
+    pub gpufan: Option<String>,
+    pub avregion: Option<String>,
+    pub gameregion: Option<String>,
+    pub dvdregion: Option<String>,
+    pub macid: Option<String>,
+    pub noenter: Option<bool>,
+    pub nolog: Option<bool>,
+    pub noinfo: Option<bool>,
+    pub gxunsafe: Option<bool>,
 }
 
 impl OptionsIni {
     pub fn new() -> Self {
-        // Todo: set sane defaults
         OptionsIni {
-            ctype: String::from("options"),
-            _1blkey: String::from("00000000000000000000000000000000"),
-            cpukey: String::from("00000000000000000000000000000000"),
-            cfldv: String::from("0"),
-            dvdkey: String::from("00000000000000000000000000000000"),
-            xellbutton: String::from("0"),
-            xellbutton2: String::from("0"),
-            cygnos: false,
-            demon: false,
-            smcnoeject: false,
-            smcnoblink: false,
-            patchsmc: false,
-            olddvd: false,
-            nodvd: false,
-            dualboot: false,
-            nomobile: false,
-            noremap: false,
-            noecdremap: false,
-            nandmu: false,
-            nosecurity: false,
-            nosusecurity: false,
-            smcnocheck: false,
-            noenter: false,
-            nolog: false,
-            noinfo: false,
-            gxunsafe: false,
-            cputemp: String::from("0"),
-            gputemp: String::from("0"),
-            edramtemp: String::from("0"),
-            overcputemp: String::from("0"),
-            overgputemp: String::from("0"),
-            overedramtemp: String::from("0"),
-            cpufan: String::from("0"),
-            gpufan: String::from("0"),
-            avregion: String::from("0"),
-            gameregion: String::from("0"),
-            dvdregion: String::from("0"),
-            macid: String::from("00000000000000000000000000000000"),
+            ctype: None,
+            _1blkey: None,
+            cpukey: None,
+            cfldv: None,
+            dvdkey: None,
+            xellbutton: None,
+            xellbutton2: None,
+            cygnos: None,
+            demon: None,
+            smcnoeject: None,
+            smcnoblink: None,
+            patchsmc: None,
+            olddvd: None,
+            nodvd: None,
+            dualboot: None,
+            nomobile: None,
+            noremap: None,
+            noecdremap: None,
+            nandmu: None,
+            nosecurity: None,
+            nosusecurity: None,
+            smcnocheck: None,
+            noenter: None,
+            nolog: None,
+            noinfo: None,
+            gxunsafe: None,
+            cputemp: None,
+            gputemp: None,
+            edramtemp: None,
+            overcputemp: None,
+            overgputemp: None,
+            overedramtemp: None,
+            cpufan: None,
+            gpufan: None,
+            avregion: None,
+            gameregion: None,
+            dvdregion: None,
+            macid: None,
         }
+    }
+
+    /// Merges values from another OptionsIni, overwriting only if the other field is Some.
+    pub fn merge(&mut self, other: OptionsIni) {
+        if let Some(v) = other.ctype { self.ctype = Some(v); }
+        if let Some(v) = other._1blkey { self._1blkey = Some(v); }
+        if let Some(v) = other.cpukey { self.cpukey = Some(v); }
+        if let Some(v) = other.cfldv { self.cfldv = Some(v); }
+        if let Some(v) = other.dvdkey { self.dvdkey = Some(v); }
+        if let Some(v) = other.xellbutton { self.xellbutton = Some(v); }
+        if let Some(v) = other.xellbutton2 { self.xellbutton2 = Some(v); }
+        if let Some(v) = other.cygnos { self.cygnos = Some(v); }
+        if let Some(v) = other.demon { self.demon = Some(v); }
+        if let Some(v) = other.smcnoeject { self.smcnoeject = Some(v); }
+        if let Some(v) = other.smcnoblink { self.smcnoblink = Some(v); }
+        if let Some(v) = other.patchsmc { self.patchsmc = Some(v); }
+        if let Some(v) = other.olddvd { self.olddvd = Some(v); }
+        if let Some(v) = other.nodvd { self.nodvd = Some(v); }
+        if let Some(v) = other.dualboot { self.dualboot = Some(v); }
+        if let Some(v) = other.nomobile { self.nomobile = Some(v); }
+        if let Some(v) = other.noremap { self.noremap = Some(v); }
+        if let Some(v) = other.noecdremap { self.noecdremap = Some(v); }
+        if let Some(v) = other.nandmu { self.nandmu = Some(v); }
+        if let Some(v) = other.nosecurity { self.nosecurity = Some(v); }
+        if let Some(v) = other.nosusecurity { self.nosusecurity = Some(v); }
+        if let Some(v) = other.smcnocheck { self.smcnocheck = Some(v); }
+        if let Some(v) = other.noenter { self.noenter = Some(v); }
+        if let Some(v) = other.nolog { self.nolog = Some(v); }
+        if let Some(v) = other.noinfo { self.noinfo = Some(v); }
+        if let Some(v) = other.gxunsafe { self.gxunsafe = Some(v); }
+        if let Some(v) = other.cputemp { self.cputemp = Some(v); }
+        if let Some(v) = other.gputemp { self.gputemp = Some(v); }
+        if let Some(v) = other.edramtemp { self.edramtemp = Some(v); }
+        if let Some(v) = other.overcputemp { self.overcputemp = Some(v); }
+        if let Some(v) = other.overgputemp { self.overgputemp = Some(v); }
+        if let Some(v) = other.overedramtemp { self.overedramtemp = Some(v); }
+        if let Some(v) = other.cpufan { self.cpufan = Some(v); }
+        if let Some(v) = other.gpufan { self.gpufan = Some(v); }
+        if let Some(v) = other.avregion { self.avregion = Some(v); }
+        if let Some(v) = other.gameregion { self.gameregion = Some(v); }
+        if let Some(v) = other.dvdregion { self.dvdregion = Some(v); }
+        if let Some(v) = other.macid { self.macid = Some(v); }
     }
 }
 
@@ -205,44 +247,44 @@ pub fn parse_options_ini(
             match parts.as_slice() {
                 [key, value] => {
                     match key.to_lowercase().as_str() {
-                        "type" => options.ctype = value.clone(),
-                        "1blkey" => options._1blkey = value.clone(),
-                        "cpukey" => options.cpukey = value.clone(),
-                        "cfldv" => options.cfldv = value.clone(),
-                        "dvdkey" => options.dvdkey = value.clone(),
-                        "xellbutton" => options.xellbutton = value.clone(),
-                        "xellbutton2" => options.xellbutton2 = value.clone(),
-                        "cygnos" => options.cygnos = value.eq_ignore_ascii_case("true"),
-                        "demon" => options.demon = value.eq_ignore_ascii_case("true"),
-                        "smcnoeject" => options.smcnoeject = value.eq_ignore_ascii_case("true"),
-                        "smcnoblink" => options.smcnoblink = value.eq_ignore_ascii_case("true"),
-                        "patchsmc" => options.patchsmc = value.eq_ignore_ascii_case("true"),
-                        "olddvd" => options.olddvd = value.eq_ignore_ascii_case("true"),
-                        "nodvd" => options.nodvd = value.eq_ignore_ascii_case("true"),
-                        "dualboot" => options.dualboot = value.eq_ignore_ascii_case("true"),
-                        "nomobile" => options.nomobile = value.eq_ignore_ascii_case("true"),
-                        "noremap" => options.noremap = value.eq_ignore_ascii_case("true"),
-                        "noecdremap" => options.noecdremap = value.eq_ignore_ascii_case("true"),
-                        "nandmu" => options.nandmu = value.eq_ignore_ascii_case("true"),
-                        "nosecurity" => options.nosecurity = value.eq_ignore_ascii_case("true"),
-                        "nosusecurity" => options.nosusecurity = value.eq_ignore_ascii_case("true"),
-                        "smcnocheck" => options.smcnocheck = value.eq_ignore_ascii_case("true"),
-                        "noenter" => options.noenter = value.eq_ignore_ascii_case("true"),
-                        "nolog" => options.nolog = value.eq_ignore_ascii_case("true"),
-                        "noinfo" => options.noinfo = value.eq_ignore_ascii_case("true"),
-                        "gxunsafe" => options.gxunsafe = value.eq_ignore_ascii_case("true"),
-                        "cputemp" => options.cputemp = value.clone(),
-                        "gputemp" => options.gputemp = value.clone(),
-                        "edramtemp" => options.edramtemp = value.clone(),
-                        "overcputemp" => options.overcputemp = value.clone(),
-                        "overgputemp" => options.overgputemp = value.clone(),
-                        "overedramtemp" => options.overedramtemp = value.clone(),
-                        "cpufan" => options.cpufan = value.clone(),
-                        "gpufan" => options.gpufan = value.clone(),
-                        "avregion" => options.avregion = value.clone(),
-                        "gameregion" => options.gameregion = value.clone(),
-                        "dvdregion" => options.dvdregion = value.clone(),
-                        "macid" => options.macid = value.clone(),
+                        "type" => options.ctype = Some(value.clone()),
+                        "1blkey" => options._1blkey = Some(value.clone()),
+                        "cpukey" => options.cpukey = Some(value.clone()),
+                        "cfldv" => options.cfldv = Some(value.clone()),
+                        "dvdkey" => options.dvdkey = Some(value.clone()),
+                        "xellbutton" => options.xellbutton = Some(value.clone()),
+                        "xellbutton2" => options.xellbutton2 = Some(value.clone()),
+                        "cygnos" => options.cygnos = Some(value.eq_ignore_ascii_case("true")),
+                        "demon" => options.demon = Some(value.eq_ignore_ascii_case("true")),
+                        "smcnoeject" => options.smcnoeject = Some(value.eq_ignore_ascii_case("true")),
+                        "smcnoblink" => options.smcnoblink = Some(value.eq_ignore_ascii_case("true")),
+                        "patchsmc" => options.patchsmc = Some(value.eq_ignore_ascii_case("true")),
+                        "olddvd" => options.olddvd = Some(value.eq_ignore_ascii_case("true")),
+                        "nodvd" => options.nodvd = Some(value.eq_ignore_ascii_case("true")),
+                        "dualboot" => options.dualboot = Some(value.eq_ignore_ascii_case("true")),
+                        "nomobile" => options.nomobile = Some(value.eq_ignore_ascii_case("true")),
+                        "noremap" => options.noremap = Some(value.eq_ignore_ascii_case("true")),
+                        "noecdremap" => options.noecdremap = Some(value.eq_ignore_ascii_case("true")),
+                        "nandmu" => options.nandmu = Some(value.eq_ignore_ascii_case("true")),
+                        "nosecurity" => options.nosecurity = Some(value.eq_ignore_ascii_case("true")),
+                        "nosusecurity" => options.nosusecurity = Some(value.eq_ignore_ascii_case("true")),
+                        "smcnocheck" => options.smcnocheck = Some(value.eq_ignore_ascii_case("true")),
+                        "noenter" => options.noenter = Some(value.eq_ignore_ascii_case("true")),
+                        "nolog" => options.nolog = Some(value.eq_ignore_ascii_case("true")),
+                        "noinfo" => options.noinfo = Some(value.eq_ignore_ascii_case("true")),
+                        "gxunsafe" => options.gxunsafe = Some(value.eq_ignore_ascii_case("true")),
+                        "cputemp" => options.cputemp = Some(value.clone()),
+                        "gputemp" => options.gputemp = Some(value.clone()),
+                        "edramtemp" => options.edramtemp = Some(value.clone()),
+                        "overcputemp" => options.overcputemp = Some(value.clone()),
+                        "overgputemp" => options.overgputemp = Some(value.clone()),
+                        "overedramtemp" => options.overedramtemp = Some(value.clone()),
+                        "cpufan" => options.cpufan = Some(value.clone()),
+                        "gpufan" => options.gpufan = Some(value.clone()),
+                        "avregion" => options.avregion = Some(value.clone()),
+                        "gameregion" => options.gameregion = Some(value.clone()),
+                        "dvdregion" => options.dvdregion = Some(value.clone()),
+                        "macid" => options.macid = Some(value.clone()),
                         _ => warn!("[ini] Unknown option: {}", key),
                     }
                 }

@@ -5,6 +5,7 @@ pub mod ce;
 pub mod cf;
 pub mod cg;
 pub mod smc;
+pub mod xell;
 pub mod flashfs;
 pub mod kv;
 
@@ -132,51 +133,6 @@ impl BootloaderGeneric {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_size]);
             }
         }
-    }
-}
-
-// Removed broken Keyvault implementation - should be moved to separate logic in keys.rs if needed
-
-pub enum XellType {
-    Xell1f = 0,
-    Xell2f = 1,
-    XellGg = 2,
-    XellUnknown = 3,
-}
-
-impl XellType {
-    pub fn from_hash(_hash: &[u8; 0x14]) -> Self {
-        XellType::XellUnknown
-    }
-}
-
-
-pub struct Xell {
-    pub data: Vec<u8>,
-    pub xell_type: XellType,
-}
-
-impl Xell {
-    pub fn new(data: Vec<u8>) -> Self {
-        let mut hash = [0u8; 0x14];
-        if data.len() >= 0x14 {
-            hash.copy_from_slice(&data[..0x14]);
-        }
-        let xell_type = XellType::from_hash(&hash);
-        Self {
-            data,
-            xell_type,
-        }
-    }
-
-    /// crc32 hash xeLL
-    pub fn get_hash(&self) -> [u8; 0x14] {
-        [0u8; 0x14]
-    }
-
-    /// identify xell with crc32
-    pub fn identify(&self) -> XellType {
-        XellType::XellUnknown
     }
 }
 

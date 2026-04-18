@@ -3,8 +3,8 @@
 ## Current Release (1.22)
 
 Xell:
-- Xell chain file
 - Assemble xell image skeleton method
+- Xell discovery from nand
 - Xell discovery and injection from filesearch
 
 Smc:
@@ -17,9 +17,6 @@ FlashFS:
 - mobile partitions
 - FlashFS metadata
 - FlashFS placement
-
-Keyvault:
-- Keyvault placement
 
 Image Building:
 - Fix CRC32

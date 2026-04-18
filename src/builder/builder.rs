@@ -101,6 +101,7 @@ pub struct NandBootloaders {
     pub cd: Option<BootloaderCd>,
     pub ce: Option<BootloaderCe>,
     pub khvpatch: Option<Vec<PatchRecord>>,
+    pub xell: Option<crate::builder::chain::xell::Xell>,
 }
 
 impl NandBootloaders {
@@ -113,6 +114,7 @@ impl NandBootloaders {
         self.cd = None;
         self.ce = None;
         self.khvpatch = None;
+        self.xell = None;
     }
 }
 
@@ -196,6 +198,7 @@ pub struct BuildOptions {
     pub bigonsmall: bool,
     pub shadowboot: bool,
     pub mfg: bool,
+    pub noremap: bool,
     pub patches: Option<NandPatches>,
 }
 
@@ -238,7 +241,7 @@ impl NandSkeleton {
                 image_type: ImageType::Single,
                 build_type: BuildType::Retail,
                 motherboard: MotherboardType::Unknown,
-                bigonsmall: false, shadowboot: false, mfg: false, patches: None,
+                bigonsmall: false, shadowboot: false, mfg: false, noremap: false, patches: None,
             },
             header: NandHeader {
                 prefix: NandHeaderPrefix {
@@ -269,7 +272,7 @@ impl NandSkeleton {
                 }),
             },
             extra: NandExtra { smc: Vec::new(), smc_config: Vec::new(), keyvault: Vec::new(), fcrt: None, power_on_cause_a: 0, power_on_cause_b: 0 },
-            bootloaders: NandBootloaders { cb: None, cb_a: None, cb_x: None, cb_b: None, sc: None, cd: None, ce: None, khvpatch: None },
+            bootloaders: NandBootloaders { cb: None, cb_a: None, cb_x: None, cb_b: None, sc: None, cd: None, ce: None, khvpatch: None, xell: None },
             rebooter: None,
             update: NandUpdate { cf_0: None, cg_0: None, cf_1: None, cg_1: None },
             rebooter_update: None,
@@ -397,6 +400,7 @@ impl NandSkeleton {
                 bigonsmall: false,
                 shadowboot: false,
                 mfg: false,
+                noremap: false,
                 patches: None,
             },
             header,
