@@ -9,8 +9,8 @@ Xell:
 
 Smc:
 - SMC discovery
-- Convert JTAG / RJTAG / RJTOP patches to GXP
-- Convert RGH3 patches to GXP
+- Convert RGH1/2 patches to GXP or build autopatcher
+- Convert JTAG / RJTAG / RJTOP patches to GXP or build autopatcher
 
 FlashFS:
 - eMMC

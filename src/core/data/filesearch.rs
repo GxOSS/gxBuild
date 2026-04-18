@@ -94,7 +94,8 @@ pub struct IniSearch {
 }
 
 impl IniSearch {
-    pub fn new(ini: XeBuildIni, build: impl AsRef<Path>, common: impl AsRef<Path>, data: impl AsRef<Path>, nand: &Option<NandSkeleton>, unsafe_mode: bool) -> Result<Self, IniError> {
+    pub fn new(ini: XeBuildIni, build: impl AsRef<Path>, common: impl AsRef<Path>, data: impl AsRef<Path>, nand: &Option<NandSkeleton>, unsafe_mode: Option<bool>) -> Result<Self, IniError> {
+        let unsafe_mode = unsafe_mode.unwrap_or(false);
         let mut ini = ini;
         let mut result = IniSearchResult {
             bootloaders: None,

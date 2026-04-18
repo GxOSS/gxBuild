@@ -5,6 +5,7 @@
 /.qwen
 /output
 /References
+/planning
 Cargo.lock
 errors.log
 Cargo_errors.txt

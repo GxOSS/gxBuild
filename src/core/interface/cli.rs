@@ -308,11 +308,8 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
 
     // --- CLI Command-Line Specific Overrides ---
     let mut cli_overrides = crate::core::data::xeini::OptionsIni::new();
-    if let Some(key) = &args.cpukey {
+    if let Some(key) = &args.cpu_key {
         cli_overrides.cpukey = Some(key.clone());
-    }
-    if let Some(region) = &args.avregion {
-        cli_overrides.avregion = Some(region.clone());
     }
     session.options.merge(cli_overrides);
 
@@ -321,6 +318,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         for (k, v) in group {
             let mut o = crate::core::data::xeini::OptionsIni::new();
             match k.to_lowercase().as_str() {
+                "region" | "avregion" => o.avregion = Some(v.clone()),
                 "unsafe" => {
                     o.gxunsafe = Some(v.eq_ignore_ascii_case("true"));
                     if o.gxunsafe.unwrap_or(false) {
@@ -341,9 +339,8 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
             session.options.merge(o);
         }
     }
-    }
 
-    if session.options.gxunsafe {
+    if session.options.gxunsafe.unwrap_or(false) {
         warn!("[cli] UNEXPECTED BEHAVIOR ENABLED: Unsafe Mode is active. CRC32 mismatches will be bypassed.");
     }
 

@@ -424,6 +424,7 @@ impl NandSkeleton {
         let mut bl = NandBootloaders {
             cb: None, cb_a: None, cb_x: None, cb_b: None,
             sc: None, cd: None, ce: None, khvpatch: None,
+            xell: None,
         };
         let mut update = NandUpdate {
             cf_0: None, cg_0: None, cf_1: None, cg_1: None,

@@ -19,7 +19,7 @@ use std::fs;
 use crate::core::interface::python::{python_interpreter, python_shell, python_script};
 use crate::core::data::gxp::parse_patch_binary;
 use crate::core::data::filesearch::IniSearch;
-use log::{info, error};
+use log::{info, error, warn};
 #[derive(Debug)]
 pub enum InternalCommand { 
     ParseIni { path: PathBuf, target: String, ini_base: PathBuf, common: PathBuf, data: PathBuf },
