@@ -2,7 +2,7 @@
 
 ![gxBuild Colour Transparent Banner](assets/gx_banner_colour_trans.png)
 
-gxBuild is a Xbox 360 image builder and patcher. Implements full nand, xell and shadowboot parsing and building, with a number of complex targets like JTAG-2f and DevGL.
+gxBuild is a Xbox 360 image builder and patcher. Implements full nand, xell and shadowboot parsing, patching and building.
 
 Aims for near-complete compatibility with xeBuild where possible, with only a few minor changes to syntax. Includes full xeBuild and RGBuild patching, the xeBuild folder structure and inis, crc32 hashing, and expands on xeBuild with Glitch3, native RGBuild, shadowboots, xell images, and CE patching.
 
@@ -31,11 +31,12 @@ I referenced ALLOT of projects in the building of this.
 These are the projects i directly took code from:
  - [xenon-bltool](https://github.com/InvoxiPlayGames/xenon-bltool) by [InxoviPlayGames](https://github.com/InvoxiPlayGames)
 - [x360utils](https://github.com/Swizzy/x360Utils) by [Swizzy](https://github.com/Swizzy)
-- [RGBuild](https://github.com/RGLoader/RGBuild) by [emoose](https://github.com/stoker25) / [stoker25](https://github.com/stoker25), [tydye81](https://github.com/tydye81) and [sk1080](https://github.com/sk1080)
+- [RGBuild](https://github.com/RGLoader/RGBuild) by [emoose](https://github.com/emoose) and [tydye81](https://github.com/tydye81)
 - [J-Runner with Extras](https://github.com/J-Runner-with-Extras/J-Runner-with-Extras) by J-Runner Contributors
 - [Xbox 360 Crypto](https://github.com/GoobyCorp/Xbox-360-Crypto) by [GoobyCorp](https://github.com/GoobyCorp)
-- [ImgBuild / Build.py]() by [GliGli]() [Tiros]()
+- [ImgBuild / Build.py]() by [GliGli]() and [Tiros]()
 - [RGH2 Build.py]() by Team Xecuter
+- [RGH2to3]() by [DrSchottky]()
 - [RGH3](https://github.com/15432/RGH3) by [15432](https://github.com/15432)
 
 And these are the projects i referenced:
@@ -49,9 +50,9 @@ And these are the projects i referenced:
 
 Last but not least:
 
-- c0z for xeBuild patches
-- Ikari for FreeBoot
-- team xeBuild / fbBuild / ggBuild
+- Cancerous
+- Ikari
+- Free60
 
 ## License
 
