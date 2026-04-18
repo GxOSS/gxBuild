@@ -617,11 +617,21 @@ impl IniSearch {
                 }
 
                 if let Some(c) = found_content {
-                    let mut fs_entry = FileSystemEntry::new(0);
-                    fs_entry.file_name = filename.clone();
-                    fs_entry.data = c.clone();
-                    flashfs.root.entries.push(fs_entry);
-                    result.extracted_assets.insert(filename.to_lowercase(), c);
+                    let lower = filename.to_lowercase();
+                    let is_bootloader = lower.starts_with("cb") || lower.starts_with("sb") ||
+                                        lower.starts_with("cd") || lower.starts_with("sd") ||
+                                        lower.starts_with("ce") || lower.starts_with("se") ||
+                                        lower.starts_with("cf") || lower.starts_with("sf") ||
+                                        lower.starts_with("cg") || lower.starts_with("sg") ||
+                                        lower.starts_with("sc");
+
+                    if !is_bootloader {
+                        let mut fs_entry = FileSystemEntry::new(0);
+                        fs_entry.file_name = filename.clone();
+                        fs_entry.data = c.clone();
+                        flashfs.root.entries.push(fs_entry);
+                    }
+                    result.extracted_assets.insert(lower, c);
                 } else {
                     error!("[ini] FlashFS Tiered Search failed: {}", filename);
                     return Err(IniError::FileNotFound(filename.to_string()));

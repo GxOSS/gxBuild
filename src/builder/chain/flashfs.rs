@@ -333,6 +333,18 @@ impl FileSystemRoot {
         root.create_defaults(image.len(), layout, fs_start_block);
         info!("[flashfs] Building FlashFS from memory with {} assets...", files.len());
         for (name, content) in files {
+            let lower = name.to_lowercase();
+            let is_bootloader = lower.starts_with("cb") || lower.starts_with("sb") ||
+                                lower.starts_with("cd") || lower.starts_with("sd") ||
+                                lower.starts_with("ce") || lower.starts_with("se") ||
+                                lower.starts_with("cf") || lower.starts_with("sf") ||
+                                lower.starts_with("cg") || lower.starts_with("sg") ||
+                                lower.starts_with("sc");
+            
+            if is_bootloader {
+                continue;
+            }
+
             info!("[flashfs]   * Processing asset: {} (Size: 0x{:X})", name, content.len());
             let mut new_entry = FileSystemEntry::new(0);
             new_entry.file_name = name.clone();

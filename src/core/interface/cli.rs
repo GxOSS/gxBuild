@@ -354,6 +354,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                 "dualboot" => o.dualboot = Some(v.eq_ignore_ascii_case("true")),
                 "nolog" => o.nolog = Some(v.eq_ignore_ascii_case("true")),
                 "noinfo" => o.noinfo = Some(v.eq_ignore_ascii_case("true")),
+                "verbose" => {}, // Handled during logger init
                 _ => warn!("[cli] Unhandled generic option override: {}", k),
             }
             session.options.merge(o);

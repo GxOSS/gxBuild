@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
 use zerocopy::byteorder::{U16, U32, I16, BigEndian};
-use log::{info, error};
+use log::{info, error, warn};
 
 use crate::core::data::blocks::*;
 use crate::builder::chain::*;
@@ -264,7 +264,11 @@ impl NandSkeleton {
                 kv_version: U16::new(0),
                 kv_addr: U32::new(0x4000), // Standard retail KV offset for all layouts
                 patch_size: U32::new(0),
-                smc_config_offset: U32::new(0),
+                smc_config_offset: U32::new(match layout {
+                    NandLayout::Bb => 0x3DF0000,
+                    NandLayout::Emmc => 0, // Master says unknown/fail!
+                    _ => 0xF70000,
+                }),
                 smc_boot_size: U32::new(0x3000),
                 smc_boot_offset: U32::new(match layout {
                     NandLayout::Emmc => 0x800, // Corona retail SMC standard
@@ -341,9 +345,28 @@ impl NandSkeleton {
         let mut smc = crate::builder::chain::smc::RawSmc::new(image[smc_offset..smc_offset + smc_size].to_vec());
         smc.decrypt();
 
+        // 3b. Extract SMC Config (usually 0x10000 bytes)
+        let config_offset = header.smc_config_offset.get() as usize;
+        let config_size = 0x10000; // standard config partition size
+        
+        if layout == NandLayout::Emmc {
+            // Master says EMMC config is unknown/fail!
+            return Err("SMC Config extraction is currently unsupported for EMMC/Corona layouts!".into());
+        }
+
+        let config_data = if config_offset > 0 && config_offset + config_size <= image.len() {
+            info!("[builder] Extracting SMC Config (Addr: 0x{:X}, Size: 0x{:X})...", config_offset, config_size);
+            image[config_offset..config_offset + config_size].to_vec()
+        } else {
+            if config_offset > 0 {
+                warn!("[builder] SMC Config offset 0x{:X} is out of bounds, using blank config", config_offset);
+            }
+            Vec::new()
+        };
+
         let extra = NandExtra {
             smc: smc.data,
-            smc_config: Vec::new(),
+            smc_config: config_data,
             keyvault: kv.data,
             fcrt: None,
             power_on_cause_a: 0,
@@ -580,6 +603,7 @@ impl NandSkeleton {
         let bootchain_start = 0x8000;
         let mut curr_bl = bootchain_start;
         let mut bl_stages = Vec::new();
+        if let Some(cb) = &self.bootloaders.cb { bl_stages.push(cb.serialize()); }
         if let Some(cba) = &self.bootloaders.cb_a { bl_stages.push(cba.serialize()); }
         if let Some(cbx) = &self.bootloaders.cb_x { bl_stages.push(cbx.serialize()); }
         if let Some(cbb) = &self.bootloaders.cb_b { bl_stages.push(cbb.serialize()); }

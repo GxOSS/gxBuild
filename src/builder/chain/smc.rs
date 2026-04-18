@@ -333,9 +333,9 @@ impl RawSmc {
     }
 
     pub fn populate_metadata(&mut self) {
-        let type_byte = self.data[0x100];
-        let major = self.data[0x101];
-        let minor = self.data[0x102];
+        let type_byte = if self.data.len() > 0x100 { self.data[0x100] } else { 0 };
+        let major = if self.data.len() > 0x101 { self.data[0x101] } else { 0 };
+        let minor = if self.data.len() > 0x102 { self.data[0x102] } else { 0 };
         let identified_type = self.identify_type();
 
         self.metadata = Some(SmcMetadata {
@@ -345,6 +345,23 @@ impl RawSmc {
             major_version: major,
             minor_version: minor,
         });
+    }
+
+    /// Decrypts the raw SMC payload in-place using the "BuNy" rolling-key cipher and unscrambles headers.
+    pub fn decrypt(&mut self) {
+        smc_crypt(&mut self.data, false);
+        
+        let mut is_retail = false;
+        if let Some(ref meta) = self.metadata {
+            if meta.smc_type == SmcType::Retail { is_retail = true; }
+        }
+        
+        if !is_retail {
+            self.unscramble();
+        }
+        
+        self.populate_metadata();
+        
         if let Some(meta) = &self.metadata {
             if self.data.len() >= 0x11C {
                 let copyright = &self.data[0x10C..0x11C];
@@ -356,16 +373,16 @@ impl RawSmc {
         }
     }
 
-    /// Decrypts the raw SMC payload in-place using the "BuNy" rolling-key cipher and unscrambles headers.
-    pub fn decrypt(&mut self) {
-        smc_crypt(&mut self.data, false);
-        self.unscramble();
-        self.populate_metadata();
-    }
-
-    /// Encrypts the raw SMC payload in-place using the "BuNy" rolling-key cipher and scrambles headers.
+    /// Encrypts the raw payload in-place.
     pub fn encrypt(&mut self) {
-        self.scramble();
+        let mut is_retail = false;
+        if let Some(ref meta) = self.metadata {
+            if meta.smc_type == SmcType::Retail { is_retail = true; }
+        }
+        
+        if !is_retail {
+            self.scramble();
+        }
         smc_crypt(&mut self.data, true);
     }
 

@@ -397,7 +397,12 @@ impl Session {
             }
 
             // --- 3. SMC Configuration Patching ---
-            let mut smc_config = crate::builder::chain::smc::SmcConfig::parse(&nand.extra.smc_config)?;
+            let mut smc_config = if nand.extra.smc_config.is_empty() {
+                info!("[session] No SMC Config found in skeleton, initializing clean defaults.");
+                crate::builder::chain::smc::SmcConfig::new_empty()
+            } else {
+                crate::builder::chain::smc::SmcConfig::parse(&nand.extra.smc_config)?
+            };
 
             // 3a. MAC Address
             if let Some(mac_str) = &self.options.macid {

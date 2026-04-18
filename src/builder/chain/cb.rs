@@ -193,10 +193,9 @@ impl BootloaderCb {
     }
 
     pub fn is_decrypted(&self) -> bool {
-        if self.data.len() < 0x241 { return false; }
-        // globals[0x110] is at Absolute 0x250. 
-        // Payload (data) starts at 0x10, so 0x250 - 0x10 = 0x240
-        self.data[0x240] == 0x80
+        if self.data.len() < 0x380 { return false; }
+        // Use the zero-padding chunk (CB[0x270:0x390] relative to 0x10 header offset) to verify success
+        self.data[0x260..0x380].iter().all(|&b| b == 0)
     }
 
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
@@ -292,6 +291,7 @@ impl BootloaderCb {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }
         }
+        self.populate_metadata();
     }
 
     /// Decrypts a CB_B bootloader using MFG (manufacturing) zero-key.
@@ -323,6 +323,7 @@ impl BootloaderCb {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }
         }
+        self.populate_metadata();
     }
 
     /// Verifies that a CB bootloader has been successfully decrypted.
@@ -352,6 +353,7 @@ impl BootloaderCb {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }
         }
+        self.populate_metadata();
     }
 
     pub fn decrypt_v2(&mut self, cb_a_hdr: &BootloaderHeader, cb_a_key: &[u8; 16], cpu_key: &[u8; 16]) {
@@ -376,6 +378,7 @@ impl BootloaderCb {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }
         }
+        self.populate_metadata();
     }
     pub fn serialize(&self) -> Vec<u8> {
         let mut out = zerocopy::IntoBytes::as_bytes(&self.header).to_vec();
