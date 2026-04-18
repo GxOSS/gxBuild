@@ -9,8 +9,8 @@ Xell:
 
 Smc:
 - SMC discovery
-- SMC Config Placement
-- SMC Config Patching
+- Convert JTAG / RJTAG / RJTOP patches to GXP
+- Convert RGH3 patches to GXP
 
 FlashFS:
 - eMMC
@@ -23,12 +23,14 @@ Keyvault:
 
 Image Building:
 - Fix CRC32
-- Place CDXeLL KHV patches
+- Place KHV patches
+
 
 ## Next Release (1.23)
 
 ## gxBuild
 
+- Entire image parser / builder (256MB/512MB/4GB) (FatX whole partition extraction / injection)
 - Shadowboot parsing & building
 - Rebooter image parsing & building (started)
 - CAB LZX Recompression with LibLZX

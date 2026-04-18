@@ -1,2 +1,0 @@
-[2026-04-17 14:37:05] [[31mERROR[0m] [session] Configuration discovery failed: [ini] File not found: crl.bin
-[2026-04-17 14:37:05] [[31mERROR[0m] [cli] Session failed: Discovery failed: [ini] File not found: crl.bin

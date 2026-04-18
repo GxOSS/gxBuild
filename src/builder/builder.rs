@@ -222,7 +222,7 @@ impl NandSkeleton {
         let size = match layout {
             NandLayout::Xsb | NandLayout::Sb => 0x1000000,
             NandLayout::Bb => 0x4000000,
-            NandLayout::Emmc => 0x3000000,
+            NandLayout::Emmc => 0x3000000, // 48MB standard EMMC corona dump
         };
         let mut image = vec![0xFFu8; size];
         image[0] = 0xFF; image[1] = 0x4F;
@@ -252,14 +252,21 @@ impl NandSkeleton {
                 copyright: [0u8; 0x40],
                 unused: [0u8; 0x10],
                 kv_size: U32::new(0x4000),
-                cf_offset: U32::new(0),
+                cf_offset: U32::new(match layout {
+                    NandLayout::Bb => 0x80000,
+                    NandLayout::Emmc => 0xB0000,
+                    _ => 0x70000,
+                }),
                 patch_slots: I16::new(0),
                 kv_version: U16::new(0),
-                kv_addr: U32::new(if layout == NandLayout::Bb { 0x20000 } else { 0x4000 }),
+                kv_addr: U32::new(0x4000), // Standard retail KV offset for all layouts
                 patch_size: U32::new(0),
                 smc_config_offset: U32::new(0),
-                smc_boot_size: U32::new(0x2000),
-                smc_boot_offset: U32::new(0x2000),
+                smc_boot_size: U32::new(0x3000),
+                smc_boot_offset: U32::new(match layout {
+                    NandLayout::Emmc => 0x800, // Corona retail SMC standard
+                    _ => 0x1000, // SB/BB retail SMC standard
+                }),
             },
             extra: NandExtra { smc: Vec::new(), smc_config: Vec::new(), keyvault: Vec::new(), fcrt: None, power_on_cause_a: 0, power_on_cause_b: 0 },
             bootloaders: NandBootloaders { cb: None, cb_a: None, cb_x: None, cb_b: None, sc: None, cd: None, ce: None, khvpatch: None },
@@ -559,51 +566,68 @@ impl NandSkeleton {
         let mut logical_image = vec![0xFFu8; self.total_blocks * layout.logical_pages_per_block() * 0x200];
         let mut header = self.header.clone();
 
+        // Dynamic forensic offset logic:
+        // 1. SMC is flush against the end of Block 0 (Sector 32)
+        let smc_len = self.extra.smc.len();
+        let target_smc_offset = if smc_len > 0 { 0x4000 - smc_len } else { 0x1000 };
+        
+        // 2. Bootloaders start at 0x8000
         let bootchain_start = 0x8000;
-        let smc_offset = header.smc_boot_offset.get() as usize;
-        let kv_offset = header.kv_addr.get() as usize;
+        let mut curr_bl = bootchain_start;
+        let mut bl_stages = Vec::new();
+        if let Some(cba) = &self.bootloaders.cb_a { bl_stages.push(cba.serialize()); }
+        if let Some(cbx) = &self.bootloaders.cb_x { bl_stages.push(cbx.serialize()); }
+        if let Some(cbb) = &self.bootloaders.cb_b { bl_stages.push(cbb.serialize()); }
+        if let Some(sc) = &self.bootloaders.sc { bl_stages.push(sc.serialize()); }
+        if let Some(cd) = &self.bootloaders.cd { bl_stages.push(cd.serialize()); }
+        if let Some(ce) = &self.bootloaders.ce { bl_stages.push(ce.serialize()); }
 
+        for (i, data) in bl_stages.iter().enumerate() {
+            if curr_bl + data.len() > logical_image.len() {
+                return Err(format!("Bootchain stage {} overflow at 0x{:X}", i, curr_bl));
+            }
+            logical_image[curr_bl..curr_bl+data.len()].copy_from_slice(data);
+            curr_bl += (data.len() + 0xF) & 0xFFFFFFF0;
+        }
+
+        // 3. CF/CG placement: Ensure safe gap after bootchain
+        let forensic_cf_default = match layout {
+            NandLayout::Bb => 0x80000,
+            NandLayout::Emmc => 0xB0000,
+            _ => 0x70000,
+        };
+
+        // If the bootchain has realigned/extended into the CF area, shift CF to the next 64KB block
+        let target_cf_offset = if curr_bl > forensic_cf_default {
+            (curr_bl + 0xFFFF) & 0xFFFF0000
+        } else {
+            forensic_cf_default
+        };
+
+        // Update header with the realigned offsets
+        header.smc_boot_offset.set(target_smc_offset as u32);
+        header.smc_boot_size.set(smc_len as u32);
+        header.cf_offset.set(target_cf_offset as u32);
+        header.kv_addr.set(0x4000); // Enforce Block 1 KV
+
+        // Actually place components into the image
+        let kv_offset = header.kv_addr.get() as usize;
         if !self.extra.smc.is_empty() {
-            logical_image[smc_offset..smc_offset + self.extra.smc.len()].copy_from_slice(&self.extra.smc);
+            logical_image[target_smc_offset..target_smc_offset + smc_len].copy_from_slice(&self.extra.smc);
         }
         if !self.extra.keyvault.is_empty() {
             logical_image[kv_offset..kv_offset + self.extra.keyvault.len()].copy_from_slice(&self.extra.keyvault);
         }
 
-        let mut curr = bootchain_start;
-        let mut stages = Vec::new();
-        if let Some(cb) = &self.bootloaders.cb { stages.push(cb.serialize()); }
-        if let Some(cba) = &self.bootloaders.cb_a { stages.push(cba.serialize()); }
-        if let Some(cbx) = &self.bootloaders.cb_x { stages.push(cbx.serialize()); }
-        if let Some(cbb) = &self.bootloaders.cb_b { stages.push(cbb.serialize()); }
-        if let Some(sc) = &self.bootloaders.sc { stages.push(sc.serialize()); }
-        if let Some(cd) = &self.bootloaders.cd { stages.push(cd.serialize()); }
-        if let Some(ce) = &self.bootloaders.ce { stages.push(ce.serialize()); }
-
-        for data in stages {
-            if curr + data.len() > logical_image.len() {
-                return Err(format!("Bootchain overflow at 0x{:X}: need 0x{:X} bytes", curr, data.len()));
-            }
-            logical_image[curr..curr+data.len()].copy_from_slice(&data);
-            curr += (data.len() + 0xF) & 0xFFFFFFF0;
-        }
-
-        // CF/CG always start at 0x70000 (standard CF offset for small-block NAND).
-        // CF_0/CG_0 go at 0x70000, CF_1/CG_1 go at 0x80000 (exactly 64KB later).
-        // This matches x360Utils GetBootLoaders() which seeks to CF_Ptr + 0x10000 for CF_1/CG_1.
         let cf0 = self.update.cf_0.as_ref().map(|b| b.serialize());
         let cg0 = self.update.cg_0.as_ref().map(|b| b.serialize());
         let cf1 = self.update.cf_1.as_ref().map(|b| b.serialize()).or_else(|| cf0.clone());
         let cg1 = self.update.cg_1.as_ref().map(|b| b.serialize()).or_else(|| cg0.clone());
 
         if let Some(cf0d) = cf0 {
-            let cf0_offset = match layout {
-                NandLayout::Bb => 0x80000,
-                _ => 0x70000,
-            };
+            let cf0_offset = target_cf_offset;
             let cf1_offset = cf0_offset + 0x10000; // 64KB gap between CF_0 and CF_1
-
-            header.cf_offset.set(cf0_offset as u32);
+            
             header.patch_slots.set(if cf1.is_some() { 2 } else { 1 });
 
             if cf0_offset + cf0d.len() > logical_image.len() {
@@ -728,5 +752,83 @@ impl NandSkeleton {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::builder::chain::BootloaderHeader;
+
+    #[test]
+    fn test_nand_layout_defaults_sb() {
+        let skeleton = NandSkeleton::new_blank(NandLayout::Sb);
+        assert_eq!(skeleton.image.len(), 0x1000000);
+        assert_eq!(skeleton.header.kv_addr.get(), 0x4000);
+        assert_eq!(skeleton.header.smc_boot_offset.get(), 0x1000);
+        assert_eq!(skeleton.header.cf_offset.get(), 0x70000);
+    }
+
+    #[test]
+    fn test_nand_layout_defaults_bb() {
+        let skeleton = NandSkeleton::new_blank(NandLayout::Bb);
+        assert_eq!(skeleton.image.len(), 0x4000000);
+        assert_eq!(skeleton.header.kv_addr.get(), 0x4000);
+        assert_eq!(skeleton.header.smc_boot_offset.get(), 0x1000);
+        assert_eq!(skeleton.header.cf_offset.get(), 0x80000);
+    }
+
+    #[test]
+    fn test_nand_layout_defaults_emmc() {
+        let skeleton = NandSkeleton::new_blank(NandLayout::Emmc);
+        assert_eq!(skeleton.image.len(), 0x3000000);
+        assert_eq!(skeleton.header.kv_addr.get(), 0x4000);
+        assert_eq!(skeleton.header.smc_boot_offset.get(), 0x800);
+        assert_eq!(skeleton.header.cf_offset.get(), 0xB0000);
+    }
+
+    #[test]
+    fn test_dynamic_smc_placement() {
+        let mut skeleton = NandSkeleton::new_blank(NandLayout::Sb);
+        skeleton.extra.smc = vec![0; 0x3200]; // custom larger SMC
+        
+        let logical = skeleton.assemble_logical().unwrap();
+        // 0x4000 - 0x3200 = 0x0E00
+        let target_offset = 0x0E00;
+        
+        // Check header reflects new offset
+        let header = NandHeader::read_from_prefix(&logical).unwrap().0;
+        assert_eq!(header.smc_boot_offset.get(), target_offset as u32);
+        assert_eq!(header.smc_boot_size.get(), 0x3200);
+    }
+
+    #[test]
+    fn test_bootchain_overflow_realignment() {
+        let mut skeleton = NandSkeleton::new_blank(NandLayout::Sb);
+        // Create a fake massive CD bootloader to force realignment
+        // SB CF 0x70000. 2BL base 0x8000.
+        // We need CD to extend past 0x70000.
+        let large_cd = vec![0u8; 0x69000]; // 0x8000 + 0x69000 = 0x71000 (overflows standard 0x70000)
+        
+        let bl_header = BootloaderHeader {
+            magic: U16::new(0x4344), // 'CD'
+            version: U16::new(1888),
+            pairing: U16::new(0),
+            flags: U16::new(0),
+            entrypoint: U32::new(0),
+            size: U32::new(0x69000),
+        };
+
+        skeleton.bootloaders.cd = Some(crate::builder::chain::cd::BootloaderCd {
+            header: bl_header,
+            data: large_cd,
+            metadata: None,
+        });
+
+        let logical = skeleton.assemble_logical().unwrap();
+        let header = NandHeader::read_from_prefix(&logical).unwrap().0;
+        
+        // Expected realignment to next 64KB block: (0x71000 + 0xFFFF) & 0xFFFF0000 = 0x80000
+        assert_eq!(header.cf_offset.get(), 0x80000);
     }
 }

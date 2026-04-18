@@ -1,0 +1,222 @@
+---------------------------------------------------------------------------------
+Xbox 360 flash image, copyright 2004-2010 Microsoft Corporation. All rights reserved.
+Build: 1888, qfe: 0x0, flags: 0x0, entrypoint: 0x8000, size: 0xB0000
+---------------------------------------------------------------------------------
+CPU key:
+	F1 EB 0A 15 3D 59 E3 89 9F 90 C7 28 2A 47 12 F2
+
+Reserved:
+	00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+KeyVault size: 0x4000
+
+SysUpdate addr: 0xB0000
+
+SysUpdate count: 2
+
+KeyVault version: 0x712
+
+KeyVault addr: 0x4000
+
+FileSystem addr: 0x10000
+
+SMC config addr: 0x0
+
+SMC size: 0x3800
+
+SMC address: 0x800
+
+---------------------------------------------------------------------------------
+CB_A bootloader
+Build: 10918, qfe: 0x0, flags: 0x801, entrypoint: 0x3D0, size: 0x1AF0
+---------------------------------------------------------------------------------
+POST output addr: 0x8000020000061010, Southbridge flash addr: 0x80000200C8000000, Soc MMIO addr: 0x8000020000000000
+
+3BL nonce:
+	00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+3BL salt:
+	00 00 00 00 00 00 00 00 00 00
+
+4BL salt:
+	00 00 00 00 00 00 00 00 00 00
+
+4BL digest:
+	71 7B CC B4 E4 FB AC 31 8C 35 F6 B7 AD E6 D1 FD B7 3B 99 7D
+
+Padding: 0x00000000
+
+Console type and sequence allow data:
+	Console type: 0x00
+
+	Console sequence: 0x00
+
+	Console sequence allow: 0x0000
+
+Per-box data:
+	Pairing data: 0x000000
+
+	Lockdown value: 0x0
+
+	Reserved:
+	00 00 00 00 00 00 00 00 00 00 00 00
+
+	Per-box digest:
+	00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+---------------------------------------------------------------------------------
+CB_B bootloader
+Build: 15432, qfe: 0x0, flags: 0x800, entrypoint: 0x3D0, size: 0x400
+---------------------------------------------------------------------------------
+POST output addr: 0x1A24DF39C4ACB368, Southbridge flash addr: 0x53B1020FC68D2164, Soc MMIO addr: 0x2D107C5EFA7B038
+
+3BL nonce:
+	E0 0B 17 CA BB 2D F0 90 7E 46 6A 83 4C 11 E8 6C
+
+3BL salt:
+	E9 48 CA DC F8 02 C7 C8 7C 06
+
+4BL salt:
+	EF 55 A7 34 4D 56 05 30 08 34
+
+4BL digest:
+	6F 03 31 06 47 BE B8 0C EA E4 AD D8 CB 9C 13 A1 80 C4 BC E0
+
+Padding: 0x00000000
+
+Console type and sequence allow data:
+	Console type: 0x95
+
+	Console sequence: 0x85
+
+	Console sequence allow: 0xC655
+
+Per-box data:
+	Pairing data: 0xD67BC4
+
+	Lockdown value: 0x46
+
+	Reserved:
+	4D E7 45 21 4A 98 C7 D9 7D F5 30 88
+
+	Per-box digest:
+	F3 86 E6 B5 F7 CC 60 78 A7 C2 14 0F 19 78 A8 C6
+
+---------------------------------------------------------------------------------
+CB_B bootloader
+Build: 13121, qfe: 0x0, flags: 0x0, entrypoint: 0x3D0, size: 0x7B40
+---------------------------------------------------------------------------------
+POST output addr: 0x8E4F1023FD9143BE, Southbridge flash addr: 0x4193B6424249608F, Soc MMIO addr: 0xBFDBB281B02C3067
+
+3BL nonce:
+	CB C3 71 C0 CF 20 D6 0D 1E E7 E3 7A E5 82 31 0F
+
+3BL salt:
+	37 F3 6C DA 44 83 CC D4 B8 38
+
+4BL salt:
+	59 66 29 3E 26 50 82 74 7C 1E
+
+4BL digest:
+	5D 81 4A ED 88 7B A3 55 97 D6 DD 0C 0A 2B 54 13 63 15 3E 5B
+
+Padding: 0x00000000
+
+Console type and sequence allow data:
+	Console type: 0x17
+
+	Console sequence: 0x69
+
+	Console sequence allow: 0xA74C
+
+Per-box data:
+	Pairing data: 0xCF3525
+
+	Lockdown value: 0xE1
+
+	Reserved:
+	DE 9A BB 2E B8 B0 12 65 23 49 62 79
+
+	Per-box digest:
+	90 FF 3A F8 8E 37 C4 C9 A6 38 C0 28 2F 98 F6 6A
+
+---------------------------------------------------------------------------------
+CD bootloader
+Build: 12905, qfe: 0x0, flags: 0x0, entrypoint: 0x300, size: 0x5400
+---------------------------------------------------------------------------------
+6BL nonce:
+	9C 47 00 22 C3 92 FA FF 7A 55 62 7E 88 B3 99 F9
+
+6BL salt:
+	D2 46 C4 AC 7D 38 57 9A 34 A3
+
+Padding: 0x0000171D
+
+5BL digest:
+	E3 FD 5D 7F 67 A3 86 AE 45 60 55 04 0A A5 43 D3 EC D8 29 9F
+
+---------------------------------------------------------------------------------
+CE bootloader
+Build: 1888, qfe: 0x0, flags: 0x0, entrypoint: 0x0, size: 0x5606A
+---------------------------------------------------------------------------------
+Image address: 0xD56E6B23E5732BF7
+
+Image size: 0x72D5E590
+
+Padding: 0x25884C23
+
+---------------------------------------------------------------------------------
+CF bootloader
+Build: 17559, qfe: 0x0, flags: 0x4000, entrypoint: 0x360, size: 0x4560
+---------------------------------------------------------------------------------
+Build QFE source: 1888
+
+Build QFE target: 17559
+
+Reserved: 0
+
+7BL size: 490112
+
+7BL nonce:
+	00 8B BD 21 7E 07 20 55 60 C5 25 6E F3 01 AA 9E
+
+7BL digest:
+	5E AA B5 E6 32 CF 77 BA AE E1 71 B3 99 B9 91 94 F1 B9 5B 23
+
+Padding: 0x00000000
+
+7BL per-box data:
+	Used block count: 27
+
+	Used blocks:
+	0x52  0x53  0x54  0x55  0x56  0x57  0x58  0x59  0x60  0x61  0x62  
+	0x63  0x64  0x65  0x66  0x67  0x68  0x69  0x70  0x71  0x72  
+	0x73  0x74  0x75  0x76  0x77  0x78  
+
+6BL per-box data:
+	Reserved:
+	00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+	Update slot number: 0x0
+
+	Pairing data: 0xF9AD95
+
+	Lockdown value: 0xB
+
+	Per-box digest:
+	56 9B 67 93 69 8A 2E 88 BE CD 7F FA F8 F6 2B 8F
+
+---------------------------------------------------------------------------------
+CG bootloader
+Build: 17559, qfe: 0x0, flags: 0x0, entrypoint: 0x0, size: 0x77A76
+---------------------------------------------------------------------------------
+Source image size: 0x120000
+
+Source digest:
+	95 E2 A9 46 F4 CE 4A 3D 1E DB 48 FC 9E 47 87 D0 F0 64 A1 12
+
+Target image size: 0x1F0000
+
+Target digest:
+	F1 B6 6F 2A A7 94 F0 11 7A 8A 2D 56 5C 9F EC 0B 60 1F ED 83
+
