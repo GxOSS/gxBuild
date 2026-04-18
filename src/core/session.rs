@@ -338,7 +338,37 @@ impl Session {
 
             let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
 
-            // --- 2. Keyvault Overrides (Region, DVD Key) ---
+            // --- 2. CF/CG LDV Overrides ---
+            if let Some(cfldv_str) = &self.options.cfldv {
+                let ldv = Self::parse_u8_hex_or_dec(cfldv_str)?;
+                
+                // Update primary CF (slot 0) if it exists
+                if let Some(ref mut cf) = nand.update.cf_0 {
+                    if let Some(ref mut meta) = cf.metadata {
+                        meta.lockdown_value = ldv;
+                        cf.sync_metadata();
+                    } else {
+                        // Patch direct offset if metadata wasn't parsed (plain/encrypted fallback)
+                        if cf.data.len() > 0x20F {
+                            cf.data[0x20F] = ldv;
+                        }
+                    }
+                }
+                
+                // Update secondary CF (slot 1) if it exists
+                if let Some(ref mut cf) = nand.update.cf_1 {
+                    if let Some(ref mut meta) = cf.metadata {
+                        meta.lockdown_value = ldv;
+                        cf.sync_metadata();
+                    } else {
+                        if cf.data.len() > 0x20F {
+                            cf.data[0x20F] = ldv;
+                        }
+                    }
+                }
+            }
+
+            // --- 3. Keyvault Overrides (Region, DVD Key) ---
             let mut kv = crate::builder::chain::kv::Keyvault::parse(&nand.extra.keyvault)?;
             
             // Decrypt with current session key if possible

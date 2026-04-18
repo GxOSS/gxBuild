@@ -24,9 +24,13 @@ Documentation is hosted on the [GGX Project](https://ggx-project.github.io/gxBui
 - [Scripting](https://ggx-project.github.io/gxBuild/scripting/) - Python Scripting
 - [Developer](https://ggx-project.github.io/gxBuild/developer/) - FFI Interface
 
-## Credits
+## Info
 
-See [CREDITS.md](CREDITS.md)
+- [CREDITS.md](CREDITS.md) - Project Credits
+- [CONTRIBUTING.md](CONTRIBUTING.md) - Contribution Guidelines
+- [CONTACT.md](CONTACT.md) - Contact Information
+- [CHANGELOG.md](CHANGELOG.md) - Changelog
+- [TODO.md](TODO.md) - TODO List
 
 ## License
 

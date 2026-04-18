@@ -6,6 +6,7 @@
 /output
 /References
 /planning
+/logs
 Cargo.lock
 errors.log
 Cargo_errors.txt
