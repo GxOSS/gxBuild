@@ -89,7 +89,7 @@ pub struct IniSearch {
     pub build: PathBuf,
     pub common: PathBuf,
     pub data: PathBuf,
-    pub unsafe_mode: bool,
+    pub unsafe_mode: Option<bool>,
     pub result: IniSearchResult,
 }
 
@@ -635,7 +635,7 @@ impl IniSearch {
             build,
             common,
             data,
-            unsafe_mode,
+            unsafe_mode: Some(unsafe_mode),
             result,
         })
     }

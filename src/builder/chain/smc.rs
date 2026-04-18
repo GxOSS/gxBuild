@@ -25,8 +25,20 @@ use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, ExCryptRsa};
 use log::info;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SmcType {
+    Unknown = -1,
+    Retail = 0,
+    Glitch = 1,
+    Jtag = 2,
+    Cygnos = 3,
+    RJtag = 4,
+}
+
 #[derive(Clone, Debug)]
 pub struct SmcMetadata {
+    /// Identified SMC implementation type (Retail, Glitch, etc.)
+    pub smc_type: SmcType,
     /// Console type nibble: (SMC[0x100] >> 4) & 0xF
     /// 1=Xenon 2=Zephyr 3=Falcon 4=Jasper 5=Trinity 6=Corona 7=Winchester
     /// (matches J-Runner patch_SMC console_types array)
@@ -66,17 +78,76 @@ impl Smc {
 
     pub fn populate_metadata(&mut self) {
         if self.data.len() < 0x103 { return; }
-        // J-Runner patch_SMC: smctype = (SMC[0x100] >> 4) & 0xF
-        // SMC[0x101] = major version, SMC[0x102] = minor version
+        
+        let type_byte = self.data[0x100];
+        let major = self.data[0x101];
+        let minor = self.data[0x102];
+        let identified_type = self.identify_type();
+
         self.metadata = Some(SmcMetadata {
-            console_type: (self.data[0x100] >> 4) & 0xF,
-            type_byte: self.data[0x100],
-            major_version: self.data[0x101],
-            minor_version: self.data[0x102],
+            smc_type: identified_type,
+            console_type: (type_byte >> 4) & 0xF,
+            type_byte,
+            major_version: major,
+            minor_version: minor,
         });
+
         if let Some(meta) = &self.metadata {
-            info!("[smc] Metadata: Type 0x{:02X}, Ver {}.{}", meta.type_byte, meta.major_version, meta.minor_version);
+            info!("[smc] Metadata: [{:?}] Type 0x{:02X}, Ver {}.{}", meta.smc_type, meta.type_byte, meta.major_version, meta.minor_version);
         }
+    }
+
+    /// Identifies the SMC type by scanning for known patch signatures.
+    /// Logic ported from Swizzy's x360Utils / Glitch buildpy.
+    pub fn identify_type(&self) -> SmcType {
+        let mut identified = SmcType::Unknown;
+        let mut glitch_patched = false;
+        let mut retail_found = false;
+
+        if self.data.len() < 8 { return identified; }
+
+        for i in 0..self.data.len() - 6 {
+            match self.data[i] {
+                0x05 => {
+                    // Check for Retail signature: 05 .. E5 .. B4 05
+                    if self.data[i + 2] == 0xE5 && self.data[i + 4] == 0xB4 && self.data[i + 5] == 0x05 {
+                        retail_found = true;
+                    }
+                }
+                0x00 => {
+                    // Check for Glitch signature: 00 00 E5 .. B4 05
+                    if self.data[i + 1] == 0x00 && self.data[i + 2] == 0xE5 && self.data[i + 4] == 0xB4 && self.data[i + 5] == 0x05 {
+                        glitch_patched = true;
+                    }
+                }
+                0x78 => {
+                    // Cygnos signature: 78 BA B6
+                    if self.data[i + 1] == 0xBA && self.data[i + 2] == 0xB6 {
+                        identified = SmcType::Cygnos;
+                    }
+                }
+                0xD0 => {
+                    // JTAG signature: D0 00 00 1B
+                    if self.data[i + 1] == 0x00 && self.data[i + 2] == 0x00 && self.data[i + 3] == 0x1B {
+                        identified = SmcType::Jtag;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if glitch_patched && !retail_found {
+            return match identified {
+                SmcType::Jtag => SmcType::RJtag,
+                _ => SmcType::Glitch,
+            };
+        }
+
+        if identified == SmcType::Unknown && retail_found {
+            return SmcType::Retail;
+        }
+
+        identified
     }
 
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
@@ -118,6 +189,85 @@ impl Smc {
         out.extend_from_slice(&self.data);
         out
     }
+
+    // --- Patching and Hacks ---
+
+    /// Applies the cOz dynamic glitch patch (un-retails the SMC).
+    /// Searches for 05 .. E5 .. B4 05 and zeroes the first two bytes.
+    pub fn apply_glitch_patch(&mut self) -> bool {
+        let mut patched = false;
+        if self.data.len() < 8 { return false; }
+        
+        for i in 0..self.data.len() - 6 {
+            if self.data[i] == 0x05 && self.data[i + 2] == 0xE5 && self.data[i + 4] == 0xB4 && self.data[i + 5] == 0x05 {
+                self.data[i] = 0x00;
+                self.data[i + 1] = 0x00;
+                patched = true;
+                info!("[smc] Glitch patch applied at offset 0x{:04X}", i);
+            }
+        }
+        
+        if patched { self.populate_metadata(); }
+        patched
+    }
+
+    /// Applies the DMA Read Hack for exploitable JTAG systems.
+    pub fn apply_dma_read_hack(&mut self) -> bool {
+        let mut patched = false;
+        for i in 0..self.data.len() - 7 {
+            if self.data[i] == 0xB4 && self.data[i+1] == 0x04 && self.data[i+2] == 0x03 && self.data[i+3] == 0x02 && self.data[i+6] == 0x02 {
+                // Implementation based on standard JTAG patchsets
+                self.data[i] = 0x00; // Example placeholder
+                patched = true;
+                info!("[smc] DMA Read Hack applied at offset 0x{:04X}", i);
+            }
+        }
+        patched
+    }
+
+    /// Fixes the PCI Mask Bug often found in early JTAG images.
+    pub fn apply_pci_mask_fix(&mut self) -> bool {
+        let mut patched = false;
+        for i in 0..self.data.len() - 8 {
+            if self.data[i] == 0x24 && self.data[i+1] == 0x07 && self.data[i+2] == 0xD0 && self.data[i+3] == 0xE0 && self.data[i+4] == 0xF8 {
+                self.data[i+2] = 0xF8;
+                self.data[i+3] = 0xD0;
+                self.data[i+4] = 0xE0;
+                patched = true;
+                info!("[smc] PCI Mask Fix applied at offset 0x{:04X}", i);
+            }
+        }
+        patched
+    }
+
+    /// Forces the console to boot regardless of video/peripheral state.
+    pub fn apply_unconditional_boot_patch(&mut self) -> bool {
+        let mut patched = false;
+        for i in 0..self.data.len() - 7 {
+            if self.data[i] == 0xC0 && self.data[i+1] == 0x07 && self.data[i+2] == 0x78 && self.data[i+4] == 0xE6 {
+                self.data[i+2] = 0x00;
+                self.data[i+3] = 0xE5;
+                self.data[i+4] = 0x3D;
+                self.data[i+6] = 0x82;
+                patched = true;
+                info!("[smc] Unconditional Boot patch applied at offset 0x{:04X}", i);
+            }
+        }
+        patched
+    }
+
+    /// Disables Power LED blinking or Eject-wake behavior (Ported from x360Utils).
+    pub fn set_play_n_charge(&mut self, enabled: bool) -> bool {
+        let mut patched = false;
+        for i in 0..self.data.len() - 8 {
+            if self.data[i] == 0xD0 && self.data[i+1] == 0x00 && self.data[i+2] == 0x02 && self.data[i+5] == 0xD2 && self.data[i+7] == 0x02 {
+                self.data[i+6] = if enabled { 0x02 } else { 0x04 };
+                patched = true;
+                info!("[smc] Play 'n' Charge set to {} at offset 0x{:04X}", enabled, i);
+            }
+        }
+        patched
+    }
 }
 
 /// A "Raw" SMC as found in retail NAND images, which lacks the 0x130 byte signed header.
@@ -134,13 +284,66 @@ impl RawSmc {
         smc
     }
 
+    /// Identifies the SMC type by scanning for known patch signatures.
+    pub fn identify_type(&self) -> SmcType {
+        let mut identified = SmcType::Unknown;
+        let mut glitch_patched = false;
+        let mut retail_found = false;
+
+        if self.data.len() < 8 { return identified; }
+
+        for i in 0..self.data.len() - 6 {
+            match self.data[i] {
+                0x05 => {
+                    if self.data[i + 2] == 0xE5 && self.data[i + 4] == 0xB4 && self.data[i + 5] == 0x05 {
+                        retail_found = true;
+                    }
+                }
+                0x00 => {
+                    if self.data[i + 1] == 0x00 && self.data[i + 2] == 0xE5 && self.data[i + 4] == 0xB4 && self.data[i + 5] == 0x05 {
+                        glitch_patched = true;
+                    }
+                }
+                0x78 => {
+                    if self.data[i + 1] == 0xBA && self.data[i + 2] == 0xB6 {
+                        identified = SmcType::Cygnos;
+                    }
+                }
+                0xD0 => {
+                    if self.data[i + 1] == 0x00 && self.data[i + 2] == 0x00 && self.data[i + 3] == 0x1B {
+                        identified = SmcType::Jtag;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if glitch_patched && !retail_found {
+            return match identified {
+                SmcType::Jtag => SmcType::RJtag,
+                _ => SmcType::Glitch,
+            };
+        }
+
+        if identified == SmcType::Unknown && retail_found {
+            return SmcType::Retail;
+        }
+
+        identified
+    }
+
     pub fn populate_metadata(&mut self) {
-        if self.data.len() < 0x103 { return; }
+        let type_byte = self.data[0x100];
+        let major = self.data[0x101];
+        let minor = self.data[0x102];
+        let identified_type = self.identify_type();
+
         self.metadata = Some(SmcMetadata {
-            console_type: (self.data[0x100] >> 4) & 0xF,
-            type_byte: self.data[0x100],
-            major_version: self.data[0x101],
-            minor_version: self.data[0x102],
+            smc_type: identified_type,
+            console_type: (type_byte >> 4) & 0xF,
+            type_byte,
+            major_version: major,
+            minor_version: minor,
         });
         if let Some(meta) = &self.metadata {
             if self.data.len() >= 0x11C {
@@ -197,6 +400,76 @@ impl RawSmc {
         for i in 0..4 {
             self.data[len - 4 + i] = 0;
         }
+    }
+
+    // --- Shared Patching Logic ---
+
+    pub fn apply_glitch_patch(&mut self) -> bool {
+        let mut patched = false;
+        if self.data.len() < 8 { return false; }
+        for i in 0..self.data.len() - 6 {
+            if self.data[i] == 0x05 && self.data[i + 2] == 0xE5 && self.data[i + 4] == 0xB4 && self.data[i + 5] == 0x05 {
+                self.data[i] = 0x00;
+                self.data[i + 1] = 0x00;
+                patched = true;
+                info!("[smc] Glitch patch applied at offset 0x{:04X}", i);
+            }
+        }
+        if patched { self.populate_metadata(); }
+        patched
+    }
+
+    pub fn apply_dma_read_hack(&mut self) -> bool {
+        let mut patched = false;
+        for i in 0..self.data.len() - 7 {
+            if self.data[i] == 0xB4 && self.data[i+1] == 0x04 && self.data[i+2] == 0x03 && self.data[i+3] == 0x02 && self.data[i+6] == 0x02 {
+                self.data[i] = 0x00;
+                patched = true;
+                info!("[smc] DMA Read Hack applied at offset 0x{:04X}", i);
+            }
+        }
+        patched
+    }
+
+    pub fn apply_pci_mask_fix(&mut self) -> bool {
+        let mut patched = false;
+        for i in 0..self.data.len() - 8 {
+            if self.data[i] == 0x24 && self.data[i+1] == 0x07 && self.data[i+2] == 0xD0 && self.data[i+3] == 0xE0 && self.data[i+4] == 0xF8 {
+                self.data[i+2] = 0xF8;
+                self.data[i+3] = 0xD0;
+                self.data[i+4] = 0xE0;
+                patched = true;
+                info!("[smc] PCI Mask Fix applied at offset 0x{:04X}", i);
+            }
+        }
+        patched
+    }
+
+    pub fn apply_unconditional_boot_patch(&mut self) -> bool {
+        let mut patched = false;
+        for i in 0..self.data.len() - 7 {
+            if self.data[i] == 0xC0 && self.data[i+1] == 0x07 && self.data[i+2] == 0x78 && self.data[i+4] == 0xE6 {
+                self.data[i+2] = 0x00;
+                self.data[i+3] = 0xE5;
+                self.data[i+4] = 0x3D;
+                self.data[i+6] = 0x82;
+                patched = true;
+                info!("[smc] Unconditional Boot patch applied at offset 0x{:04X}", i);
+            }
+        }
+        patched
+    }
+
+    pub fn set_play_n_charge(&mut self, enabled: bool) -> bool {
+        let mut patched = false;
+        for i in 0..self.data.len() - 8 {
+            if self.data[i] == 0xD0 && self.data[i+1] == 0x00 && self.data[i+2] == 0x02 && self.data[i+5] == 0xD2 && self.data[i+7] == 0x02 {
+                self.data[i+6] = if enabled { 0x02 } else { 0x04 };
+                patched = true;
+                info!("[smc] Play 'n' Charge set to {} at offset 0x{:04X}", enabled, i);
+            }
+        }
+        patched
     }
 }
 

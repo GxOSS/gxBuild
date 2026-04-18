@@ -320,12 +320,12 @@ impl Session {
         if let Some(nand) = &mut self.active_nand {
             info!("[session] Syncing merged options to NAND components...");
 
-            // 1. Structural/Process Overrides
+            // --- 0. Standard/Core Overrides ---
             if let Some(noremap) = self.options.noremap {
                 nand.options.noremap = noremap;
             }
 
-            // 2. CPU Key
+            // --- 1. CPU Key ---
             if let Some(key_str) = &self.options.cpukey {
                 if let Ok(key_bytes) = crate::builder::builder::hex_to_bytes(key_str) {
                     if key_bytes.len() == 16 {
@@ -336,23 +336,15 @@ impl Session {
                 }
             }
 
-            // 3. Keyvault Overrides (Region, DVD Key)
-            let mut kv = crate::builder::chain::kv::Keyvault::parse(&nand.extra.keyvault)?;
             let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
+
+            // --- 2. Keyvault Overrides (Region, DVD Key) ---
+            let mut kv = crate::builder::chain::kv::Keyvault::parse(&nand.extra.keyvault)?;
             
             // Decrypt with current session key if possible
             if let Err(e) = kv.decrypt(&cpukey, nand.header.kv_version.get() >= 2) {
                 warn!("[session] Failed to decrypt Keyvault for option patching: {}", e);
             } else {
-                if let Some(region_str) = &self.options.avregion {
-                    let region = if region_str.starts_with("0x") {
-                        u16::from_str_radix(&region_str[2..], 16).map_err(|e| format!("Invalid region hex: {}", e))?
-                    } else {
-                        region_str.parse::<u16>().map_err(|e| format!("Invalid region dec: {}", e))?
-                    };
-                    kv.set_region(region)?;
-                }
-
                 if let Some(dvdkey_str) = &self.options.dvdkey {
                     if let Ok(key_bytes) = crate::builder::builder::hex_to_bytes(dvdkey_str) {
                         if key_bytes.len() == 16 {
@@ -362,13 +354,103 @@ impl Session {
                         }
                     }
                 }
+
+                // AV Region sync to KV
+                if let Some(region_str) = &self.options.avregion {
+                    let region = Self::parse_u16_hex_or_dec(region_str)?;
+                    kv.set_region(region)?;
+                }
                 
-                // Re-encrypt and store
+                // Re-encrypt and store Keyvault
                 kv.encrypt(&cpukey, nand.header.kv_version.get() >= 2)?;
                 nand.extra.keyvault = kv.data;
             }
+
+            // --- 3. SMC Configuration Patching ---
+            let mut smc_config = crate::builder::chain::smc::SmcConfig::parse(&nand.extra.smc_config)?;
+
+            // 3a. MAC Address
+            if let Some(mac_str) = &self.options.macid {
+                let clean_mac = mac_str.replace(":", "");
+                if let Ok(bytes) = crate::builder::builder::hex_to_bytes(&clean_mac) {
+                    if bytes.len() == 6 {
+                        let mut arr = [0u8; 6];
+                        arr.copy_from_slice(&bytes);
+                        smc_config.set_mac_address(&arr);
+                    }
+                }
+            }
+
+            // 3b. Regions (SMC sync)
+            let video = if let Some(s) = &self.options.avregion { Self::parse_u16_hex_or_dec(s)? } else { (smc_config.data[0x22A] as u16) << 8 | smc_config.data[0x22B] as u16 };
+            let game = if let Some(s) = &self.options.gameregion { Self::parse_u16_hex_or_dec(s)? } else { (smc_config.data[0x22C] as u16) << 8 | smc_config.data[0x22D] as u16 };
+            let dvd = if let Some(s) = &self.options.dvdregion { s.parse::<u8>().unwrap_or(0xFF) } else { smc_config.data[0x237] };
+            smc_config.set_regions(video, game, dvd);
+
+            // 3c. Thermals (Targets)
+            let cpu_t = if let Some(s) = &self.options.cputemp { Self::parse_u8_hex_or_dec(s)? } else { smc_config.data[0x29] };
+            let gpu_t = if let Some(s) = &self.options.gputemp { Self::parse_u8_hex_or_dec(s)? } else { smc_config.data[0x2A] };
+            let ram_t = if let Some(s) = &self.options.edramtemp { Self::parse_u8_hex_or_dec(s)? } else { smc_config.data[0x2B] };
+            smc_config.set_thermal_targets(cpu_t, gpu_t, ram_t);
+
+            // 3d. Thermals (Max/Limits)
+            let cpu_m = if let Some(s) = &self.options.overcputemp { Self::parse_u8_hex_or_dec(s)? } else { smc_config.data[0x2C] };
+            let gpu_m = if let Some(s) = &self.options.overgputemp { Self::parse_u8_hex_or_dec(s)? } else { smc_config.data[0x2D] };
+            let ram_m = if let Some(s) = &self.options.overedramtemp { Self::parse_u8_hex_or_dec(s)? } else { smc_config.data[0x2E] };
+            smc_config.set_thermal_limits(cpu_m, gpu_m, ram_m);
+
+            // 3e. Fans
+            if let Some(s) = &self.options.cpufan {
+                let speed = Self::parse_u8_hex_or_dec(s)?;
+                smc_config.set_fan_speed(false, speed != 0, speed);
+            }
+            if let Some(s) = &self.options.gpufan {
+                let speed = Self::parse_u8_hex_or_dec(s)?;
+                smc_config.set_fan_speed(true, speed != 0, speed);
+            }
+
+            // 3f. Reset/XeLL Buttons
+            if let Some(s) = &self.options.xellbutton {
+                if s.len() == 4 {
+                    smc_config.set_reset_code(s.as_bytes().try_into().unwrap());
+                }
+            }
+
+            // Finalize and store SMC Config
+            nand.extra.smc_config = smc_config.serialize().clone().to_vec();
+
+            // --- 4. SMC Code Patching ---
+            let mut smc = crate::builder::chain::smc::RawSmc::new(nand.extra.smc.clone());
+            smc.decrypt(); // Decrypt using "BuNy"
+
+            if self.options.patchsmc.unwrap_or(false) {
+                smc.apply_glitch_patch();
+            }
+            if self.options.smcnoeject.unwrap_or(false) {
+                smc.set_play_n_charge(false);
+            }
+            // we can add more logic here for other hacks based on options as needed.
+
+            smc.encrypt();
+            nand.extra.smc = smc.data;
         }
         Ok(())
+    }
+
+    fn parse_u16_hex_or_dec(s: &str) -> Result<u16, String> {
+        if s.starts_with("0x") {
+            u16::from_str_radix(&s[2..], 16).map_err(|e| format!("Invalid hex u16 '{}': {}", s, e))
+        } else {
+            s.parse::<u16>().map_err(|e| format!("Invalid decimal u16 '{}': {}", s, e))
+        }
+    }
+
+    fn parse_u8_hex_or_dec(s: &str) -> Result<u8, String> {
+        if s.starts_with("0x") {
+            u8::from_str_radix(&s[2..], 16).map_err(|e| format!("Invalid hex u8 '{}': {}", s, e))
+        } else {
+            s.parse::<u8>().map_err(|e| format!("Invalid decimal u8 '{}': {}", s, e))
+        }
     }
 
     /// Execute a specific queued command by its sequence_id, then remove it from the queue.

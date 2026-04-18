@@ -319,6 +319,8 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
             let mut o = crate::core::data::xeini::OptionsIni::new();
             match k.to_lowercase().as_str() {
                 "region" | "avregion" => o.avregion = Some(v.clone()),
+                "gameregion" => o.gameregion = Some(v.clone()),
+                "dvdregion" => o.dvdregion = Some(v.clone()),
                 "unsafe" => {
                     o.gxunsafe = Some(v.eq_ignore_ascii_case("true"));
                     if o.gxunsafe.unwrap_or(false) {
@@ -332,8 +334,26 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                 "cputemp" => o.cputemp = Some(v.clone()),
                 "gputemp" => o.gputemp = Some(v.clone()),
                 "edramtemp" => o.edramtemp = Some(v.clone()),
+                "overcputemp" => o.overcputemp = Some(v.clone()),
+                "overgputemp" => o.overgputemp = Some(v.clone()),
+                "overedramtemp" => o.overedramtemp = Some(v.clone()),
                 "cpufan" => o.cpufan = Some(v.clone()),
                 "gpufan" => o.gpufan = Some(v.clone()),
+                "macid" | "mac" => o.macid = Some(v.clone()),
+                "dvdkey" => o.dvdkey = Some(v.clone()),
+                "cfldv" => o.cfldv = Some(v.clone()),
+                "xellbutton" => o.xellbutton = Some(v.clone()),
+                "xellbutton2" => o.xellbutton2 = Some(v.clone()),
+                "cygnos" => o.cygnos = Some(v.eq_ignore_ascii_case("true")),
+                "demon" => o.demon = Some(v.eq_ignore_ascii_case("true")),
+                "smcnoeject" => o.smcnoeject = Some(v.eq_ignore_ascii_case("true")),
+                "smcnoblink" => o.smcnoblink = Some(v.eq_ignore_ascii_case("true")),
+                "patchsmc" => o.patchsmc = Some(v.eq_ignore_ascii_case("true")),
+                "olddvd" => o.olddvd = Some(v.eq_ignore_ascii_case("true")),
+                "nodvd" => o.nodvd = Some(v.eq_ignore_ascii_case("true")),
+                "dualboot" => o.dualboot = Some(v.eq_ignore_ascii_case("true")),
+                "nolog" => o.nolog = Some(v.eq_ignore_ascii_case("true")),
+                "noinfo" => o.noinfo = Some(v.eq_ignore_ascii_case("true")),
                 _ => warn!("[cli] Unhandled generic option override: {}", k),
             }
             session.options.merge(o);

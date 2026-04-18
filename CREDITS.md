@@ -48,7 +48,7 @@ All projects used for gxBuild, directly or indirectly.
 
 ### Directly
 
-- [ImgBuild / Build.py]() by [GliGli](), [Tiros](), and [nitram]() 
+- [ImgBuild / Build.py]() by [GliGli](), [Tiros](), and [nitram]()
 - [RGH2 Build.py]() by Team Xecuter and [Cancerous]()
 - [RGH2to3]() by [DrSchottky]()
 - [RGH3](https://github.com/15432/RGH3) by [15432](https://github.com/15432)
