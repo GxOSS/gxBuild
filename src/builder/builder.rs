@@ -264,11 +264,7 @@ impl NandSkeleton {
                 kv_version: U16::new(0),
                 kv_addr: U32::new(0x4000), // Standard retail KV offset for all layouts
                 patch_size: U32::new(0),
-                smc_config_offset: U32::new(match layout {
-                    NandLayout::Bb => 0x3DF0000,
-                    NandLayout::Emmc => 0, // Master says unknown/fail!
-                    _ => 0xF70000,
-                }),
+                smc_config_offset: U32::new(crate::builder::chain::smc::SmcConfig::get_logical_address(&layout)),
                 smc_boot_size: U32::new(0x3000),
                 smc_boot_offset: U32::new(match layout {
                     NandLayout::Emmc => 0x800, // Corona retail SMC standard
@@ -349,11 +345,6 @@ impl NandSkeleton {
         let config_offset = header.smc_config_offset.get() as usize;
         let config_size = 0x10000; // standard config partition size
         
-        if layout == NandLayout::Emmc {
-            // Master says EMMC config is unknown/fail!
-            return Err("SMC Config extraction is currently unsupported for EMMC/Corona layouts!".into());
-        }
-
         let config_data = if config_offset > 0 && config_offset + config_size <= image.len() {
             info!("[builder] Extracting SMC Config (Addr: 0x{:X}, Size: 0x{:X})...", config_offset, config_size);
             image[config_offset..config_offset + config_size].to_vec()

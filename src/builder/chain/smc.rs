@@ -1,9 +1,10 @@
 /*
     smc.rs - Handling for Xbox 360 SMC.
 
-    Copyright 2024 Emma https://ipg.gay/
-    Modified for GGX by Exposure / Zach
-    Some code taken from RGH3 by 15432 / Alexey
+    This file was originally taken from xenon-bltool, but at this point, contains more code from Swizzy's x360Utils
+    and the various buildpy scripts floating around.
+
+    Modified in 2026 by Exposure / Zach for GGX
 
     This file has been taken from xenon-bltool and modified, and therefore retains the original
     License.
@@ -23,6 +24,7 @@
 use zerocopy::{FromBytes, IntoBytes};
 use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, ExCryptRsa};
+use crate::core::data::blocks::NandLayout;
 use log::info;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -347,6 +349,14 @@ impl RawSmc {
         });
     }
 
+    /// Returns true if the SMC appears to be scrambled (e.g. RGH3/BadJasper style).
+    /// Checks for the known "naughty" prefix 0x04206969.
+    pub fn is_scrambled(&self) -> bool {
+        if self.data.len() < 0x8 { return false; }
+        // Check for Emma's signature prefix (0x04 0x20 0x69 0x69)
+        self.data[0..4] == [0x04, 0x20, 0x69, 0x69]
+    }
+
     /// Decrypts the raw SMC payload in-place using the "BuNy" rolling-key cipher and unscrambles headers.
     pub fn decrypt(&mut self) {
         smc_crypt(&mut self.data, false);
@@ -390,33 +400,51 @@ impl RawSmc {
     /// Forensic detail from RGH3/smc.py: res[0:4] = res[-8:-4]
     pub fn unscramble(&mut self) {
         if self.data.len() < 8 { return; }
+        if !self.is_scrambled() { return; }
+        
         let len = self.data.len();
         let mut real_header = [0u8; 4];
+        
+        // Shadow header is stored at len - 8
         real_header.copy_from_slice(&self.data[len - 8..len - 4]);
+        
+        // Restore real header
         self.data[0..4].copy_from_slice(&real_header);
+        
+        // Zero out the shadow header and padding to return to "clean" state
+        for i in 0..8 {
+            self.data[len - 8 + i] = 0;
+        }
+        
+        info!("[smc] SMC unscrambled (shadow header restored)");
     }
 
     /// Scrambles the SMC by moving the first four bytes to the footer (pre-encryption).
     /// Forensic detail from RGH3/smc.py: data = rnd + data[4:-8] + data[0:4] + b"\x00"*4
     pub fn scramble(&mut self) {
         if self.data.len() < 8 { return; }
+        if self.is_scrambled() { return; }
+        
         let len = self.data.len();
         
         // Save the real first four bytes
         let mut real_header = [0u8; 4];
         real_header.copy_from_slice(&self.data[0..4]);
         
-        // Use placeholder identification bytes (RGH3 default: 0x04206969)
+        // Use placeholder identification bytes (RGH3/BadJasper default: 0x04206969)
         let placeholder = [0x04, 0x20, 0x69, 0x69];
         self.data[0..4].copy_from_slice(&placeholder);
         
-        // Move real header to footer (len-8 to len-4)
+        // Move real header to shadow slot (len-8 to len-4)
         self.data[len - 8..len - 4].copy_from_slice(&real_header);
         
         // Ensure final four bytes are zeroed (if they weren't already)
         for i in 0..4 {
             self.data[len - 4 + i] = 0;
         }
+        
+        info!("[smc] SMC scrambled with placeholder 0x{:02X}{:02X}{:02X}{:02X}", 
+              placeholder[0], placeholder[1], placeholder[2], placeholder[3]);
     }
 
     // --- Shared Patching Logic ---
@@ -502,6 +530,15 @@ pub struct SmcConfig {
 impl SmcConfig {
     pub const SIZE: usize = 0x10000;
     pub const SETTINGS_SIZE: usize = 0x100;
+
+    /// Returns the logical address of the SMC Config partition based on NAND layout.
+    pub fn get_logical_address(layout: &NandLayout) -> u32 {
+        match layout {
+            NandLayout::Emmc => 0x02FFC000,
+            NandLayout::Bb => 0x3DF0000,   // Standard for most Big-Block/Devkit images
+            _ => 0xF70000,                 // Standard for 16MB Retail (SB/XSB)
+        }
+    }
 
     /// Creates a new, empty 64KB configuration partition initialized with 0xFF.
     pub fn new_empty() -> Self {
@@ -674,5 +711,31 @@ mod tests {
         let mac = [0x00, 0x1D, 0xD8, 0x11, 0x22, 0x33];
         config.set_mac_address(&mac);
         assert_eq!(&config.data[0x220..0x226], &mac);
+    }
+
+    #[test]
+    fn test_smc_scrambling_roundtrip() {
+        // Create a fake "retail" SMC starting with something other than the placeholder
+        let mut data = vec![0xFF; 0x3000];
+        data[0..4].copy_from_slice(&[0x11, 0x22, 0x33, 0x44]);
+        // Fill footer with some data to ensure it's cleared
+        for i in 0..8 { data[0x3000 - 8 + i] = 0xAA; }
+
+        let mut smc = RawSmc::new(data.clone());
+        assert!(!smc.is_scrambled());
+
+        // Scramble
+        smc.scramble();
+        assert!(smc.is_scrambled());
+        assert_eq!(smc.data[0..4], [0x04, 0x20, 0x69, 0x69]);
+        assert_eq!(smc.data[0x3000-8..0x3000-4], [0x11, 0x22, 0x33, 0x44]);
+        assert_eq!(smc.data[0x3000-4..0x3000], [0, 0, 0, 0]);
+
+        // Unscramble
+        smc.unscramble();
+        assert!(!smc.is_scrambled());
+        assert_eq!(smc.data[0..4], [0x11, 0x22, 0x33, 0x44]);
+        // Footer should be zeroed
+        assert_eq!(smc.data[0x3000-8..0x3000], [0; 8]);
     }
 }
