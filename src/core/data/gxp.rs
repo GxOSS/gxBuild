@@ -1,8 +1,8 @@
 /*
     gxp.rs - gxBuild Patch (GXP) binary parser
-    
-    This file defines the GXP header format and provides logic for parsing
-    both modern multi-component RGH/JTAG patchsets and legacy xeBuild binaries.
+
+    Created in 2026 by Exposure / Zach for gxBuild.
+    Licensed under GPLv2 (inherited from xenon-bltool).
 */
 
 use std::fs::File;
@@ -52,6 +52,7 @@ pub enum GxpPatchType {
     Rgh3Section = 3,   // CB, CD, KHV
     Standalone = 4,    // 1 Section (Target BL)
     Addon = 5,         // 1 Section (Target BL at offset)
+    Jtag5Section = 7,  // 1BL, CB, CD, KHV, SMC
     Unknown = 0xFF,
 }
 
@@ -64,6 +65,7 @@ impl From<u8> for GxpPatchType {
             3 => GxpPatchType::Rgh3Section,
             4 => GxpPatchType::Standalone,
             5 => GxpPatchType::Addon,
+            7 => GxpPatchType::Jtag5Section,
             _ => GxpPatchType::Unknown,
         }
     }
@@ -103,7 +105,7 @@ impl From<u8> for BootloaderId {
 pub struct PatchRecord {
     pub address: u32,
     pub amount: u32,
-    pub data: Vec<u32>,
+    pub data: Vec<u8>, // Switched to Vec<u8> for byte-level granularity
 }
 
 #[derive(Debug, Clone)]
@@ -157,16 +159,17 @@ pub struct GxpBinary {
     pub smc: Option<GxpSection>,
 }
 
-/// Core record reading logic shared between GXP and legacy formats.
-fn read_patch_sections(mut reader: impl Read) -> io::Result<Vec<GxpSection>> {
+/// Core record reading logic. 
+/// Handles legacy word-based patches and modern GXP patches with section-aware granularity.
+fn read_patch_sections(mut reader: impl Read, patch_type: GxpPatchType, is_legacy: bool, smc_id: BootloaderId) -> io::Result<Vec<GxpSection>> {
     let mut sections = Vec::new();
-    let mut cur_section = Vec::new();
+    let mut cur_records = Vec::new();
 
     loop {
         let mut buf = [0u8; 4];
         if reader.read_exact(&mut buf).is_err() {
-            if !cur_section.is_empty() {
-                sections.push(GxpSection { records: cur_section });
+            if !cur_records.is_empty() {
+                sections.push(GxpSection { records: cur_records });
             }
             break;
         }
@@ -174,7 +177,7 @@ fn read_patch_sections(mut reader: impl Read) -> io::Result<Vec<GxpSection>> {
         let word = u32::from_be_bytes(buf);
 
         if word == 0xFFFFFFFF {
-            sections.push(GxpSection { records: std::mem::take(&mut cur_section) });
+            sections.push(GxpSection { records: std::mem::take(&mut cur_records) });
             continue;
         }
 
@@ -182,16 +185,36 @@ fn read_patch_sections(mut reader: impl Read) -> io::Result<Vec<GxpSection>> {
         let mut amt_buf = [0u8; 4];
         reader.read_exact(&mut amt_buf)?;
         let amount = u32::from_be_bytes(amt_buf);
-        let count = amount as usize;
+        
+        // Determine granularity: SMC sections in GXP files are byte-based.
+        let current_section_idx = sections.len();
+        let is_byte_mode = if is_legacy {
+            false
+        } else {
+            match patch_type {
+                GxpPatchType::Rgh4Section => current_section_idx == 3, // Section 4 (SMC)
+                GxpPatchType::Jtag5Section => current_section_idx == 4, // Section 5 (SMC)
+                GxpPatchType::Standalone | GxpPatchType::Addon => smc_id == BootloaderId::Smc,
+                _ => false,
+            }
+        };
 
-        let mut data = Vec::with_capacity(count);
-        for _ in 0..count {
-            let mut data_buf = [0u8; 4];
-            reader.read_exact(&mut data_buf)?;
-            data.push(u32::from_be_bytes(data_buf));
+        let mut data = Vec::new();
+        if is_byte_mode {
+            let byte_count = amount as usize;
+            data.resize(byte_count, 0);
+            reader.read_exact(&mut data)?;
+        } else {
+            let word_count = amount as usize;
+            data.reserve(word_count * 4);
+            for _ in 0..word_count {
+                let mut word_buf = [0u8; 4];
+                reader.read_exact(&mut word_buf)?;
+                data.extend_from_slice(&word_buf);
+            }
         }
 
-        cur_section.push(PatchRecord {
+        cur_records.push(PatchRecord {
             address,
             amount,
             data,
@@ -223,7 +246,7 @@ pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> 
     } else {
         // Legacy format detection
         file.seek(SeekFrom::Start(0))?;
-        let temp_sections = read_patch_sections(&mut file)?;
+        let temp_sections = read_patch_sections(&mut file, GxpPatchType::Unknown, true, BootloaderId::None)?;
         let header = GxpHeader::new_legacy(temp_sections.len());
         // Rewind again so unified loop can read it fully (though we already have them, we rebuild for consistency)
         file.seek(SeekFrom::Start(0))?;
@@ -239,7 +262,7 @@ pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> 
         info!("[gxp] Heuristic: Type={:?}, Sections={}", header.patch_type, if header.patch_type == GxpPatchType::Addon { 1 } else if header.patch_type == GxpPatchType::Rgh3Section { 3 } else { 4 });
     }
 
-    let sections_raw = read_patch_sections(file)?;
+    let sections_raw = read_patch_sections(file, header.patch_type, is_legacy, header.bootloader)?;
 
     let mut binary = GxpBinary {
         header: header.clone(),
@@ -264,6 +287,17 @@ pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> 
                 binary.smc = Some(sections_raw[3].clone());
             } else {
                 warn!("[gxp] RGH 4-Section Patch has only {} sections!", sections_raw.len());
+            }
+        }
+        GxpPatchType::Jtag5Section => {
+            if sections_raw.len() >= 5 {
+                binary.onebl = Some(sections_raw[0].clone());
+                binary.cb = Some(sections_raw[1].clone());
+                binary.cd = Some(sections_raw[2].clone());
+                binary.khv = Some(sections_raw[3].clone());
+                binary.smc = Some(sections_raw[4].clone());
+            } else {
+                warn!("[gxp] JTAG 5-Section Patch has only {} sections!", sections_raw.len());
             }
         }
         GxpPatchType::Jtag4Section => {
@@ -318,20 +352,16 @@ pub fn apply_records(records: &[PatchRecord], data: &mut Vec<u8>) -> anyhow::Res
     for record in records {
         let offset = record.address as usize;
 
-        for (i, &word) in record.data.iter().enumerate() {
-            let write_pos = offset + (i * 4);
-            
-            // Safety: 4MB limit to prevent runaway allocation if a patch record is corrupt.
-            if write_pos + 4 > data.len() {
-                if write_pos + 4 > 0x400000 {
-                    anyhow::bail!("Patch address 0x{:X} exceeds 4MB safety limit", write_pos);
-                }
-                data.resize(write_pos + 4, 0);
+        // Safety: 4MB limit to prevent runaway allocation if a patch record is corrupt.
+        if offset + record.data.len() > data.len() {
+            if offset + record.data.len() > 0x400000 {
+                anyhow::bail!("Patch address 0x{:X} exceeds 4MB safety limit", offset + record.data.len());
             }
-
-            data[write_pos..write_pos + 4].copy_from_slice(&word.to_be_bytes());
-            modified_words += 1;
+            data.resize(offset + record.data.len(), 0);
         }
+
+        data[offset..offset + record.data.len()].copy_from_slice(&record.data);
+        modified_words += (record.data.len() + 3) / 4;
     }
     
     info!("[gxp] Modified {} words.", modified_words);
@@ -345,5 +375,88 @@ pub fn parse_and_apply_to_buffer<P: AsRef<Path>>(path: P, data: &mut Vec<u8>) ->
         apply_records(&section.records, data)
     } else {
         anyhow::bail!("Patch file contains no sections")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn test_legacy_word_alignment() {
+        // Mock a legacy patch: Address 0, Count 1, Data [0x11, 0x22, 0x33, 0x44]
+        let mut mock_data = Vec::new();
+        mock_data.extend_from_slice(&0u32.to_be_bytes()); // Address
+        mock_data.extend_from_slice(&1u32.to_be_bytes()); // Count (Words)
+        mock_data.extend_from_slice(&[0x11, 0x22, 0x33, 0x44]); // Data
+        mock_data.extend_from_slice(&0xFFFFFFFFu32.to_be_bytes()); // Sentinel
+
+        let sections = read_patch_sections(Cursor::new(mock_data), GxpPatchType::Unknown, true, BootloaderId::None).unwrap();
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].records.len(), 1);
+        assert_eq!(sections[0].records[0].data, vec![0x11, 0x22, 0x33, 0x44]);
+
+        let mut buffer = vec![0u8; 8];
+        apply_records(&sections[0].records, &mut buffer).unwrap();
+        assert_eq!(buffer, vec![0x11, 0x22, 0x33, 0x44, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_byte_level_smc_patch() {
+        // Mock a GXP Standalone SMC patch: Address 2, Count 1, Data [0x99]
+        let mut mock_data = Vec::new();
+        mock_data.extend_from_slice(&2u32.to_be_bytes()); // Address
+        mock_data.extend_from_slice(&1u32.to_be_bytes()); // Count (Bytes!)
+        mock_data.push(0x99); // Data (1 byte)
+        mock_data.extend_from_slice(&0xFFFFFFFFu32.to_be_bytes()); // Sentinel (aligned to word for reader)
+
+        let sections = read_patch_sections(Cursor::new(mock_data), GxpPatchType::Standalone, false, BootloaderId::Smc).unwrap();
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].records.len(), 1);
+        assert_eq!(sections[0].records[0].data, vec![0x99]);
+
+        let mut buffer = vec![0u8; 4];
+        apply_records(&sections[0].records, &mut buffer).unwrap();
+        assert_eq!(buffer, vec![0, 0, 0x99, 0]);
+    }
+
+    #[test]
+    fn test_jtag5_section_routing() {
+        // Create 5 sections separated by 0xFFFFFFFF
+        let mut mock_data = Vec::new();
+        for i in 0..5 {
+            mock_data.extend_from_slice(&0u32.to_be_bytes()); // Address
+            mock_data.extend_from_slice(&1u32.to_be_bytes()); // Count
+            if i == 4 {
+                mock_data.push(0xEE); // Section 5 is Byte-based SMC
+            } else {
+                mock_data.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+            }
+            mock_data.extend_from_slice(&0xFFFFFFFFu32.to_be_bytes());
+        }
+
+        let sections = read_patch_sections(Cursor::new(mock_data), GxpPatchType::Jtag5Section, false, BootloaderId::None).unwrap();
+        assert_eq!(sections.len(), 5);
+        assert_eq!(sections[4].records[0].data, vec![0xEE]);
+
+        let binary = GxpBinary {
+            header: GxpHeader { 
+                magic: GXP_MAGIC, version: 0, motherboard: MotherboardType::Any, 
+                patch_type: GxpPatchType::Jtag5Section, bootloader: BootloaderId::None, offset: 0 
+            },
+            sections: sections.clone(),
+            is_legacy: false,
+            onebl: Some(sections[0].clone()),
+            cb: Some(sections[1].clone()),
+            cb_a: None,
+            cb_b: None,
+            cd: Some(sections[2].clone()),
+            khv: Some(sections[3].clone()),
+            smc: Some(sections[4].clone()),
+        };
+
+        assert!(binary.smc.is_some());
+        assert_eq!(binary.smc.unwrap().records[0].data, vec![0xEE]);
     }
 }

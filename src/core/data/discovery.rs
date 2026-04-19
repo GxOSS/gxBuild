@@ -1,8 +1,8 @@
 /*
     discovery.rs - Bootloader discovery engine using try_id pattern.
 
-    Based on proven successful patterns from scratch iterations (V25, V43, V46).
-    By Exposure / Zach for the public domain.
+    Created in 2026 by Exposure / Zach for gxBuild.
+    Licensed under GPLv2 (inherited from xenon-bltool).
 */
 
 

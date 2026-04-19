@@ -1,24 +1,13 @@
 /*
-    python.rs
-    
-    This file was wrote by ExposureMG / Zach for the Public Domain.
+    python.rs - rust-python interpreter
 
-    You may freely distribute, modify, and use this code for any purpose,
-    commercial or non-commercial, on the terms that it comes with No Warranty.
-
-    ExposureMG / Zach is not responsible or liable for any damage caused by this code.
+    Created in 2026 by Exposure / Zach for gxBuild.
+    Licensed under GPLv2 (inherited from xenon-bltool).
 */
 
 #![cfg(feature = "python")]
 
-
-
-/// rust-python embedded interpreter
-
-/// Input python script as arg
-/// Expose GGX libraries, scripts, and inputted data (via cli and ffi) to the interpreter
-/// Run the script and capture output
-/// Actively output logs and return any returned data
+// This file is marked for review; Unsure if it will persist to release.
 
 use std::path::Path;
 use std::fs;

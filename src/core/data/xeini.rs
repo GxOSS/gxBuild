@@ -1,23 +1,9 @@
 /*
-    xeini.rs
-    
-    This file was wrote by ExposureMG / Zach for the Public Domain.
+    xeini.rs - xeBuild style INI parser
 
-    You may freely distribute, modify, and use this code for any purpose,
-    commercial or non-commercial, on the terms that it comes with No Warranty.
-
-    ExposureMG / Zach is not responsible or liable for any damage caused by this code.
+    Created in 2026 by Exposure / Zach for gxBuild.
+    Licensed under GPLv2 (inherited from xenon-bltool).
 */
-
-
-
-// xeBuild CSV-Style INI parser
-
-// Input .ini file and section
-// Check and verify ini file
-// Check and verify the data is present
-// Check the data against the provided hashes
-// Return the section, security and flashfs as a struct
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -70,7 +56,7 @@ pub struct BuildIniEntry {
 pub struct BuildIniPatch {
     pub enabled: bool,
     pub path: Option<PathBuf>,
-    pub khv: Option<Vec<crate::builder::builder::PatchRecord>>,
+    pub khv: Option<Vec<crate::core::data::gxp::PatchRecord>>,
 }
 
 #[derive(Debug, Clone)]

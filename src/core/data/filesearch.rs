@@ -1,3 +1,9 @@
+/*
+    filesearch.rs - xeBuild style file searching engine
+
+    Created in 2026 by Exposure / Zach for gxBuild.
+    Licensed under GPLv2 (inherited from xenon-bltool).
+*/
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use crate::builder::chain::flashfs::{FlashFS, FileSystemEntry};
@@ -329,11 +335,7 @@ impl IniSearch {
             if let Some(ref p) = patch_path {
                 if let Ok(parsed) = crate::core::data::gxp::parse_patch_binary(p) {
                     if let Some(khv) = parsed.khv.as_ref() { 
-                        ini.patch.khv = Some(khv.records.iter().map(|r| crate::builder::builder::PatchRecord {
-                            address: r.address,
-                            amount: r.amount,
-                            data: r.data.clone(),
-                        }).collect()); 
+                        ini.patch.khv = Some(khv.records.clone()); 
                     }
                     xe_patch = Some(parsed);
                 }

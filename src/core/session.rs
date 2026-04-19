@@ -1,12 +1,8 @@
 /*
-    session.rs
-    
-    This file was wrote by ExposureMG / Zach for the Public Domain.
+    session.rs - Session management and command queue
 
-    You may freely distribute, modify, and use this code for any purpose,
-    commercial or non-commercial, on the terms that it comes with No Warranty.
-
-    ExposureMG / Zach is not responsible or liable for any damage caused by this code.
+    Created in 2026 by Exposure / Zach for gxBuild.
+    Licensed under GPLv2 (inherited from xenon-bltool).
 */
 
 use std::cmp::Ordering;
@@ -458,18 +454,32 @@ impl Session {
             let mut smc = crate::builder::chain::smc::RawSmc::new(nand.extra.smc.clone());
             smc.decrypt(); // Decrypt using "BuNy"
 
-            if self.options.patchsmc.unwrap_or(false) {
-                smc.apply_glitch_patch();
-            }
-            if self.options.smcnoeject.unwrap_or(false) {
-                smc.set_play_n_charge(false);
-            }
-            // we can add more logic here for other hacks based on options as needed.
+            // Generic signature patching can be invoked here or via session APIs
+            // using the new signature engine.
 
             smc.encrypt();
             nand.extra.smc = smc.data;
         }
         Ok(())
+    }
+
+    /// Applies a batch of signature patches (JSON format) to the active NAND's decrypted SMC.
+    /// Returns the total number of patches applied.
+    pub fn apply_smc_signature_batch(&mut self, json_str: &str) -> Result<usize, String> {
+        if let Some(nand) = &mut self.active_nand {
+            info!("[session] Applying signature batch to SMC...");
+            let mut smc = crate::builder::chain::smc::RawSmc::new(nand.extra.smc.clone());
+            smc.decrypt();
+            
+            let count = crate::core::data::signature::Signature::apply_batch(&mut smc.data, json_str)?;
+            
+            smc.encrypt();
+            nand.extra.smc = smc.data;
+            info!("[session] SMC signature batch applied: {} match(es) patched.", count);
+            Ok(count)
+        } else {
+            Err("No active NAND loaded to patch.".to_string())
+        }
     }
 
     fn parse_u16_hex_or_dec(s: &str) -> Result<u16, String> {

@@ -19,8 +19,6 @@
     If not, see <https://www.gnu.org/licenses/>.
 */
 
-    
-
 use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
 use zerocopy::{FromBytes, IntoBytes};

@@ -13,7 +13,7 @@ use log::{info, error, warn};
 use crate::core::data::blocks::*;
 use crate::builder::chain::*;
 use crate::builder::chain::flashfs::FlashFS;
-use crate::core::data::gxp::{GxpBinary, GxpPatchType, apply_records};
+use crate::core::data::gxp::{GxpBinary, GxpPatchType, apply_records, PatchRecord};
 
 pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
     if hex.len() % 2 != 0 {
@@ -145,12 +145,7 @@ pub struct NandExtra {
     pub power_on_cause_b: u8,
 }
 
-#[derive(Debug, Clone)]
-pub struct PatchRecord {
-    pub address: u32,
-    pub amount: u32,
-    pub data: Vec<u32>,
-}
+// Legacy local PatchRecord removed in favor of crate::core::data::gxp::PatchRecord
 
 #[derive(Clone)]
 pub struct NandPatches {
@@ -746,7 +741,7 @@ impl NandSkeleton {
 
         if let Some(cb) = patch.cb {
             // Logic: If only CB is present, apply to CB. If CB_A and CB_B are present, apply to CB_B.
-            if matches!(patch.header.patch_type, GxpPatchType::Jtag4Section | GxpPatchType::Rgh3Section) {
+            if matches!(patch.header.patch_type, GxpPatchType::Jtag4Section | GxpPatchType::Jtag5Section | GxpPatchType::Rgh3Section) {
                 if self.bootloaders.cb_a.is_some() && self.bootloaders.cb_b.is_some() {
                     if let Some(cbb_bl) = &mut self.bootloaders.cb_b {
                         info!("[builder] Split CB detected: Applying primary patch section to CB_B");

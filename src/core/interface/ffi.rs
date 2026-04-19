@@ -1,12 +1,8 @@
 /*
-    ffi.rs
-    
-    This file was wrote by ExposureMG / Zach for the Public Domain.
+    ffi.rs - Developer / Foreign Function Interface
 
-    You may freely distribute, modify, and use this code for any purpose,
-    commercial or non-commercial, on the terms that it comes with No Warranty.
-
-    ExposureMG / Zach is not responsible or liable for any damage caused by this code.
+    Created in 2026 by Exposure / Zach for gxBuild.
+    Licensed under GPLv2 (inherited from xenon-bltool).
 */
 
 /// Export session struct and or methods over FFI

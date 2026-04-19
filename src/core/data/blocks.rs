@@ -1,9 +1,9 @@
 /*
-    blocks.rs - NAND Layout definitions, ECC, and Physical Block management.
-    
-    Modified in 2026 by Exposure / Zach for GGX
-*/
+    blocks.rs - ECC, Spare data, and bad blocks manager
 
+    Created in 2026 by Exposure / Zach for gxBuild.
+    Licensed under GPLv2 (inherited from xenon-bltool).
+*/
 use log::info;
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -31,7 +31,7 @@ pub enum SpareMetaType {
     MetaType0,
     /// Jasper/Trinity/Corona — BlockID at [1..2], FsSequence at [0,3..4]
     MetaType1,
-    /// Big-Block Jasper — BlockID at [1..2], FsSequence at [3..5], BadBlock at [0]
+    /// Big-Block Jasper — BlockID at [1..2], FsSequence at [3..5], BadBlock at [0] 
     MetaType2,
     /// No spare data or unknown (eMMC, clean logical images)
     #[default]
