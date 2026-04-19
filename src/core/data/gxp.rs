@@ -6,9 +6,9 @@
 */
 
 use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom, BufRead, BufReader};
 use std::path::Path;
-use log::{info, warn};
+use log::{info, debug, warn};
 
 /// GXP Header Magic: "GXP\0" (0x47 0x58 0x50 0x00)
 pub const GXP_MAGIC: [u8; 4] = [0x47, 0x58, 0x50, 0x00];
@@ -344,6 +344,62 @@ pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> 
     Ok(binary)
 }
 
+/// Parses a human-readable GXS (GXP-Source) file into a GxpSection.
+/// Supports [Address]: [Hex Data...] format with comments and multi-line payloads.
+pub fn parse_gxs_source<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpSection> {
+    let file = File::open(&path)?;
+    let reader = BufReader::new(file);
+    let mut records = Vec::new();
+    
+    let mut current_address: Option<u32> = None;
+    let mut current_data: Vec<u8> = Vec::new();
+
+    for line in reader.lines() {
+        let line = line?;
+        // Strip comments
+        let line_clean = line.split('#').next().unwrap_or("").trim();
+        if line_clean.is_empty() {
+            continue;
+        }
+
+        if let Some((addr_part, data_part)) = line_clean.split_once(':') {
+            // New record found. Flush previous if any.
+            if let Some(addr) = current_address {
+                records.push(PatchRecord {
+                    address: addr,
+                    amount: current_data.len() as u32,
+                    data: std::mem::take(&mut current_data),
+                });
+            }
+
+            let addr_str = addr_part.trim().trim_start_matches("0x");
+            current_address = Some(u32::from_str_radix(addr_str, 16)?);
+            
+            // Initial data on the same line
+            for token in data_part.split_whitespace() {
+                current_data.push(u8::from_str_radix(token, 16)?);
+            }
+        } else if let Some(_) = current_address {
+            // Multi-line data continuation
+            for token in line_clean.split_whitespace() {
+                current_data.push(u8::from_str_radix(token, 16)?);
+            }
+        }
+    }
+
+    // Final flush
+    if let Some(addr) = current_address {
+        records.push(PatchRecord {
+            address: addr,
+            amount: current_data.len() as u32,
+            data: current_data,
+        });
+    }
+
+    info!("[gxs] Parsed {} records from {:?}", records.len(), path.as_ref());
+    Ok(GxpSection { records })
+}
+
 /// Low-level function to apply a set of patch records to a buffer.
 pub fn apply_records(records: &[PatchRecord], data: &mut Vec<u8>) -> anyhow::Result<()> {
     info!("[gxp] Applying {} records to buffer (size 0x{:X})", records.len(), data.len());
@@ -458,5 +514,30 @@ mod tests {
 
         assert!(binary.smc.is_some());
         assert_eq!(binary.smc.unwrap().records[0].data, vec![0xEE]);
+    }
+
+    #[test]
+    fn test_gxs_parsing() {
+        use std::io::Write;
+        let test_path = "test_gxs_parsing.gxs";
+        {
+            let mut file = File::create(test_path).unwrap();
+            writeln!(file, "# Test GXS").unwrap();
+            writeln!(file, "0x1234: 11 22 33 # Header").unwrap();
+            writeln!(file, "0x5678:").unwrap();
+            writeln!(file, "    AA BB").unwrap();
+            writeln!(file, "    CC DD # Multi-line").unwrap();
+        }
+        
+        let section = parse_gxs_source(test_path).unwrap();
+        let _ = std::fs::remove_file(test_path);
+
+        assert_eq!(section.records.len(), 2);
+        
+        assert_eq!(section.records[0].address, 0x1234);
+        assert_eq!(section.records[0].data, vec![0x11, 0x22, 0x33]);
+        
+        assert_eq!(section.records[1].address, 0x5678);
+        assert_eq!(section.records[1].data, vec![0xAA, 0xBB, 0xCC, 0xDD]);
     }
 }
