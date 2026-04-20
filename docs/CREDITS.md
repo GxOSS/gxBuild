@@ -24,10 +24,9 @@ Everyone who has knowingly or unknowingly contributed to gxBuild
 - [Cancerous](https://github.com/Cancerous)
 - [InvoxiPlayGames](https://github.com/InvoxiPlayGames)
 
-**RGLoader / RGBuild Team:**
+**RGBuild Team:**
 - [emoose](https://github.com/emoose)
 - [tydye81](https://github.com/tydye81)
-- [sk1080](https://github.com/sk1080)
 
 **[J-Runner with Extras](https://github.com/J-Runner-with-Extras) Team:**
 - [Octal450](https://github.com/Octal450)

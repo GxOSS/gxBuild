@@ -8,7 +8,7 @@ Xell:
 - Xell discovery and injection from filesearch
 
 Smc:
-- SMC discovery
+- SMC discovery from system
 
 FlashFS:
 - eMMC

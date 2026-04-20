@@ -237,7 +237,20 @@ pub fn calculate_ecc(data: &mut [u8]) {
     data[0x20C..0x210].copy_from_slice(&ecc_temp);
 }
 
-pub fn add_spare(image: &[u8], layout: NandLayout, blockstart: usize) -> Vec<u8> {
+#[derive(Clone, Debug)]
+pub struct FsSpareInfo {
+    pub sequence: u32,
+    pub size: u16,
+    pub page_count: u8,
+    pub block_type: u8,
+}
+
+pub fn add_spare(
+    image: &[u8],
+    layout: NandLayout,
+    blockstart: usize,
+    fs_meta: Option<&std::collections::HashMap<usize, FsSpareInfo>>
+) -> Vec<u8> {
     let page_size = layout.page_size();
     let total_pages = (image.len() + page_size - 1) / page_size;
 
@@ -278,8 +291,22 @@ pub fn add_spare(image: &[u8], layout: NandLayout, blockstart: usize) -> Vec<u8>
                     let mut spare = [0u8; 16];
                     spare[0] = 0xFF; // Big-block bad-block marker
                     let val = (page_idx / 256) + block_number_base;
-                    spare[1] = (val & 0xFF) as u8;
-                    spare[2] = ((val >> 8) & 0xFF) as u8;
+                    
+                    if let Some(fs) = fs_meta.and_then(|m| m.get(&val)) {
+                        // MetaType2 Encoding for FlashFS
+                        spare[1] = (val & 0xFF) as u8;
+                        spare[2] = ((val >> 8) & 0xFF) as u8;
+                        spare[5] = (fs.sequence & 0xFF) as u8;
+                        spare[4] = ((fs.sequence >> 8) & 0xFF) as u8;
+                        spare[3] = ((fs.sequence >> 16) & 0xFF) as u8;
+                        spare[7] = (fs.size & 0xFF) as u8;
+                        spare[8] = ((fs.size >> 8) & 0xFF) as u8;
+                        spare[9] = fs.page_count;
+                        spare[12] = fs.block_type;
+                    } else {
+                        spare[1] = (val & 0xFF) as u8;
+                        spare[2] = ((val >> 8) & 0xFF) as u8;
+                    }
 
                     // Write spare portion
                     let spare_offset = chunk_offset + 0x800 + (page_in_chunk * 0x10);
@@ -318,20 +345,50 @@ pub fn add_spare(image: &[u8], layout: NandLayout, blockstart: usize) -> Vec<u8>
                 }
 
                 let mut spare = [0u8; 16];
-                match layout {
-                    NandLayout::Xsb => {
-                        spare[5] = 0xFF;
-                        let val = (i / 32) + block_number_base;
-                        spare[0] = (val & 0xFF) as u8;
-                        spare[1] = ((val / 0x100) & 0xFF) as u8;
+                let val = (i / 32) + block_number_base;
+                
+                if let Some(fs) = fs_meta.and_then(|m| m.get(&val)) {
+                    match layout {
+                        NandLayout::Xsb => {
+                            spare[5] = 0xFF;
+                            spare[0] = (val & 0xFF) as u8;
+                            spare[1] = ((val / 0x100) & 0xFF) as u8;
+                            spare[2] = (fs.sequence & 0xFF) as u8;
+                            spare[3] = ((fs.sequence >> 8) & 0xFF) as u8;
+                            spare[4] = ((fs.sequence >> 16) & 0xFF) as u8;
+                            spare[7] = (fs.size & 0xFF) as u8;
+                            spare[8] = ((fs.size >> 8) & 0xFF) as u8;
+                            spare[9] = fs.page_count;
+                            spare[12] = fs.block_type;
+                        }
+                        NandLayout::Sb => {
+                            spare[5] = 0xFF;
+                            spare[1] = (val & 0xFF) as u8;
+                            spare[2] = ((val / 0x100) & 0xFF) as u8;
+                            spare[0] = (fs.sequence & 0xFF) as u8;
+                            spare[3] = ((fs.sequence >> 8) & 0xFF) as u8;
+                            spare[4] = ((fs.sequence >> 16) & 0xFF) as u8;
+                            spare[7] = (fs.size & 0xFF) as u8;
+                            spare[8] = ((fs.size >> 8) & 0xFF) as u8;
+                            spare[9] = fs.page_count;
+                            spare[12] = fs.block_type;
+                        }
+                        _ => {}
                     }
-                    NandLayout::Sb => {
-                        spare[5] = 0xFF;
-                        let val = (i / 32) + block_number_base;
-                        spare[1] = (val & 0xFF) as u8;
-                        spare[2] = ((val / 0x100) & 0xFF) as u8;
+                } else {
+                    match layout {
+                        NandLayout::Xsb => {
+                            spare[5] = 0xFF;
+                            spare[0] = (val & 0xFF) as u8;
+                            spare[1] = ((val / 0x100) & 0xFF) as u8;
+                        }
+                        NandLayout::Sb => {
+                            spare[5] = 0xFF;
+                            spare[1] = (val & 0xFF) as u8;
+                            spare[2] = ((val / 0x100) & 0xFF) as u8;
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
 
                 let write_offset = i * p_page_size;
@@ -822,8 +879,8 @@ impl NandProcessor {
 
     /// Finalizes a clean NAND image by adding ECC/spare data for physical output.
     /// If an LbaMap is provided, it uses the metadata format for correct spare layout.
-    pub fn finalize_nand(clean_data: &[u8], layout: NandLayout) -> Vec<u8> {
+    pub fn finalize_nand(clean_data: &[u8], layout: NandLayout, fs_meta: Option<&std::collections::HashMap<usize, FsSpareInfo>>) -> Vec<u8> {
         if layout == NandLayout::Emmc { return clean_data.to_vec(); }
-        add_spare(clean_data, layout, 0)
+        add_spare(clean_data, layout, 0, fs_meta)
     }
 }

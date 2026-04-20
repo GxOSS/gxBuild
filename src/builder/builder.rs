@@ -613,7 +613,13 @@ impl NandSkeleton {
 
     pub fn assemble_logical(&self) -> Result<Vec<u8>, String> {
         let layout = &self.options.layout;
-        let mut logical_image = vec![0xFFu8; self.total_blocks * layout.logical_pages_per_block() * 0x200];
+        let expected_size = self.total_blocks * layout.logical_pages_per_block() * 0x200;
+        
+        let mut logical_image = self.image.clone();
+        if logical_image.len() != expected_size {
+            logical_image.resize(expected_size, 0);
+        }
+        
         let mut header = self.header.clone();
 
         // Dynamic forensic offset logic:
@@ -631,20 +637,34 @@ impl NandSkeleton {
         let bootchain_start = 0x8000;
         let mut curr_bl = bootchain_start;
         let mut bl_stages = Vec::new();
-        if let Some(cb) = &self.bootloaders.cb { bl_stages.push(cb.serialize()); }
-        if let Some(cba) = &self.bootloaders.cb_a { bl_stages.push(cba.serialize()); }
-        if let Some(cbx) = &self.bootloaders.cb_x { bl_stages.push(cbx.serialize()); }
-        if let Some(cbb) = &self.bootloaders.cb_b { bl_stages.push(cbb.serialize()); }
-        if let Some(sc) = &self.bootloaders.sc { bl_stages.push(sc.serialize()); }
-        if let Some(cd) = &self.bootloaders.cd { bl_stages.push(cd.serialize()); }
-        if let Some(ce) = &self.bootloaders.ce { bl_stages.push(ce.serialize()); }
+        if let Some(cb) = &self.bootloaders.cb { bl_stages.push(("CB", cb.serialize())); }
+        if let Some(cba) = &self.bootloaders.cb_a { bl_stages.push(("CB_A", cba.serialize())); }
+        if let Some(cbx) = &self.bootloaders.cb_x { bl_stages.push(("CB_X", cbx.serialize())); }
+        if let Some(cbb) = &self.bootloaders.cb_b { bl_stages.push(("CB_B", cbb.serialize())); }
+        if let Some(sc) = &self.bootloaders.sc { bl_stages.push(("SC", sc.serialize())); }
+        if let Some(cd) = &self.bootloaders.cd { bl_stages.push(("CD", cd.serialize())); }
+        if let Some(ce) = &self.bootloaders.ce { bl_stages.push(("CE", ce.serialize())); }
 
-        for (i, data) in bl_stages.iter().enumerate() {
-            if curr_bl + data.len() > logical_image.len() {
-                return Err(format!("Bootchain stage {} overflow at 0x{:X}", i, curr_bl));
+        for (i, (name, mut data)) in bl_stages.into_iter().enumerate() {
+            // Read header to get declared size
+            let declared_size = if data.len() >= 16 {
+                let h = BootloaderHeader::read_from_prefix(&data).map(|(h,_)| h.size.get()).unwrap_or(0);
+                h as usize
+            } else { 0 };
+
+            let aligned_declared = (declared_size + 0xF) & !0xF;
+            if aligned_declared > 0 && data.len() != aligned_declared {
+                warn!("[builder] {} length mismatch: data is 0x{:X}, header says 0x{:X} (aligned 0x{:X}). Adjusting...", 
+                    name, data.len(), declared_size, aligned_declared);
+                data.resize(aligned_declared, 0);
             }
-            logical_image[curr_bl..curr_bl+data.len()].copy_from_slice(data);
-            curr_bl += (data.len() + 0xF) & 0xFFFFFFF0;
+
+            if curr_bl + data.len() > logical_image.len() {
+                return Err(format!("Bootchain stage {} ({}) overflow at 0x{:X}", i, name, curr_bl));
+            }
+            info!("[builder] Serializing {} at 0x{:08X} (0x{:X} bytes)", name, curr_bl, data.len());
+            logical_image[curr_bl..curr_bl+data.len()].copy_from_slice(&data);
+            curr_bl += data.len(); // already aligned via resize
         }
 
         // 3. CF/CG placement: Ensure safe gap after bootchain
@@ -666,6 +686,20 @@ impl NandSkeleton {
         header.smc_boot_size.set(smc_len as u32);
         header.cf_offset.set(target_cf_offset as u32);
         header.kv_addr.set(0x4000); // Enforce Block 1 KV
+
+        // User-provided SMC Config offsets
+        let smc_config_offset = match layout {
+            NandLayout::Emmc => 0x2FFC000,
+            _ => 0xF7C000,
+        };
+        header.smc_config_offset.set(smc_config_offset as u32);
+
+        // FlashFS Address: Logical byte address of the root block
+        if !self.flashfs.root.entries.is_empty() && self.flashfs.root.block_number >= 0 {
+            let fs_logical_addr = (self.flashfs.root.block_number as u32) * (layout.logical_pages_per_block() as u32) * 0x200;
+            header.fs_addr.set(fs_logical_addr);
+            info!("[builder] Updated FlashFS root address in header: 0x{:08X} (Block {})", fs_logical_addr, self.flashfs.root.block_number);
+        }
 
         // Actually place components into the image
         let kv_offset = header.kv_addr.get() as usize;
