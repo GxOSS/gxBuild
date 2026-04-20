@@ -460,7 +460,7 @@ pub fn detect_meta_type(image: &[u8], layout: NandLayout) -> SpareMetaType {
 
     // Try spare at block 1, page 0 (offset 0x4400)
     let spare = match layout {
-        NandLayout::Bb => read_spare(0x21200), // Big block: first spare at different offset
+        NandLayout::Bb => read_spare(0x21800), // Block 1, page 0 spare: 0x21000 (block_size) + 0x800 (spare offset in 0x840-chunk)
         _ => read_spare(0x4400),
     };
 

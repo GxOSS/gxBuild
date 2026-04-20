@@ -53,7 +53,7 @@ pub const OFFSET_CONSOLE_ID: usize = 0x9CA; // 5 bytes (Binary)
 pub const OFFSET_MF_DATE: usize = 0x9E4;    // 8 bytes (ASCIIString)
 pub const OFFSET_DRIVE_INQUIRY: usize = 0xC8A; // 40 bytes (Binary)
 pub const OFFSET_OSIG_STR: usize = 0xC92;   // 32 bytes (ASCIIString, inside Inquiry)
-pub const OFFSET_FCRT_FLAG: usize = 0x2C;   // 4 bytes (Hardware Flags)
+pub const OFFSET_FCRT_FLAG: usize = 0x1C;   // 2 bytes (Hardware Flags u16 BE) - J-Runner updatekvval() L684
 
 impl Keyvault {
     pub const SIZE: usize = 0x4000;
@@ -88,8 +88,10 @@ impl Keyvault {
 
         let record = self.get_record()?;
 
-        // Hardware flags at 0x2C
-        let flags = u32::from_be_bytes(self.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG+4].try_into().unwrap());
+        // Hardware flags at 0x1C - J-Runner updatekvval() L684:
+        //   (BitConverter.ToUInt16(new byte[2] { kv[0x1D], kv[0x1C] }, 0) & 0x120) != 0
+        //   = big-endian u16 at 0x1C, masked with 0x120 (bits: 0x100 | 0x020)
+        let flags = u16::from_be_bytes(self.data[0x1C..0x1E].try_into().unwrap());
 
         let meta = KeyvaultMetadata {
             serial: self.get_serial(),
@@ -98,7 +100,7 @@ impl Keyvault {
             console_id: self.data[OFFSET_CONSOLE_ID..OFFSET_CONSOLE_ID+5].try_into().unwrap(),
             mf_date: self.get_mf_date(),
             osig: self.get_osig(),
-            fcrt: (flags & 0x100) != 0 || (flags == 0x100), // Flexible check for FCRT bit/value
+            fcrt: (flags & 0x120) != 0,
             console_type: u32::from_be_bytes(self.data[0x9E0..0x9E4].try_into().unwrap()),
             version: record.version.get(),
         };
@@ -107,16 +109,26 @@ impl Keyvault {
         Ok(())
     }
 
-    /// Heuristic to detect if the data is already decrypted by looking for 
-    /// "OSIG" and "DRM" signatures in the certificates.
+    /// Detects if the data is already decrypted.
+    /// Primary check: J-Runner updatekvval() L669 - `data[0x40..0x60]` are all zeros in decrypted KVs.
+    /// Fallback: look for OSIG/DRM ASCII magic at their known certificate offsets.
     fn check_decrypted_signatures(&self) -> bool {
-        if self.data.len() < 0x2000 { return false; }
+        if self.data.len() < 0x60 { return false; }
 
-        // Raw NAND Offsets for signatures in a decrypted KV
-        let osig_sig = &self.data[0xC82..0xC86];  // "OSIG"
-        let drm_sig = &self.data[0x1F64..0x1F67]; // "DRM"
+        // Canonical zero-pad check (J-Runner / x360Utils): decrypted KVs always have
+        // zeros at 0x40..0x60 (the reserved pad region after the HMAC nonce and header).
+        if self.data[0x40..0x60].iter().all(|&b| b == 0x00) {
+            return true;
+        }
 
-        (osig_sig == b"OSIG") || (drm_sig == b"DRM")
+        // Fallback: ASCII magic at known decrypted offsets
+        if self.data.len() >= 0x2000 {
+            let osig_sig = &self.data[0xC82..0xC86];  // "OSIG"
+            let drm_sig  = &self.data[0x1F64..0x1F67]; // "DRM"
+            return (osig_sig == b"OSIG") || (drm_sig == b"DRM");
+        }
+
+        false
     }
 
     pub fn decrypt(&mut self, cpukey: &[u8; 16], hashed: bool) -> Result<(), String> {
@@ -192,8 +204,10 @@ impl Keyvault {
             // 4. Store the salt in the first 16 bytes
             self.data[..16].copy_from_slice(&salt[..16]);
         } else {
-            // KV1 / Standard Encryption (Symmetric to Decryption - just call the inner RC4 logic)
-            // No recursive call to itself which would use the wrong branch.
+            // KV1 / Standard Encryption - RC4 is symmetric, so the encrypt operation is
+            // identical to decrypt: HMAC(cpukey, nonce) → RC4(payload). The nonce at
+            // data[0x00..0x10] is NOT modified by decrypt(), so calling decrypt() on an
+            // already-decrypted KV correctly re-encrypts it using the same derived key.
             self.decrypt(cpukey, false)?;
         }
         self.is_decrypted = false;
@@ -314,16 +328,16 @@ impl Keyvault {
     }
 
     /// Patches the FCRT requirement in the Keyvault.
-    /// Setting this to false (bit cleared) is often required for custom builds 
+    /// Setting this to false (bits cleared) is often required for custom builds
     /// to bypass mandatory DVD drive matching.
     pub fn apply_fcrt_patch(&mut self, enabled: bool) -> Result<(), String> {
         self.ensure_decrypted()?;
-        // Bit 8 of DWORD at 0x2C is usually the FCRT flag
-        // However, many tools just zero the whole DWORD or set specific bits.
-        // Consistent with J-Runner / xeBuild patches.
-        let val: u32 = if enabled { 0x0100 } else { 0x0000 };
-        let bytes = val.to_be_bytes();
-        self.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG+4].copy_from_slice(&bytes);
+        // J-Runner updatekvval() L684: FCRT check reads u16 at 0x1C (BE) and tests bits 0x120.
+        // We set/clear those same bits rather than writing the whole field, preserving
+        // any other flags in the hardware flags word.
+        let mut flags = u16::from_be_bytes(self.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG+2].try_into().unwrap());
+        if enabled { flags |= 0x0120; } else { flags &= !0x0120; }
+        self.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG+2].copy_from_slice(&flags.to_be_bytes());
         let _ = self.refresh_metadata();
         Ok(())
     }
@@ -337,25 +351,37 @@ mod tests {
 
     #[test]
     fn test_kv_decryption_detection() {
-        let mut data = vec![0u8; 0x4000];
-        // Inject OSIG signature at decrypted offset
-        data[0xC82..0xC86].copy_from_slice(b"OSIG");
-        
+        // Primary detection: data[0x40..0x60] all-zero (J-Runner updatekvval() L669)
+        let data = vec![0u8; 0x4000];
         let kv = Keyvault::parse(&data).unwrap();
-        assert!(kv.is_decrypted, "Should detect decrypted KV via OSIG signature");
+        assert!(kv.is_decrypted, "Should detect decrypted KV via zero-pad region");
 
-        let mut data2 = vec![0u8; 0x4000];
-        data2[0x1F64..0x1F67].copy_from_slice(b"DRM");
+        // Fallback OSIG detection on non-zero buffer where zero-pad doesn't trigger
+        let mut data2 = vec![0xAAu8; 0x4000];
+        data2[0xC82..0xC86].copy_from_slice(b"OSIG");
         let kv2 = Keyvault::parse(&data2).unwrap();
-        assert!(kv2.is_decrypted, "Should detect decrypted KV via DRM signature");
+        assert!(kv2.is_decrypted, "Should detect decrypted KV via OSIG fallback");
+
+        // Fallback DRM detection
+        let mut data3 = vec![0xAAu8; 0x4000];
+        data3[0x1F64..0x1F67].copy_from_slice(b"DRM");
+        let kv3 = Keyvault::parse(&data3).unwrap();
+        assert!(kv3.is_decrypted, "Should detect decrypted KV via DRM fallback");
+
+        // Encrypted KV: non-zero junk, no magic -> not decrypted
+        let data4 = vec![0xAAu8; 0x4000];
+        let kv4 = Keyvault::parse(&data4).unwrap();
+        assert!(!kv4.is_decrypted, "Non-zero non-magic buffer should be encrypted");
     }
 
     #[test]
     fn test_kv_patching_guards() {
-        let data = vec![0u8; 0x4000];
+        // Use a non-zero buffer so the zero-pad check at 0x40..0x60 doesn't fire.
+        // A real encrypted KV has non-zero ciphertext throughout.
+        let data = vec![0xAAu8; 0x4000];
         let mut kv = Keyvault::parse(&data).unwrap();
         assert!(!kv.is_decrypted);
-        
+
         // Attempt patching on encrypted KV
         let res = kv.set_region(0x02FE);
         assert!(res.is_err(), "Patching should fail on encrypted KV");
@@ -406,12 +432,16 @@ mod tests {
         let mut data = vec![0u8; 0x4000];
         data[0xC82..0xC86].copy_from_slice(b"OSIG");
         let mut kv = Keyvault::parse(&data).unwrap();
-        
+
         kv.apply_fcrt_patch(false).unwrap();
-        assert_eq!(&kv.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG+4], &[0, 0, 0, 0]);
-        
+        // OFFSET_FCRT_FLAG = 0x1C; 2-byte BE field; mask 0x120 cleared
+        assert_eq!(&kv.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG+2], &[0x00, 0x00]);
+        assert!(!kv.metadata.as_ref().unwrap().fcrt);
+
         kv.apply_fcrt_patch(true).unwrap();
-        assert_eq!(&kv.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG+4], &[0, 0, 1, 0]); // 0x0100 BE
+        // 0x0120 in big-endian = [0x01, 0x20]
+        assert_eq!(&kv.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG+2], &[0x01, 0x20]);
+        assert!(kv.metadata.as_ref().unwrap().fcrt);
     }
 
     #[test]
