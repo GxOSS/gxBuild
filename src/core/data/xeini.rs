@@ -468,11 +468,29 @@ pub fn apply_xe_ini(
             target_bl.ce = Some(crate::builder::chain::ce::BootloaderCe::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
             info!("[ini] Assigned CE from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
         } else if prefix.starts_with("cf_") || prefix.starts_with("sf_") {
-            target_update.cf_0 = Some(crate::builder::chain::cf::BootloaderCf::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
-            info!("[ini] Assigned CF from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
+            let parsed = Some(crate::builder::chain::cf::BootloaderCf::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            if target_update.cf_0.is_none() {
+                target_update.cf_0 = parsed;
+                info!("[ini] Assigned CF to slot 0 from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
+            } else if target_update.cf_1.is_none() {
+                target_update.cf_1 = parsed;
+                info!("[ini] Assigned CF to slot 1 from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
+            } else {
+                target_update.cf_0 = parsed;
+                warn!("[ini] Automatically overwriting CF slot 0 from '{}' (no free slots left)", filename);
+            }
         } else if prefix.starts_with("cg_") || prefix.starts_with("sg_") {
-            target_update.cg_0 = Some(crate::builder::chain::cg::BootloaderCg::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
-            info!("[ini] Assigned CG from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
+            let parsed = Some(crate::builder::chain::cg::BootloaderCg::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            if target_update.cg_0.is_none() {
+                target_update.cg_0 = parsed;
+                info!("[ini] Assigned CG to slot 0 from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
+            } else if target_update.cg_1.is_none() {
+                target_update.cg_1 = parsed;
+                info!("[ini] Assigned CG to slot 1 from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
+            } else {
+                target_update.cg_0 = parsed;
+                warn!("[ini] Automatically overwriting CG slot 0 from '{}' (no free slots left)", filename);
+            }
         } else {
             warn!("[ini] '{}' did not match any known bootloader prefix, skipping.", filename);
         }

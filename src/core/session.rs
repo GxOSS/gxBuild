@@ -969,8 +969,8 @@ impl Session {
                     }
                 }
                 InternalCommand::FinalizeFlashfs => {
-                    if !self.pending_assets.is_empty() {
-                        info!("[session] Finalizing FlashFS with {} collected assets...", self.pending_assets.len());
+                    if !self.flashfs_assets.is_empty() {
+                        info!("[session] Finalizing FlashFS with {} collected assets...", self.flashfs_assets.len());
                         if let Some(nand) = &mut self.active_nand {
                             // Use layout-specific defaults for FlashFS start block, NOT the parsed
                             // NAND's root block. The original NAND's FlashFS root was placed based

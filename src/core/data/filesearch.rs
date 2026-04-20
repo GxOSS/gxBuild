@@ -237,7 +237,9 @@ impl IniSearch {
                     };
                     if let Some(c) = nand_data {
                         if let Some(expected) = &entry.hash {
-                            let actual = get_xebuild_crc32(&c, filename);
+                            let mut hasher = crc32fast::Hasher::new();
+                            hasher.update(&c);
+                            let actual = format!("{:08x}", hasher.finalize());
                             if actual.to_lowercase() == expected.to_lowercase() {
                                 found_content = Some(c);
                                 found_path = Some(PathBuf::from("NAND_IMAGE"));
@@ -261,7 +263,9 @@ impl IniSearch {
                     if cand.exists() {
                         let c = std::fs::read(&cand)?;
                         if let Some(expected) = &entry.hash {
-                            let actual = get_xebuild_crc32(&c, filename);
+                            let mut hasher = crc32fast::Hasher::new();
+                            hasher.update(&c);
+                            let actual = format!("{:08x}", hasher.finalize());
                             if actual.to_lowercase() == expected.to_lowercase() {
                                 found_content = Some(c);
                                 found_path = Some(cand);
@@ -285,7 +289,9 @@ impl IniSearch {
                     if cand.exists() {
                         let c = std::fs::read(&cand)?;
                         if let Some(expected) = &entry.hash {
-                            let actual = get_xebuild_crc32(&c, filename);
+                            let mut hasher = crc32fast::Hasher::new();
+                            hasher.update(&c);
+                            let actual = format!("{:08x}", hasher.finalize());
                             if actual.to_lowercase() == expected.to_lowercase() {
                                 found_content = Some(c);
                                 found_path = Some(cand);
@@ -480,7 +486,7 @@ impl IniSearch {
                                                                 result.bootloader_assets.insert(expected_cg.clone(), v[cf_size..].to_vec());
                                                             }
                                                         } else {
-                                                            result.bootloader_assets.insert(k_lower, v);
+                                                            result.flashfs_assets.insert(k_lower, v);
                                                         }
                                                     }
                                                     if let Some(c) = result.bootloader_assets.get(&lower_name).cloned() {
