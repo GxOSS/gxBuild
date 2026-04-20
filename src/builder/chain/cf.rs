@@ -159,9 +159,12 @@ impl BootloaderCf {
     }
 
     pub fn is_decrypted(&self) -> bool {
-        if self.data.len() < 0x21 { return false; }
-        // pairing[0] is at offset 0x20 into payload (absolute 0x30)
-        self.data[0x20] == 0x00
+        // x360Utils VerifyCFDecrypted(): checks payload[0x1E0..0x200] (absolute 0x1F0..0x210)
+        // - the reserved_per_box padding, always zeros in decrypted CFs.
+        // verify_decrypted() implements this correctly. The old single-byte check
+        // at data[0x20] (first byte of cg_blocks_used) is unreliable - it can be
+        // 0 in encrypted CFs, causing populate_metadata() to read garbage.
+        self.verify_decrypted()
     }
 
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {

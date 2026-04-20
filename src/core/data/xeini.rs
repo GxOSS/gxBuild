@@ -385,17 +385,27 @@ pub fn parse_xe_ini(
     Ok(ini)
 }
 
+/// Typed asset maps passed to `apply_xe_ini`.
+/// Keeps bootloader binaries and security files in separate pools so
+/// they cannot be confused with each other or FlashFS content.
+pub struct PendingAssets<'a> {
+    /// Assets from the [main] INI section (CB, CD, CE, CF, CG, ...).
+    pub bootloaders: &'a HashMap<String, Vec<u8>>,
+    /// Assets from the [security] INI section (smc.bin, kv.bin, fcrt.bin).
+    pub security: &'a HashMap<String, Vec<u8>>,
+}
+
 pub fn apply_xe_ini(
     mut nand: NandSkeleton,
     ini: XeBuildIni,
-    pending_assets: &HashMap<String, Vec<u8>>)
+    pending: PendingAssets<'_>)
     -> Result<NandSkeleton, IniError> {
     
     nand.clear_bootloaders();
     nand.clear_update();
 
-    if !pending_assets.is_empty() {
-        info!("[ini] Applying {} discovered assets from memory...", pending_assets.len());
+    if !pending.bootloaders.is_empty() {
+        info!("[ini] Applying {} discovered bootloader assets from memory...", pending.bootloaders.len());
     }
 
     let mut notified = false;
@@ -406,7 +416,7 @@ pub fn apply_xe_ini(
         let lower = filename.to_lowercase();
 
         // Load the data (Only from memory in this new architecture)
-        let data = if let Some(mem_data) = pending_assets.get(&lower) {
+        let data = if let Some(mem_data) = pending.bootloaders.get(&lower) {
             mem_data.clone()
         } else {
             // In the new modular discovery architecture, filesearch.rs should have already
@@ -471,17 +481,17 @@ pub fn apply_xe_ini(
     // Process File Entries (Security & FlashFS)
     // In the new architecture, FlashFS entries are added directly to the FlashFS struct 
     // by filesearch.rs. Security and Extra files are merged here.
-    if let Some(smc_data) = pending_assets.get("smc.bin") {
+    if let Some(smc_data) = pending.security.get("smc.bin") {
         nand.extra.smc = smc_data.clone();
         info!("[ini] Assigned SMC.bin from memory");
     }
 
-    if let Some(kv_data) = pending_assets.get("keyvault.bin").or_else(|| pending_assets.get("kv.bin")) {
+    if let Some(kv_data) = pending.security.get("keyvault.bin").or_else(|| pending.security.get("kv.bin")) {
         nand.extra.keyvault = kv_data.clone();
         info!("[ini] Assigned Keyvault from memory");
     }
 
-    if let Some(fcrt_data) = pending_assets.get("fcrt.bin") {
+    if let Some(fcrt_data) = pending.security.get("fcrt.bin") {
         nand.extra.fcrt = Some(fcrt_data.clone());
         info!("[ini] Assigned FCRT.bin from memory");
     }

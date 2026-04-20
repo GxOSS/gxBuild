@@ -9,7 +9,7 @@ use log::info;
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum NandLayout {
     /// Small Block, Xenon-era spare format. Promoted from Sb at runtime
-    /// after inspecting bootloaders / FlashFS spare data — never returned by detect().
+    /// after inspecting bootloaders / FlashFS spare data - never returned by detect().
     Xsb,
     /// Small Block (16 MB). Default for all 16 MB images until spare format is confirmed.
     Sb,
@@ -23,15 +23,15 @@ pub enum NandLayout {
 /// These contain the FlashFS root block and sequence number.
 pub const EMMC_ANCHOR_OFFSETS: [usize; 4] = [0x2fe0000, 0x2fe4000, 0x2fe8000, 0x2fec000];
 
-/// Spare metadata format type — defines byte layout of the 16-byte spare area per page.
+/// Spare metadata format type - defines byte layout of the 16-byte spare area per page.
 /// Based on x360Utils NANDSpare.MetaType detection.
 #[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SpareMetaType {
-    /// Pre-Jasper (Xenon/Zephyr/Falcon/early Jasper) — BlockID at [0..1], FsSequence at [2..4]
+    /// Pre-Jasper (Xenon/Zephyr/Falcon/early Jasper) - BlockID at [0..1], FsSequence at [2..4]
     MetaType0,
-    /// Jasper/Trinity/Corona — BlockID at [1..2], FsSequence at [0,3..4]
+    /// Jasper/Trinity/Corona - BlockID at [1..2], FsSequence at [0,3..4]
     MetaType1,
-    /// Big-Block Jasper — BlockID at [1..2], FsSequence at [3..5], BadBlock at [0] 
+    /// Big-Block Jasper - BlockID at [1..2], FsSequence at [3..5], BadBlock at [0] 
     MetaType2,
     /// No spare data or unknown (eMMC, clean logical images)
     #[default]
@@ -205,7 +205,7 @@ impl NandLayout {
             // 512 MB
             0x20000000 => Ok(NandLayout::Bb),
 
-            // eMMC — no spare (48 MB Trinity/Corona slim, or 4 GB Corona 4G)
+            // eMMC - no spare (48 MB Trinity/Corona slim, or 4 GB Corona 4G)
             0x3000000 => Ok(NandLayout::Emmc),
             len if len >= 0x30000000 => Ok(NandLayout::Emmc),
             _ => Err(format!("Could not detect NAND layout for size 0x{:x}", len)),
@@ -441,7 +441,7 @@ pub fn promote_layout(image: &[u8], layout: NandLayout) -> NandLayout {
 /// Detects the spare metadata format (MetaType0/MetaType1/MetaType2) of a physical NAND image.
 /// Based on x360Utils NANDSpare.DetectSpareType():
 /// 1. Read spare at block 1, page 0 spare area (offset 0x4400)
-/// 2. Check if bad — if so, retry at end of image
+/// 2. Check if bad - if so, retry at end of image
 /// 3. Try MetaType0: LBA == 1 at bytes [1]&0xF<<8 | [0]
 /// 4. Try MetaType1: LBA == 1 at bytes [2]&0xF<<8 | [1]
 /// 5. Try MetaType2: Read spare at 0x21200, check LBA == 1
@@ -481,7 +481,7 @@ pub fn detect_meta_type(image: &[u8], layout: NandLayout) -> SpareMetaType {
     let is_bad_mt2 = spare[0] != 0xFF;
 
     if is_bad_mt0_1 && is_bad_mt2 {
-        // Block 1 is bad — retry at end of image
+        // Block 1 is bad - retry at end of image
         if image.len() > 0x4000 {
             if let Some(s) = read_spare(image.len() - 0x4000) {
                 return detect_from_spare(&s, layout);
@@ -495,21 +495,21 @@ pub fn detect_meta_type(image: &[u8], layout: NandLayout) -> SpareMetaType {
 
 /// Internal helper to determine MetaType from a spare data sample.
 fn detect_from_spare(spare: &[u8; 16], _layout: NandLayout) -> SpareMetaType {
-    // Try MetaType2 (Big Block) first — LBA at bytes [1..2]
+    // Try MetaType2 (Big Block) first - LBA at bytes [1..2]
     // MetaType2: BlockID = (spare[2]&0xF)<<8 | spare[1]
     let lba_mt2 = ((spare[2] as u16 & 0xF) << 8) | spare[1] as u16;
     if spare[0] == 0xFF && lba_mt2 == 1 {
         return SpareMetaType::MetaType2;
     }
 
-    // Try MetaType0 — LBA at bytes [0..1]
+    // Try MetaType0 - LBA at bytes [0..1]
     // MetaType0: BlockID = (spare[1]&0xF)<<8 | spare[0]
     let lba_mt0 = ((spare[1] as u16 & 0xF) << 8) | spare[0] as u16;
     if spare[5] == 0xFF && lba_mt0 == 1 {
         return SpareMetaType::MetaType0;
     }
 
-    // Try MetaType1 — LBA at bytes [1..2]
+    // Try MetaType1 - LBA at bytes [1..2]
     // MetaType1: BlockID = (spare[2]&0xF)<<8 | spare[1]
     let lba_mt1 = ((spare[2] as u16 & 0xF) << 8) | spare[1] as u16;
     if spare[5] == 0xFF && lba_mt1 == 1 {

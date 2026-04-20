@@ -87,7 +87,13 @@ pub struct IniSearchResult {
     pub update: Option<DiscoveredUpdate>,
     pub rebooter_update: Option<DiscoveredUpdate>,
     pub flashfs: Option<FlashFS>,
-    pub extracted_assets: HashMap<String, Vec<u8>>,
+    /// Assets from the [main] section: bootloader binaries + CF/CG update loaders.
+    pub bootloader_assets: HashMap<String, Vec<u8>>,
+    /// Assets from the [security] section: smc.bin, kv.bin, fcrt.bin, odd.bin.
+    pub security_assets: HashMap<String, Vec<u8>>,
+    /// Assets from the [flashfs] section: XEX/XEX2/dat files to pack into FlashFS.
+    /// Never contains bootloader binaries - routing is enforced by section membership.
+    pub flashfs_assets: HashMap<String, Vec<u8>>,
 }
 
 pub struct IniSearch {
@@ -110,7 +116,9 @@ impl IniSearch {
             update: None,
             rebooter_update: None,
             flashfs: None,
-            extracted_assets: HashMap::new(),
+            bootloader_assets: HashMap::new(),
+            security_assets: HashMap::new(),
+            flashfs_assets: HashMap::new(),
         };
 
         let build = build.as_ref().to_path_buf();
@@ -296,7 +304,7 @@ impl IniSearch {
                 }
 
                 if let Some(c) = found_content {
-                    result.extracted_assets.insert(lower_name, c);
+                result.security_assets.insert(lower_name, c);
                     if let Some(p) = found_path { sec_paths.push(p); }
                 } else {
                     if lower_name == "odd.bin" {
@@ -443,9 +451,9 @@ impl IniSearch {
                         if let Ok(data_upd) = std::fs::read(&p_xboxupd) {
                             if let Ok(cf) = crate::builder::chain::cf::BootloaderCf::parse(&data_upd) {
                                 let cf_size = cf.header.size.get() as usize;
-                                result.extracted_assets.insert(expected_cf.clone(), data_upd[0..cf_size].to_vec());
-                                result.extracted_assets.insert(expected_cg.clone(), data_upd[cf_size..].to_vec());
-                                if let Some(c) = result.extracted_assets.get(&lower_name).cloned() {
+                                result.bootloader_assets.insert(expected_cf.clone(), data_upd[0..cf_size].to_vec());
+                                result.bootloader_assets.insert(expected_cg.clone(), data_upd[cf_size..].to_vec());
+                                if let Some(c) = result.bootloader_assets.get(&lower_name).cloned() {
                                     if check_hash!(c, filename, "xboxupd.bin") {
                                         found_content = Some(c);
                                         found_path = Some(p_xboxupd);
@@ -468,14 +476,14 @@ impl IniSearch {
                                                         if k_lower == "xboxupd.bin" || (k_lower.starts_with("su") && !k_lower.contains('.')) {
                                                             if let Ok(cf) = crate::builder::chain::cf::BootloaderCf::parse(&v) {
                                                                 let cf_size = cf.header.size.get() as usize;
-                                                                result.extracted_assets.insert(expected_cf.clone(), v[0..cf_size].to_vec());
-                                                                result.extracted_assets.insert(expected_cg.clone(), v[cf_size..].to_vec());
+                                                                result.bootloader_assets.insert(expected_cf.clone(), v[0..cf_size].to_vec());
+                                                                result.bootloader_assets.insert(expected_cg.clone(), v[cf_size..].to_vec());
                                                             }
                                                         } else {
-                                                            result.extracted_assets.insert(k_lower, v);
+                                                            result.bootloader_assets.insert(k_lower, v);
                                                         }
                                                     }
-                                                    if let Some(c) = result.extracted_assets.get(&lower_name).cloned() {
+                                                    if let Some(c) = result.bootloader_assets.get(&lower_name).cloned() {
                                                         if check_hash!(c, filename, "STFS") {
                                                             found_content = Some(c);
                                                             found_path = Some(stfs_entry.path());
@@ -508,7 +516,7 @@ impl IniSearch {
                         }
                     }
 
-                    result.extracted_assets.insert(lower_name.clone(), c);
+                    result.bootloader_assets.insert(lower_name.clone(), c);
                     let target_bl = if entry.chain > 0 {
                         result.rebooter.as_mut().ok_or(IniError::RebooterNotInitialized)?
                     } else {
@@ -595,7 +603,7 @@ impl IniSearch {
                 if found_content.is_none() {
                     let cand_names = [filename.to_lowercase(), format!("{}1", filename.to_lowercase()), format!("{}2", filename.to_lowercase())];
                     for cand in &cand_names {
-                        if let Some(c) = result.extracted_assets.get(cand).cloned() {
+                        if let Some(c) = result.flashfs_assets.get(cand).cloned() {
                             if let Some(expected) = &entry.hash {
                                 let mut hasher = crc32fast::Hasher::new();
                                 hasher.update(&c);
@@ -620,20 +628,13 @@ impl IniSearch {
 
                 if let Some(c) = found_content {
                     let lower = filename.to_lowercase();
-                    let is_bootloader = lower.starts_with("cb") || lower.starts_with("sb") ||
-                                        lower.starts_with("cd") || lower.starts_with("sd") ||
-                                        lower.starts_with("ce") || lower.starts_with("se") ||
-                                        lower.starts_with("cf") || lower.starts_with("sf") ||
-                                        lower.starts_with("cg") || lower.starts_with("sg") ||
-                                        lower.starts_with("sc");
-
-                    if !is_bootloader {
-                        let mut fs_entry = FileSystemEntry::new(0);
-                        fs_entry.file_name = filename.clone();
-                        fs_entry.data = c.clone();
-                        flashfs.root.entries.push(fs_entry);
-                    }
-                    result.extracted_assets.insert(lower, c);
+                    // No bootloader filter needed here: the [flashfs] INI section only names
+                    // filesystem assets. Routing is enforced by section membership, not by prefix.
+                    let mut fs_entry = FileSystemEntry::new(0);
+                    fs_entry.file_name = filename.clone();
+                    fs_entry.data = c.clone();
+                    flashfs.root.entries.push(fs_entry);
+                    result.flashfs_assets.insert(lower, c);
                 } else {
                     error!("[ini] FlashFS Tiered Search failed: {}", filename);
                     return Err(IniError::FileNotFound(filename.to_string()));

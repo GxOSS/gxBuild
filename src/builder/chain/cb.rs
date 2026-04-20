@@ -342,7 +342,7 @@ impl BootloaderCb {
 
         if self.data.len() < payload_len { return; }
 
-        // C: ExCryptHmacSha(cb_a_key, cb_b_key, cpu_key, ..., cb_b_key) — writes back in-place.
+        // C: ExCryptHmacSha(cb_a_key, cb_b_key, cpu_key, ..., cb_b_key) - writes back in-place.
         if let Ok(derived_key) = excrypt::hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
@@ -378,6 +378,19 @@ impl BootloaderCb {
         }
         self.populate_metadata();
     }
+    /// Returns the 16-byte value at `data[0..16]`.
+    /// - In **encrypted** state: this is the original nonce.
+    /// - In **decrypted** state (after `decrypt()` / `decrypt_v1()`): the nonce has been
+    ///   overwritten in-place by `HMAC(inkey, nonce)`, i.e. the derived chain key.
+    ///   CD and CE must be decrypted with this key on split (CB_A+CB_B) and glitch3 layouts.
+    pub fn derived_key(&self) -> [u8; 16] {
+        if self.data.len() >= 16 {
+            self.data[0..16].try_into().unwrap_or([0u8; 16])
+        } else {
+            [0u8; 16]
+        }
+    }
+
     pub fn serialize(&self) -> Vec<u8> {
         let mut out = zerocopy::IntoBytes::as_bytes(&self.header).to_vec();
         out.extend_from_slice(&self.data);

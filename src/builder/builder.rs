@@ -50,7 +50,9 @@ pub struct NandHeader {
     pub patch_slots: I16<BigEndian>,
     pub kv_version: U16<BigEndian>,
     pub kv_addr: U32<BigEndian>,
-    pub patch_size: U32<BigEndian>,
+    /// Maps to `FileSystemAddress` in RGBuild/xeBuild. Real eMMC dumps show 0x10000.
+    /// Not used for booting; do not overwrite unless managing a full FS root.
+    pub fs_addr: U32<BigEndian>,
     pub smc_config_offset: U32<BigEndian>,
     pub smc_boot_size: U32<BigEndian>,
     pub smc_boot_offset: U32<BigEndian>,
@@ -251,19 +253,29 @@ impl NandSkeleton {
                 unused: [0u8; 0x10],
                 kv_size: U32::new(0x4000),
                 cf_offset: U32::new(match layout {
-                    NandLayout::Bb => 0x80000,
+                    NandLayout::Bb   => 0x80000,
                     NandLayout::Emmc => 0xB0000,
-                    _ => 0x70000,
+                    _                => 0x70000,
                 }),
                 patch_slots: I16::new(0),
-                kv_version: U16::new(0),
+                kv_version: U16::new(0x712), // v1 retail - matches real dump (emmc-ksb-rginfo.txt)
                 kv_addr: U32::new(0x4000), // Standard retail KV offset for all layouts
-                patch_size: U32::new(0),
-                smc_config_offset: U32::new(crate::builder::chain::smc::SmcConfig::get_logical_address(&layout)),
-                smc_boot_size: U32::new(0x3000),
+                // FileSystemAddress - 0x10000 on all real dumps (emmc-ksb-rginfo.txt: FileSystem addr 0x10000)
+                fs_addr: U32::new(0x10000),
+                // eMMC header field is 0x0; console scans for config at 0x2FFC000 independently
+                smc_config_offset: U32::new(match layout {
+                    NandLayout::Emmc => 0x0,
+                    _                => crate::builder::chain::smc::SmcConfig::get_logical_address(&layout),
+                }),
+                // Corona eMMC SMC is 0x3800 bytes at 0x800; SB/BB is 0x3000 bytes at 0x1000
+                // Confirmed from extract-ksb-emmc.log: SMC at 0x800 size 0x3800
+                smc_boot_size: U32::new(match layout {
+                    NandLayout::Emmc => 0x3800,
+                    _                => 0x3000,
+                }),
                 smc_boot_offset: U32::new(match layout {
-                    NandLayout::Emmc => 0x800, // Corona retail SMC standard
-                    _ => 0x1000, // SB/BB retail SMC standard
+                    NandLayout::Emmc => 0x800,  // 0x4000 - 0x3800
+                    _                => 0x1000, // 0x4000 - 0x3000
                 }),
             },
             extra: NandExtra { smc: Vec::new(), smc_config: Vec::new(), keyvault: Vec::new(), fcrt: None, power_on_cause_a: 0, power_on_cause_b: 0 },
@@ -322,7 +334,11 @@ impl NandSkeleton {
         }
         info!("[builder] Extracting and decrypting Keyvault (Addr: 0x{:X}, Size: 0x{:X})...", kv_addr, kv_size);
         let mut kv = crate::builder::chain::kv::Keyvault::parse(&image[kv_addr..kv_addr + kv_size])?;
-        let hashed = header.kv_version.get() >= 2;
+        // KV version 0x712 = v1 retail (RC4 only, no HMAC outer wrap).
+        // Any other non-zero value = v2+ = hashed (HMAC-SHA1 outer).
+        // Reference: RGBuild BootloaderFlashHeader uses KeyVaultVersion == 0x712 as the v1 sentinel.
+        let kv_version = header.kv_version.get();
+        let hashed = kv_version != 0 && kv_version != 0x712;
         kv.decrypt(&cpukey, hashed)?;
 
         // 3. Extract and decrypt SMC
@@ -363,7 +379,7 @@ impl NandSkeleton {
         info!("[builder] Walking bootloader chain starting at offset 0x{:X}...", header.cb_offset());
         let (bl, mut update) = Self::parse_bootloader_chain(&image, header.cb_offset() as usize, header.cf_offset.get() as usize)?;
 
-        // 5. Decrypt chain — fail early if critical bootloaders are missing
+        // 5. Decrypt chain - fail early if critical bootloaders are missing
         info!("[builder] Decrypting bootloader chain...");
         let mut bl_mut = bl;
         if bl_mut.cb_a.is_none() { return Err("Missing CB_A bootloader".into()); }
@@ -465,7 +481,7 @@ impl NandSkeleton {
             let bl_size = bl_header.size.get() as usize;
             let bl_version = bl_header.version.get();
 
-            // Validate size bounds — if invalid, stop the chain walk gracefully
+            // Validate size bounds - if invalid, stop the chain walk gracefully
             // and let CF_Ptr bridging handle the gap (common between CE and CF)
             if bl_size < 0x10 || bl_size > 0x2000000 {
                 info!("[builder] Invalid bootloader size at 0x{:08X} (0x{:X}), stopping chain walk", off, bl_size);
@@ -482,14 +498,34 @@ impl NandSkeleton {
             match bl_header.get_type() {
                 XenonBlType::CB => {
                     cb_seen += 1;
-                    let is_cba = (bl_header.flags.get() & 0x800) == 0x800 || cb_seen == 1;
-                    let is_cbx = bl_size == 0x400 && cb_seen > 1;
+                    let flags = bl_header.flags.get();
+                    let has_cba_flag = (flags & 0x800) == 0x800;
 
-                    if is_cba {
+                    // Layout taxonomy:
+                    //   Single:  CB (cb_seen=1, no 0x800 flag)  → bl.cb
+                    //   Split:   CB_A (cb_seen=1) + CB_B         → bl.cb_a, bl.cb_b
+                    //   Glitch3: CB_A (cb_seen=1) + CB_X (cb_seen=2, small, 0x800, zero pairing)
+                    //            + CB_B (cb_seen=3)              → bl.cb_a, bl.cb_x, bl.cb_b
+                    // CB_A always accompanies CB_B; a lone CB_A does not exist.
+                    // Confirmed from emmc-ksb-rginfo.txt:
+                    //   CB_A flags=0x801 size=0x1AF0 cb_seen=1
+                    //   CB_X flags=0x800 size=0x400  cb_seen=2  pairing=0x0000
+                    let is_single = cb_seen == 1 && !has_cba_flag;
+                    let is_cba   = cb_seen == 1 && has_cba_flag;
+                    let is_cbx   = cb_seen == 2
+                        && has_cba_flag                   // stub still carries 0x800
+                        && bl_size <= 0x500               // stub is very small (0x400 on Corona)
+                        && bl_header.pairing.get() == 0;  // stub pairing word is 0x0000
+                    // CB_B = anything that doesn't match the above (cb_seen >= 2, or cb_seen == 3)
+
+                    if is_single {
+                        info!("[builder] CB (single) at 0x{:08X} (v{}, 0x{:X} bytes)", off, bl_version, bl_size);
+                        bl.cb = Some(BootloaderCb::parse(&bl_data)?);
+                    } else if is_cba {
                         info!("[builder] CB_A at 0x{:08X} (v{}, 0x{:X} bytes)", off, bl_version, bl_size);
                         bl.cb_a = Some(BootloaderCb::parse(&bl_data)?);
                     } else if is_cbx {
-                        info!("[builder] CB_X at 0x{:08X} (v{}, 0x{:X} bytes)", off, bl_version, bl_size);
+                        info!("[builder] CB_X (RGH3 stub) at 0x{:08X} (v{}, 0x{:X} bytes)", off, bl_version, bl_size);
                         bl.cb_x = Some(BootloaderCb::parse(&bl_data)?);
                     } else {
                         info!("[builder] CB_B at 0x{:08X} (v{}, 0x{:X} bytes)", off, bl_version, bl_size);
@@ -582,8 +618,14 @@ impl NandSkeleton {
 
         // Dynamic forensic offset logic:
         // 1. SMC is flush against the end of Block 0 (Sector 32)
+        //    eMMC: 0x4000 - 0x3800 = 0x800   (confirmed extract-ksb-emmc.log)
+        //    SB/BB: 0x4000 - 0x3000 = 0x1000
         let smc_len = self.extra.smc.len();
-        let target_smc_offset = if smc_len > 0 { 0x4000 - smc_len } else { 0x1000 };
+        let smc_default_offset = match layout {
+            NandLayout::Emmc => 0x800,
+            _                => 0x1000,
+        };
+        let target_smc_offset = if smc_len > 0 { 0x4000 - smc_len } else { smc_default_offset };
         
         // 2. Bootloaders start at 0x8000
         let bootchain_start = 0x8000;
@@ -650,7 +692,8 @@ impl NandSkeleton {
             }
             logical_image[cf0_offset..cf0_offset+cf0d.len()].copy_from_slice(&cf0d);
             if let Some(cg0d) = cg0 {
-                let cg0_offset = cf0_offset + cf0d.len();
+                // 16-byte align CG after CF - parser advances by (size + 0xF) & !0xF between loaders
+                let cg0_offset = (cf0_offset + cf0d.len() + 0xF) & !0xF;
                 if cg0_offset + cg0d.len() > logical_image.len() {
                     return Err(format!("CG0 overflow at 0x{:X}: need 0x{:X} bytes", cg0_offset, cg0d.len()));
                 }
@@ -662,7 +705,8 @@ impl NandSkeleton {
                 }
                 logical_image[cf1_offset..cf1_offset+cf1d.len()].copy_from_slice(&cf1d);
                 if let Some(cg1d) = cg1 {
-                    let cg1_offset = cf1_offset + cf1d.len();
+                    // 16-byte align CG after CF - parser advances by (size + 0xF) & !0xF between loaders
+                    let cg1_offset = (cf1_offset + cf1d.len() + 0xF) & !0xF;
                     if cg1_offset + cg1d.len() > logical_image.len() {
                         return Err(format!("CG1 overflow at 0x{:X}: need 0x{:X} bytes", cg1_offset, cg1d.len()));
                     }
@@ -740,15 +784,16 @@ impl NandSkeleton {
         }
 
         if let Some(cb) = patch.cb {
-            // Logic: If only CB is present, apply to CB. If CB_A and CB_B are present, apply to CB_B.
+            // CB_A always accompanies CB_B (Split / Glitch3 layouts).
+            // CB_A-only is not a valid layout - checking cb_b.is_some() covers both cases.
             if matches!(patch.header.patch_type, GxpPatchType::Jtag4Section | GxpPatchType::Jtag5Section | GxpPatchType::Rgh3Section) {
-                if self.bootloaders.cb_a.is_some() && self.bootloaders.cb_b.is_some() {
-                    if let Some(cbb_bl) = &mut self.bootloaders.cb_b {
-                        info!("[builder] Split CB detected: Applying primary patch section to CB_B");
-                        apply_records(&cb.records, &mut cbb_bl.data).map_err(|e| e.to_string())?;
-                    }
+                if let Some(cbb_bl) = &mut self.bootloaders.cb_b {
+                    // Split or Glitch3 layout: patch always targets CB_B
+                    info!("[builder] Split/Glitch3 CB: Applying primary patch section to CB_B");
+                    apply_records(&cb.records, &mut cbb_bl.data).map_err(|e| e.to_string())?;
                 } else if let Some(cb_bl) = &mut self.bootloaders.cb {
-                    info!("[builder] Singular CB detected: Applying patches to CB");
+                    // Single layout: patch targets bare CB
+                    info!("[builder] Single CB: Applying patches to CB");
                     apply_records(&cb.records, &mut cb_bl.data).map_err(|e| e.to_string())?;
                 }
             }
@@ -780,7 +825,9 @@ mod tests {
         let skeleton = NandSkeleton::new_blank(NandLayout::Sb);
         assert_eq!(skeleton.image.len(), 0x1000000);
         assert_eq!(skeleton.header.kv_addr.get(), 0x4000);
-        assert_eq!(skeleton.header.smc_boot_offset.get(), 0x1000);
+        assert_eq!(skeleton.header.smc_boot_offset.get(), 0x1000); // SB: 0x4000 - 0x3000
+        assert_eq!(skeleton.header.smc_boot_size.get(), 0x3000);
+        assert_eq!(skeleton.header.fs_addr.get(), 0x10000);
         assert_eq!(skeleton.header.cf_offset.get(), 0x70000);
     }
 
@@ -789,7 +836,9 @@ mod tests {
         let skeleton = NandSkeleton::new_blank(NandLayout::Bb);
         assert_eq!(skeleton.image.len(), 0x4000000);
         assert_eq!(skeleton.header.kv_addr.get(), 0x4000);
-        assert_eq!(skeleton.header.smc_boot_offset.get(), 0x1000);
+        assert_eq!(skeleton.header.smc_boot_offset.get(), 0x1000); // BB: 0x4000 - 0x3000
+        assert_eq!(skeleton.header.smc_boot_size.get(), 0x3000);
+        assert_eq!(skeleton.header.fs_addr.get(), 0x10000);
         assert_eq!(skeleton.header.cf_offset.get(), 0x80000);
     }
 
@@ -798,7 +847,10 @@ mod tests {
         let skeleton = NandSkeleton::new_blank(NandLayout::Emmc);
         assert_eq!(skeleton.image.len(), 0x3000000);
         assert_eq!(skeleton.header.kv_addr.get(), 0x4000);
-        assert_eq!(skeleton.header.smc_boot_offset.get(), 0x800);
+        assert_eq!(skeleton.header.smc_boot_offset.get(), 0x800);   // eMMC: 0x4000 - 0x3800
+        assert_eq!(skeleton.header.smc_boot_size.get(), 0x3800);    // eMMC SMC is 0x3800 bytes
+        assert_eq!(skeleton.header.smc_config_offset.get(), 0x0);   // eMMC header field is 0x0
+        assert_eq!(skeleton.header.fs_addr.get(), 0x10000);          // FileSystemAddress
         assert_eq!(skeleton.header.cf_offset.get(), 0xB0000);
     }
 

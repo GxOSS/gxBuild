@@ -37,7 +37,7 @@ pub struct GgxArgs {
     #[arg(short = 'c', long = "console")]
     pub console: Option<CliConsoleType>,
 
-    /// INI directory — contains _retail.ini, bootloaders, flashfs/ (defaults to .)
+    /// INI directory - contains _retail.ini, bootloaders, flashfs/ (defaults to .)
     #[arg(short = 'd', long = "build")]
     pub data_dir: Option<PathBuf>,
 
@@ -45,7 +45,7 @@ pub struct GgxArgs {
     #[arg(short = 'm', long = "common")]
     pub common_dir: Option<PathBuf>,
 
-    /// Data directory — nand dump, cpu key, smc, fcrt, keyvault (defaults to ./data)
+    /// Data directory - nand dump, cpu key, smc, fcrt, keyvault (defaults to ./data)
     #[arg(short = 'f', long = "data")]
     pub fw_dir: Option<PathBuf>,
 
@@ -473,7 +473,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     }
 
     // ============================================================
-    // DATA DIR DISCOVERY (-f) — NAND, CPU Key, Security, SMC, FCRT, KV
+    // DATA DIR DISCOVERY (-f) - NAND, CPU Key, Security, SMC, FCRT, KV
     // ============================================================
     info!("[cli] Scanning Data Dir (nand/key/smc/fcrt/kv): {:?}", data_dir);
 

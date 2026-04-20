@@ -12,13 +12,13 @@
 use crate::builder::deps::excrypt::{self, Rc4};
 use log::{debug, info};
 
-/// Retail 1BL master key — used to decrypt CB/CF bootloaders.
+/// Retail 1BL master key - used to decrypt CB/CF bootloaders.
 pub const RETAIL_1BL_KEY: [u8; 16] = [
     0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7,
     0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA,
 ];
 
-/// Devkit 1BL key — all zeros, used for devkit/devgl NAND images.
+/// Devkit 1BL key - all zeros, used for devkit/devgl NAND images.
 pub const DEVKIT_1BL_KEY: [u8; 16] = [0u8; 16];
 
 /// Result of a successful bootloader identification attempt.
@@ -32,9 +32,9 @@ pub struct BootloaderDiscoveryResult {
     pub size: u32,
     /// Key source used for decryption ("Plain", "Retail", "Devkit", "Chain")
     pub key_source: String,
-    /// Derived RC4 key (if encrypted) — used to decrypt next stage
+    /// Derived RC4 key (if encrypted) - used to decrypt next stage
     pub derived_key: [u8; 16],
-    /// Salt offset used (0x10 or 0x20) — indicates where HMAC-SHA salt is located
+    /// Salt offset used (0x10 or 0x20) - indicates where HMAC-SHA salt is located
     pub salt_offset: usize,
     /// Whether the bootloader was encrypted
     pub was_encrypted: bool,
@@ -100,7 +100,7 @@ pub fn try_identify_bootloader(
             continue;
         }
 
-        // Try both salt offsets — different bootloader stages store their
+        // Try both salt offsets - different bootloader stages store their
         // HMAC-SHA salt at different positions in the header
         for &salt_off in &[0x10, 0x20] {
             if data.len() < salt_off + 0x10 {

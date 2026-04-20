@@ -86,7 +86,9 @@ impl BootloaderCg {
 
     pub fn is_decrypted(&self) -> bool {
         if self.data.len() < 0x14 { return false; }
-        // original_size is at offset 0x10 into payload (absolute 0x20)
+        // Matches xenon-bltool cg_is_decrypted() (source/cg-handler.c:31):
+        //   return ((BE(hdr->original_size) & 0xFFF) == 0x000);
+        // Real CE kernel sizes are always 4KB-aligned, so this is the canonical check.
         (BigEndian::read_u32(&self.data[0x10..0x14]) & 0xFFF) == 0x000
     }
 

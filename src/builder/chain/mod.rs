@@ -197,7 +197,7 @@ pub fn decrypt_chain(
     if cb.verify_decrypted() {
         info!("[builder] CB decryption verified successfully (zero-region check passed).");
     } else {
-        log::warn!("[builder] CB decryption verification failed — decrypted data may be corrupted.");
+        log::warn!("[builder] CB decryption verification failed - decrypted data may be corrupted.");
     }
 
     // 2. Derive CB Key from the original nonce (not the overwritten key).
@@ -211,14 +211,21 @@ pub fn decrypt_chain(
     if let Some(cb_x_bl) = cb_x {
         cb_x_bl.decrypt_v1(&cb_key, &[0u8; 16]); // RGH3 CB_X uses zeroed CPU key
     }
-    if let Some(cb_b_bl) = cb_b {
+
+    // For split (CB_A+CB_B) and glitch3 layouts, CD and CE use the CB_B output key -
+    // the derived RC4 key written in-place to cb_b.data[0..16] after decrypt_v1.
+    // For single-CB layouts, cb_b is None and we fall back to cb_key directly.
+    let cd_key: [u8; 16] = if let Some(cb_b_bl) = cb_b {
         cb_b_bl.decrypt_v1(&cb_key, _cpukey);
-    }
+        cb_b_bl.derived_key() // nonce overwritten by derived key in-place
+    } else {
+        cb_key
+    };
 
     // 3. Decrypt the rest of the chain
     info!("[builder] Decrypting CD and CE...");
-    cd.decrypt(&cb_key, None);
-    ce.decrypt(&cb_key);
+    cd.decrypt(&cd_key, None);
+    ce.decrypt(&cd_key);
 
     // Decrypt Updates (Slot 0 and Slot 1)
     if let (Some(cf), Some(cg)) = (cf_0, cg_0) {
@@ -300,7 +307,7 @@ pub fn encrypt_chain(
     }
 
     // Encrypt in reverse order (innermost first).
-    // Slot 1 — read CG HMAC from decrypted CF, then re-encrypt CG, then re-encrypt CF
+    // Slot 1 - read CG HMAC from decrypted CF, then re-encrypt CG, then re-encrypt CF
     if let (Some(cf), Some(cg)) = (cf_1, cg_1) {
         // Read CG HMAC from decrypted CF before re-encrypting
         let mut cg_hmac = [0u8; 16];
@@ -314,7 +321,7 @@ pub fn encrypt_chain(
         info!("[builder] CF/CG slot 1 re-encrypted.");
     }
 
-    // Slot 0 — read CG HMAC from decrypted CF, then re-encrypt CG, then re-encrypt CF
+    // Slot 0 - read CG HMAC from decrypted CF, then re-encrypt CG, then re-encrypt CF
     if let (Some(cf), Some(cg)) = (cf_0, cg_0) {
         // Read CG HMAC from decrypted CF before re-encrypting
         let mut cg_hmac = [0u8; 16];
@@ -328,14 +335,25 @@ pub fn encrypt_chain(
         info!("[builder] CF/CG slot 0 re-encrypted.");
     }
 
-    ce.decrypt(&cb_key);
+    // For split (CB_A+CB_B) and glitch3 layouts, CD/CE must be re-encrypted with the CB_B
+    // derived key. In decrypted state, cb_b.data[0..16] still holds that derived key
+    // (decrypt_v1 overwrites the nonce with it). Capture it BEFORE re-encrypting CB_B,
+    // which would overwrite data[0..16] back to the nonce.
+    let cd_key: [u8; 16] = if let Some(ref b) = cb_b {
+        b.derived_key()
+    } else {
+        cb_key // single CB layout
+    };
+
+    ce.decrypt(&cd_key);
     if let Some(cb_x_bl) = cb_x {
         cb_x_bl.decrypt_v1(&cb_key, &[0u8; 16]);
     }
     if let Some(cb_b_bl) = cb_b {
         cb_b_bl.decrypt_v1(&cb_key, cpukey);
+        info!("[builder] CB_B re-encrypted.");
     }
-    cd.decrypt(&cb_key, None);
+    cd.decrypt(&cd_key, None);
     info!("[builder] CD re-encrypted.");
     cb.decrypt(&ONEBL_KEY);
     info!("[builder] CB re-encrypted.");

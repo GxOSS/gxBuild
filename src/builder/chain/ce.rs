@@ -89,7 +89,8 @@ impl BootloaderCe {
 
     pub fn is_decrypted(&self) -> bool {
         if self.data.len() < 0x20 { return false; }
-        // 'unknown' field is at offset 0x1C into payload (absolute 0x2C)
+        // `unknown` field is at relative 0x1C (absolute 0x2C); zero in all decrypted retail CEs.
+        // Matches xenon-bltool ce_is_decrypted().
         &self.data[0x1C..0x20] == &[0, 0, 0, 0]
     }
 
@@ -261,10 +262,11 @@ impl BootloaderCe {
     }
 
     pub fn serialize(&self) -> Vec<u8> {
+        // Always serialize the raw payload (self.data).
+        // data_ce is a transient working buffer populated only after decrypt() - it must
+        // not be the serialization source. All other bootloaders (cb, cd, cf, cg) use self.data.
         let mut out = IntoBytes::as_bytes(&self.header).to_vec();
-        if let Some(ref data) = self.data_ce {
-            out.extend_from_slice(data);
-        }
+        out.extend_from_slice(&self.data);
         out
     }
 }

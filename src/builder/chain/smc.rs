@@ -312,11 +312,27 @@ impl SmcConfig {
     pub const SIZE: usize = 0x10000;
     pub const SETTINGS_SIZE: usize = 0x100;
 
-    pub fn get_logical_address(layout: &NandLayout) -> u32 {
+    /// Physical/logical address used when *scanning* for the SMC config partition.
+    /// On eMMC, xeBuild finds this at 0x2FFC000 by scanning the NAND header field.
+    /// (smc_config_offset) is 0x0 on all real Corona dumps; the console does not use
+    /// the header field to locate config on eMMC.
+    /// For SB/BB layouts the header field IS populated and used for booting.
+    pub fn get_scan_address(layout: &NandLayout) -> u32 {
         match layout {
             NandLayout::Emmc => 0x02FFC000,
-            NandLayout::Bb => 0x3DF0000,
-            _ => 0xF70000,
+            NandLayout::Bb   => 0x3DF0000,
+            _                => 0xF70000,
+        }
+    }
+
+    /// Value to write into the NAND header's smc_config_offset field.
+    /// eMMC: 0x0 (field unused - confirmed from emmc-ksb-rginfo.txt: SMC config addr 0x0)
+    /// SB/BB: physical address used by the bootloader to locate the config partition.
+    pub fn get_logical_address(layout: &NandLayout) -> u32 {
+        match layout {
+            NandLayout::Emmc => 0x0,
+            NandLayout::Bb   => 0x3DF0000,
+            _                => 0xF70000,
         }
     }
 

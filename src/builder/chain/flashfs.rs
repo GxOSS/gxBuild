@@ -34,9 +34,13 @@ pub fn get_fs_base_block_for_meta2(
     // reserved = 0x1E0 - FsPageCount - (FsSize0 << 2)
     // Note: FsSize for MetaType2 has FsSize0 at byte [8], FsSize1 at byte [7]
     // The size is (FsSize0 << 8) | FsSize1, but we need FsSize0 << 2
+    // x360Utils: reserved -= meta.Meta2.FsSize0 << 2
+    // FsSize0 = spare[8] = the high byte of fs_size word = fs_size >> 8
+    // (fs_size >> 8) << 2 is NOT the same as fs_size >> 6 when the low byte of fs_size is non-zero.
+    // Example: fs_size=0x01C0 -> (>>8)<<2 = 4, but >>6 = 7 (wrong).
     let reserved = 0x1E0u32
         .saturating_sub(parsed.fs_page_count as u32)
-        .saturating_sub((parsed.fs_size as u32) >> 6); // FsSize >> 6 ≈ FsSize0 << 2
+        .saturating_sub(((parsed.fs_size >> 8) as u32) << 2);
 
     (reserved * 8) as u16
 }
@@ -158,12 +162,18 @@ impl FileSystemEntry {
         let mut cursor = Cursor::new(chunk);
         let mut name_buf = [0u8; 0x16];
         let _ = cursor.read_exact(&mut name_buf);
-        let end = name_buf.iter().position(|&c| c == 0).unwrap_or(0x16);
-        let mut name = String::from_utf8_lossy(&name_buf[..end]).to_string();
-        if !name.is_empty() && name_buf[0] == 0x05 {
+        // Check the raw first byte before any lossy UTF-8 conversion.
+        // Slicing the lossy string after conversion is fragile if 0x05 was substituted by U+FFFD (3 bytes).
+        // Matches RGBuild: if (FileName[0] == 0x05) { FileName = "_" + ...; Deleted = true; }
+        let first_byte = name_buf[0];
+        let name = if first_byte == 0x05 {
             self.deleted = true;
-            name = format!("_{}", &name[1..]);
-        }
+            let end = name_buf[1..].iter().position(|&c| c == 0).unwrap_or(0x15);
+            format!("_{}", String::from_utf8_lossy(&name_buf[1..1 + end]))
+        } else {
+            let end = name_buf.iter().position(|&c| c == 0).unwrap_or(0x16);
+            String::from_utf8_lossy(&name_buf[..end]).to_string()
+        };
         self.file_name = name;
         self.block_number = cursor.read_u16::<BigEndian>().unwrap_or(0);
         self.size = cursor.read_u32::<BigEndian>().unwrap_or(0);
@@ -333,18 +343,6 @@ impl FileSystemRoot {
         root.create_defaults(image.len(), layout, fs_start_block);
         info!("[flashfs] Building FlashFS from memory with {} assets...", files.len());
         for (name, content) in files {
-            let lower = name.to_lowercase();
-            let is_bootloader = lower.starts_with("cb") || lower.starts_with("sb") ||
-                                lower.starts_with("cd") || lower.starts_with("sd") ||
-                                lower.starts_with("ce") || lower.starts_with("se") ||
-                                lower.starts_with("cf") || lower.starts_with("sf") ||
-                                lower.starts_with("cg") || lower.starts_with("sg") ||
-                                lower.starts_with("sc");
-            
-            if is_bootloader {
-                continue;
-            }
-
             info!("[flashfs]   * Processing asset: {} (Size: 0x{:X})", name, content.len());
             let mut new_entry = FileSystemEntry::new(0);
             new_entry.file_name = name.clone();
@@ -467,6 +465,15 @@ impl FileSystemRoot {
     }
 
     pub fn set_chain_data(&mut self, image: &mut [u8], layout: &NandLayout, start_block: u16, data: &[u8]) {
+        // Guard: zero-length data → needed=0 → shrink path frees the start block immediately.
+        // RGBuild: if (data.Length == 0) data = new byte[1];
+        let placeholder;
+        let data: &[u8] = if data.is_empty() {
+            placeholder = [0u8; 1];
+            &placeholder[..]
+        } else {
+            data
+        };
         let chunk_size = layout.logical_pages_per_block() * 0x200;
         let needed = (data.len() + chunk_size - 1) / chunk_size;
 
@@ -474,7 +481,7 @@ impl FileSystemRoot {
             let chain = self.get_block_chain(start_block, self.block_map.len());
 
             if chain.len() == needed {
-                // Exact fit — write and done.
+                // Exact fit - write and done.
                 let mut wrote = 0;
                 for (i, &b) in chain.iter().enumerate() {
                     let sz = std::cmp::min(chunk_size, data.len() - wrote);
@@ -484,7 +491,7 @@ impl FileSystemRoot {
                 }
                 break;
             } else if chain.len() < needed {
-                // Too short — extend by one block and loop.
+                // Too short - extend by one block and loop.
                 let curr = *chain.last().unwrap_or(&start_block);
                 let next = self.allocate_new_block(image, layout, 1, 0);
                 if next == 0 {
@@ -495,12 +502,12 @@ impl FileSystemRoot {
                 self.block_map[curr as usize] = next;
                 // Loop repeats with updated block_map.
             } else {
-                // Too long — shrink: free tail blocks after [needed-1], then re-run for exact fit.
+                // Too long - shrink: free tail blocks after [needed-1], then re-run for exact fit.
                 // This matches RGBuild SetChainData's shrink branch.
                 let tail_start = chain[needed]; // first excess block
                 self.free_block_chain(tail_start);
                 self.block_map[chain[needed - 1] as usize] = 0x1FFF; // re-mark end of chain
-                // Loop again — chain is now exactly `needed` long.
+                // Loop again - chain is now exactly `needed` long.
             }
         }
     }
@@ -629,17 +636,9 @@ impl FileSystemRoot {
         for entry_source in &self.entries {
             if entry_source.deleted { continue; }
             let entry = entry_source.clone();
-            if entry.block_number != 0 {
-                let chain = self.get_block_chain(entry.block_number, self.block_map.len());
-                let mut wrote = 0;
-                for (i, &_block) in chain.iter().enumerate() {
-                    let mut to_write = logical_block_size;
-                    if i == chain.len() - 1 { to_write = entry.data.len() - wrote; }
-                    // entry data is written to the chain blocks, not into this root block
-                    // we only track that it was written here
-                    wrote += to_write;
-                }
-            }
+            // Note: file data lives at chain block offsets in the full NAND image,
+            // not inside this root block. serialize_logical() only writes the directory
+            // and block-map pages into the single root block buffer.
             let fn_p_idx = j / fn_count;
             if fn_p_idx < fn_pages.len() {
                 // Adjust offset to be within this single block
@@ -729,14 +728,17 @@ impl FlashFS {
                 let sig = &image[offset..offset + 4];
                 if sig == b"ANCH" {
                     let mut cursor = Cursor::new(&image[offset + 4..offset + 20]);
-                    let _v = cursor.read_u32::<BigEndian>().unwrap_or(0);
-                    let block = cursor.read_u32::<BigEndian>().unwrap_or(0) as usize;
-                    let seq = cursor.read_u32::<BigEndian>().unwrap_or(0);
-                    
-                    let newer = match best.get(&0x30) { Some(&(_, b_seq)) => seq > b_seq, None => true };
+                    // xeBuild selects the anchor with the HIGHEST VERSION, not sequence.
+                    // Log: "anchor block v 2 at 0x2fec000 is selected" (v2 > v1).
+                    let version = cursor.read_u32::<BigEndian>().unwrap_or(0);
+                    let block   = cursor.read_u32::<BigEndian>().unwrap_or(0) as usize;
+                    let _seq    = cursor.read_u32::<BigEndian>().unwrap_or(0);
+
+                    // best stores (block, version) - compare by version
+                    let newer = match best.get(&0x30) { Some(&(_, b_ver)) => version > b_ver, None => true };
                     if newer {
-                        info!("[flashfs] EMMC Anchor found at 0x{:X}: block {}, version {}", offset, block, seq);
-                        best.insert(0x30, (block, seq));
+                        info!("[flashfs] EMMC Anchor v{} found at 0x{:X}: block {}", version, offset, block);
+                        best.insert(0x30, (block, version));
                     }
                 }
             }

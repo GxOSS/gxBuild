@@ -9,7 +9,7 @@ use zerocopy::byteorder::{U16, BigEndian};
 use crate::builder::deps::excrypt::{self, Rc4};
 use log::info;
 
-/// Keyvault record header — covers the first 0x110 bytes.
+/// Keyvault record header - covers the first 0x110 bytes.
 /// All offsets confirmed against J-Runner Nand.cs lines 674-682.
 /// Fields beyond 0x110 (console_id @ 0x9CA, osig @ 0xC92, mfdate @ 0x9E4)
 /// live far outside this struct and are accessed via sparse accessors below.

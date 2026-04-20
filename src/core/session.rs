@@ -49,28 +49,28 @@ pub enum InternalCommand {
 }
 
 impl InternalCommand {
-    /// Priority score — higher value runs first.
+    /// Priority score - higher value runs first.
     ///
     /// Tiers:
-    ///   150 — Foundation: Load/create the NAND image (ParseImage, CreateImage)
-    ///   145 — Key assignment: must run after NAND is loaded (ParseKey, ParseKeybin)
-    ///   110 — Standalone ops: no NAND dependency (ExtractStfs, Update)
-    ///   100 — Session admin: immediate teardown/inspection ops (SessionInit, SessionList, SessionDelete)
-    ///   100 — Post-load mutations: ParseIni, ParseFlashfs, ParsePatch (safe; 150 runs first)
-    ///    99 — Decompress: inspection op, after NAND load + INI apply
-    ///    90 — FinalizeFlashfs: consumes pending_assets gathered by ParseIni
-    ///    89 — Extract (single component)
-    ///    88 — ExtractAll
-    ///    87 — Replace
-    ///    86 — List
-    ///    85 — Delete
-    ///    84 — Clear
-    ///    79 — ApplyPatch
-    ///    78 — Compress
-    ///    50 — SessionRun: drains and re-executes queue; must fire after all real work is dispatched
-    ///     2 — RunPythonScript
-    ///     1 — PythonShell
-    ///     0 — Build: always the final step
+    ///   150 - Foundation: Load/create the NAND image (ParseImage, CreateImage)
+    ///   145 - Key assignment: must run after NAND is loaded (ParseKey, ParseKeybin)
+    ///   110 - Standalone ops: no NAND dependency (ExtractStfs, Update)
+    ///   100 - Session admin: immediate teardown/inspection ops (SessionInit, SessionList, SessionDelete)
+    ///   100 - Post-load mutations: ParseIni, ParseFlashfs, ParsePatch (safe; 150 runs first)
+    ///    99 - Decompress: inspection op, after NAND load + INI apply
+    ///    90 - FinalizeFlashfs: consumes pending_assets gathered by ParseIni
+    ///    89 - Extract (single component)
+    ///    88 - ExtractAll
+    ///    87 - Replace
+    ///    86 - List
+    ///    85 - Delete
+    ///    84 - Clear
+    ///    79 - ApplyPatch
+    ///    78 - Compress
+    ///    50 - SessionRun: drains and re-executes queue; must fire after all real work is dispatched
+    ///     2 - RunPythonScript
+    ///     1 - PythonShell
+    ///     0 - Build: always the final step
     fn priority_score(&self) -> u8 {
         match self {
             // ── Foundation ────────────────────────────────────────────────
@@ -154,8 +154,14 @@ impl Eq for QueuedCommand {}
 pub struct Session {
     queue: BinaryHeap<QueuedCommand>,
     next_seq_id: usize,
-    /// Assets gathered during discovery (Base Dir, flashfs/, STFS)
+    /// Legacy single-asset pool (used by the Update command for ad-hoc file loading).
     pub pending_assets: HashMap<String, Vec<u8>>,
+    /// Assets resolved from the INI [main] section (bootloader binaries, CF/CG).
+    pub bootloader_assets: HashMap<String, Vec<u8>>,
+    /// Assets resolved from the INI [security] section (smc.bin, kv.bin, fcrt.bin).
+    pub security_assets: HashMap<String, Vec<u8>>,
+    /// Assets resolved from the INI [flashfs] section (XEX/dat files for FlashFS).
+    pub flashfs_assets: HashMap<String, Vec<u8>>,
     /// Dummy state object for passing over to extract commands
     pub active_nand: Option<NandSkeleton>,
     /// Global xeBuild options / preferences
@@ -168,6 +174,9 @@ impl Session {
             queue: BinaryHeap::new(),
             next_seq_id: 0,
             pending_assets: HashMap::new(),
+            bootloader_assets: HashMap::new(),
+            security_assets: HashMap::new(),
+            flashfs_assets: HashMap::new(),
             active_nand: None,
             options: crate::core::data::xeini::OptionsIni::new(),
         }
@@ -262,10 +271,13 @@ impl Session {
     }
 
     pub fn session_clear(&mut self) {
-        // Full teardown: clear queue, active NAND, assets, and reset sequence counter.
+        // Full teardown: clear queue, active NAND, all asset pools, and reset sequence counter.
         self.queue.clear();
         self.active_nand = None;
         self.pending_assets.clear();
+        self.bootloader_assets.clear();
+        self.security_assets.clear();
+        self.flashfs_assets.clear();
         self.next_seq_id = 0;
     }
 
@@ -657,11 +669,17 @@ impl Session {
                             Ok(ini) => {
                                 match IniSearch::new(ini.clone(), &ini_base, &common, &data, &self.active_nand, self.options.gxunsafe) {
                                     Ok(search) => {
-                                        // Collect all extracted assets (CF/CG, FlashFS, bootloaders) into pending_assets
-                                        self.pending_assets.extend(search.result.extracted_assets);
+                                        // Route each pool to its typed session pool
+                                        self.bootloader_assets.extend(search.result.bootloader_assets);
+                                        self.security_assets.extend(search.result.security_assets);
+                                        self.flashfs_assets.extend(search.result.flashfs_assets);
 
                                         // Apply bootloaders using the improved apply_xe_ini
-                                        match crate::core::data::xeini::apply_xe_ini(nand, ini, &self.pending_assets) {
+                                        let pending = crate::core::data::xeini::PendingAssets {
+                                            bootloaders: &self.bootloader_assets,
+                                            security: &self.security_assets,
+                                        };
+                                        match crate::core::data::xeini::apply_xe_ini(nand, ini, pending) {
                                             Ok(updated_nand) => {
                                                 self.active_nand = Some(updated_nand);
                                                 info!("[session] INI bootloaders and assets applied to NAND skeleton.");
@@ -718,7 +736,7 @@ impl Session {
                                                 if cb.verify_decrypted() {
                                                     info!("[session] CB_A decryption verified (zero-region check passed).");
                                                 } else {
-                                                    log::warn!("[session] CB_A decryption verification failed — data may be corrupted.");
+                                                    log::warn!("[session] CB_A decryption verification failed - data may be corrupted.");
                                                 }
                                             }
                                             for (i, cf_opt) in [&nand.update.cf_0, &nand.update.cf_1].iter().enumerate() {
@@ -854,7 +872,10 @@ impl Session {
                 InternalCommand::Clear => {
                     self.active_nand = None;
                     self.pending_assets.clear();
-                    info!("[session] Active NAND and pending assets cleared.");
+                    self.bootloader_assets.clear();
+                    self.security_assets.clear();
+                    self.flashfs_assets.clear();
+                    info!("[session] Active NAND and all asset pools cleared.");
                 }
                 InternalCommand::Compress => {
                     info!("[session] Compress logic hooks to mspack / xenia (Not Yet Invoked)");
@@ -960,7 +981,7 @@ impl Session {
                                 _ => 0x4E,  // Small block default: block 78
                             };
                             info!("[session] FlashFS start block: 0x{:X} ({})", fs_start, fs_start);
-                            match crate::builder::chain::flashfs::FileSystemRoot::build_from_memory(&mut nand.image, &nand.layout, &self.pending_assets, fs_start) {
+                            match crate::builder::chain::flashfs::FileSystemRoot::build_from_memory(&mut nand.image, &nand.layout, &self.flashfs_assets, fs_start) {
                                 Ok(new_root) => {
                                     nand.flashfs.root = new_root;
                                     info!(" -> FlashFS generation complete.");
