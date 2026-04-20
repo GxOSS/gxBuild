@@ -6,14 +6,17 @@ I referenced ALLOT of projects in the building of this.
 
 Everyone who has knowingly or unknowingly contributed to gxBuild
 
-**No Team:**
 - [ExposureMG](https://github.com/ExposureMG)
 - [15432](https://github.com/15432)
+- [Octal450](https://github.com/Octal450)
+- [mitchellwaite](https://github.com/mitchellwaite)
+- [Mena PhenomMod](https://github.com/Pheeeeenom)
+- [wurthless-elektroniks](https://github.com/wurthless-elektroniks)
 - [Byrom90](https://github.com/Byrom90)
 - [xvistaman2005](https://github.com/xvistaman2005)
 - [GoobyCorp](https://github.com/GoobyCorp)
 - [DrSchottky](https://github.com/DrSchottky)
-- nitram (Link needed)
+- nitram (Credited in glitch buildpy, link needed)
 
 **XeLL / XeLL Reloaded / LibXenon / Free60:**
 - [GliGli](https://github.com/GliGli)
@@ -28,11 +31,6 @@ Everyone who has knowingly or unknowingly contributed to gxBuild
 - [emoose](https://github.com/emoose)
 - [tydye81](https://github.com/tydye81)
 - [sk1080](https://github.com/sk1080)
-
-**[J-Runner with Extras](https://github.com/J-Runner-with-Extras) Team:**
-- [Octal450](https://github.com/Octal450)
-- [mitchellwaite](https://github.com/mitchellwaite)
-- [Mena PhenomMod](https://github.com/Pheeeeenom)
 
 **xeBuild / fbBuild / ggBuild Team:**
 - ???
