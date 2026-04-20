@@ -65,9 +65,16 @@ impl BootloaderCe {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
         let (header, payload) = BootloaderHeader::read_from_prefix(data)
             .map_err(|_| "Failed to parse CE header")?;
+            
+        let mut data_vec = payload.to_vec();
+        let expected_payload_size = ((header.size.get() as usize + 0xF) & 0xFFFFFFF0) - 0x10;
+        if data_vec.len() < expected_payload_size {
+            data_vec.resize(expected_payload_size, 0);
+        }
+            
         Ok(Self {
             header: header.clone(),
-            data: payload.to_vec(),
+            data: data_vec,
             metadata: None,
             data_ce: None,
             data_kernel: None,

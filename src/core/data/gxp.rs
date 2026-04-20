@@ -8,7 +8,7 @@
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, BufRead, BufReader};
 use std::path::Path;
-use log::{info, debug, warn};
+use log::{info, warn};
 
 /// GXP Header Magic: "GXP\0" (0x47 0x58 0x50 0x00)
 pub const GXP_MAGIC: [u8; 4] = [0x47, 0x58, 0x50, 0x00];

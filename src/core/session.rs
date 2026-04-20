@@ -647,7 +647,29 @@ impl Session {
                         let layout = nand.layout;
                         match nand.build(cpukey) {
                             Ok(clean_bytes) => {
-                                let finalized_bytes = crate::core::data::blocks::NandProcessor::finalize_nand(&clean_bytes, layout);
+                                let mut fs_meta = std::collections::HashMap::new();
+                                let page_count_encoded = if layout == crate::core::data::blocks::NandLayout::Bb {
+                                    (layout.logical_pages_per_block() / 4) as u8
+                                } else {
+                                    layout.logical_pages_per_block() as u8
+                                };
+                                
+                                for (val, &block) in nand.flashfs.root.block_map.iter().enumerate() {
+                                    if block != 0 && block != 0x1FFE {
+                                        let is_root = val == nand.flashfs.root.block_number as usize;
+                                        let btype = if is_root { 0x30 } else { 0x01 };
+                                        let fs_size = if is_root { (layout.logical_pages_per_block() * 0x200) as u16 } else { 0 };
+                                        
+                                        fs_meta.insert(val, crate::core::data::blocks::FsSpareInfo {
+                                            sequence: nand.flashfs.root.version as u32,
+                                            size: fs_size,
+                                            page_count: page_count_encoded,
+                                            block_type: btype,
+                                        });
+                                    }
+                                }
+                                
+                                let finalized_bytes = crate::core::data::blocks::NandProcessor::finalize_nand(&clean_bytes, layout, Some(&fs_meta));
                                 let final_size = finalized_bytes.len();
                                 if let Err(e) = std::fs::write(&output, finalized_bytes) {
                                     error!("[session] Failed to write build output to '{}': {}", output.display(), e);
