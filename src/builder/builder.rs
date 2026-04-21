@@ -157,20 +157,75 @@ pub struct NandPatches {
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum MotherboardType {
-    Xenon = 0, Zephyr = 1, Falcon = 2, Jasper = 3, Trinity = 4, Corona = 5, Winchester = 6, Unknown = 0xF,
+    Xenon = 1, Zephyr = 2, Falcon = 3, Jasper = 4, Trinity = 5, Corona = 6, Winchester = 7, Unknown = 0xF,
 }
 
 impl MotherboardType {
     pub fn from_smc(smc_byte: u8) -> Self {
         match (smc_byte >> 4) & 0xF {
-            0 => MotherboardType::Xenon,
-            1 => MotherboardType::Zephyr,
-            2 => MotherboardType::Falcon,
-            3 => MotherboardType::Jasper,
-            4 => MotherboardType::Trinity,
-            5 => MotherboardType::Corona,
-            6 => MotherboardType::Winchester,
+            1 => MotherboardType::Xenon,
+            2 => MotherboardType::Zephyr,
+            3 => MotherboardType::Falcon,
+            4 => MotherboardType::Jasper,
+            5 => MotherboardType::Trinity,
+            6 => MotherboardType::Corona,
+            7 => MotherboardType::Winchester,
             _ => MotherboardType::Unknown,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum SouthbridgeType {
+    Xsb, Psb, Ksb, Unknown,
+}
+
+impl From<MotherboardType> for SouthbridgeType {
+    fn from(m: MotherboardType) -> Self {
+        match m {
+            MotherboardType::Xenon | MotherboardType::Zephyr | MotherboardType::Falcon => SouthbridgeType::Xsb,
+            MotherboardType::Jasper | MotherboardType::Trinity => SouthbridgeType::Psb,
+            MotherboardType::Corona | MotherboardType::Winchester => SouthbridgeType::Ksb,
+            MotherboardType::Unknown => SouthbridgeType::Unknown,
+        }
+    }
+}
+
+pub struct LayoutCalculator;
+
+impl LayoutCalculator {
+    pub fn calculate(sb: SouthbridgeType, image_type: ImageType, layout: NandLayout) -> (u32, u32, u32) {
+        // Returns (header.fs_addr, header.smc_config_offset, physical_fs_block)
+        let smc_config = match layout {
+            NandLayout::Xsb | NandLayout::Sb => 0xF70000,
+            NandLayout::Bb => 0x3DF0000,
+            NandLayout::Emmc => 0x0, // Usually hidden/not in primary bank
+        };
+
+        if matches!(layout, NandLayout::Bb | NandLayout::Emmc) {
+            return (0, smc_config, 0);
+        }
+
+        // SmallBlock FlashFS relocation based on SB and CB type
+        let is_split = match image_type {
+            ImageType::Split | ImageType::Devgl | ImageType::Devkit | ImageType::Xdkbuild => true,
+            _ => false,
+        };
+
+        match sb {
+            SouthbridgeType::Xsb => {
+                if is_split { (0xE44000, smc_config, 0x391) }
+                else { (0xD84000, smc_config, 0x361) }
+            },
+            SouthbridgeType::Psb => {
+                if is_split { (0xDF4000, smc_config, 0x37D) }
+                else { (0xD84000, smc_config, 0x361) }
+            },
+            SouthbridgeType::Ksb => {
+                // Corona is always split in modern builds (RGH2/3) or handles it same as Split PSB
+                (0xE44000, smc_config, 0x391)
+            },
+            _ => (0, smc_config, 0),
         }
     }
 }
@@ -283,7 +338,7 @@ impl NandSkeleton {
             rebooter: None,
             update: NandUpdate { cf_0: None, cg_0: None, cf_1: None, cg_1: None },
             rebooter_update: None,
-            flashfs: FlashFS { root: crate::builder::chain::flashfs::FileSystemRoot::new(0, 0), partitions: HashMap::new() },
+            flashfs: FlashFS { root: crate::builder::chain::flashfs::FileSystemRoot::new(0, 3, 0x30), partitions: HashMap::new() },
             layout,
             total_blocks,
         }
@@ -407,8 +462,20 @@ impl NandSkeleton {
         } else {
             MotherboardType::Unknown
         };
-        let total_blocks = image.len() / (layout.logical_pages_per_block() * 0x200);
         let image_type = if bl_mut.cb_b.is_some() { ImageType::Split } else { ImageType::Single };
+        
+        // Initialize FlashFS root block from header fs_addr
+        let mut final_flashfs = flashfs;
+        let fs_addr = header.fs_addr.get();
+        if fs_addr > 0 {
+            let logical_block_size = layout.logical_pages_per_block() * 0x200;
+            let fs_block = (fs_addr as usize) / logical_block_size;
+            info!("[builder] Found FlashFS root in header at 0x{:08X} (Block {})", fs_addr, fs_block);
+            final_flashfs.root.block_number = fs_block as i32;
+            final_flashfs.root.read(&image, &layout);
+        }
+
+        let total_blocks = layout.total_blocks(image.len());
 
         Ok(NandSkeleton {
             cpukey: Some(cpukey),
@@ -434,7 +501,7 @@ impl NandSkeleton {
             rebooter: None,
             update,
             rebooter_update: None,
-            flashfs,
+            flashfs: final_flashfs,
         })
     }
 
@@ -681,24 +748,28 @@ impl NandSkeleton {
             forensic_cf_default
         };
 
+        // NAND Header preparation
+        let sb_type = SouthbridgeType::from(self.options.motherboard);
+        let (fs_addr, smc_config_offset, phys_fs_block) = LayoutCalculator::calculate(sb_type, self.options.image_type, self.layout);
+
+        header.fs_addr = U32::new(fs_addr);
+        header.smc_config_offset = U32::new(smc_config_offset);
+
         // Update header with the realigned offsets
         header.smc_boot_offset.set(target_smc_offset as u32);
         header.smc_boot_size.set(smc_len as u32);
         header.cf_offset.set(target_cf_offset as u32);
         header.kv_addr.set(0x4000); // Enforce Block 1 KV
 
-        // User-provided SMC Config offsets
-        let smc_config_offset = match layout {
-            NandLayout::Emmc => 0x2FFC000,
-            _ => 0xF7C000,
-        };
-        header.smc_config_offset.set(smc_config_offset as u32);
 
         // FlashFS Address: Logical byte address of the root block
-        if !self.flashfs.root.entries.is_empty() && self.flashfs.root.block_number >= 0 {
-            let fs_logical_addr = (self.flashfs.root.block_number as u32) * (layout.logical_pages_per_block() as u32) * 0x200;
+        // Use the calculated physical block if we are in SB layout and have an FS
+        let target_fs_block = if phys_fs_block > 0 { phys_fs_block as i32 } else { self.flashfs.root.block_number };
+
+        if !self.flashfs.root.entries.is_empty() && target_fs_block >= 0 {
+            let fs_logical_addr = (target_fs_block as u32) * (layout.logical_pages_per_block() as u32) * 0x200;
             header.fs_addr.set(fs_logical_addr);
-            info!("[builder] Updated FlashFS root address in header: 0x{:08X} (Block {})", fs_logical_addr, self.flashfs.root.block_number);
+            info!("[builder] Updated FlashFS root address in header: 0x{:08X} (Block {})", fs_logical_addr, target_fs_block);
         }
 
         // Actually place components into the image
@@ -753,14 +824,42 @@ impl NandSkeleton {
         let header_bytes = zerocopy::IntoBytes::as_bytes(&header);
         logical_image[..header_bytes.len()].copy_from_slice(header_bytes);
 
-        if !self.flashfs.root.entries.is_empty() && self.flashfs.root.block_number >= 0 {
-            let fs_block = self.flashfs.root.block_number as usize;
+        // 4. FlashFS Partitions (Main only by default)
+        let mut partitions_to_write = std::collections::HashMap::new();
+        if !self.flashfs.root.entries.is_empty() && target_fs_block >= 0 {
+            partitions_to_write.insert(self.flashfs.root.partition_type, self.flashfs.root.clone());
+        }
+
+        for (btype, mut root) in partitions_to_write {
+            if root.entries.is_empty() { continue; }
+            
+            // For the main root, we might have a specific target block from LayoutCalculator
+            if btype == 0x30 || btype == 0x2C {
+                if target_fs_block >= 0 {
+                    root.block_number = target_fs_block;
+                }
+            }
+
+            if root.block_number < 0 {
+                warn!("[builder] FlashFS partition 0x{:02X} has no block number assigned, skipping", btype);
+                continue;
+            }
+
+            let fs_block = root.block_number as usize;
             let fs_offset = fs_block * layout.logical_pages_per_block() * 0x200;
-            let fs = self.flashfs.root.clone().serialize_logical(*layout);
-            if fs_offset + fs.len() <= logical_image.len() {
-                logical_image[fs_offset..fs_offset + fs.len()].copy_from_slice(&fs);
+            
+            info!("[builder] Writing FlashFS partition 0x{:02X} at block {} (offset 0x{:08X})", btype, fs_block, fs_offset);
+            
+            // First, ensure all file data in this partition is written to the image
+            root.write_logical(&mut logical_image, layout);
+            
+            // Then, serialize the root block itself (directory/blockmap)
+            let fs_root_block = root.serialize_logical(*layout);
+            
+            if fs_offset + fs_root_block.len() <= logical_image.len() {
+                logical_image[fs_offset..fs_offset + fs_root_block.len()].copy_from_slice(&fs_root_block);
             } else {
-                error!("[builder] FlashFS block {} (offset 0x{:X}) exceeds image bounds", fs_block, fs_offset);
+                error!("[builder] FlashFS partition 0x{:02X} root block exceeds image bounds at block {}", btype, fs_block);
             }
         }
 

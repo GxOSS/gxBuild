@@ -103,45 +103,82 @@ impl NandLayout {
             }
         }
     }
+}
 
-    /// Reads `len` bytes starting from logical page `logical_page` in a physical NAND image.
-    /// Handles cross-page boundary reads transparently by translating each logical page
-    /// to its physical offset and reading chunks that don't cross physical page boundaries.
-    ///
-    /// This is essential for parsing bootloader headers and data from raw physical dumps
-    /// where spare/ECC areas are interleaved with actual data.
-    pub fn read_logical_from_physical(
-        image: &[u8],
-        logical_page: usize,
-        len: usize,
-        layout: NandLayout,
-    ) -> Option<Vec<u8>> {
-        if image.is_empty() || len == 0 { return None; }
+/// Reads `len` bytes starting from logical page `logical_page` in a physical NAND image.
+/// Handles cross-page boundary reads transparently by translating each logical page
+/// to its physical offset and reading chunks that don't cross physical page boundaries.
+///
+/// This is essential for parsing bootloader headers and data from raw physical dumps
+/// where spare/ECC areas are interleaved with actual data.
+pub fn read_logical_from_physical(
+    image: &[u8],
+    logical_page: usize,
+    len: usize,
+    layout: NandLayout,
+) -> Option<Vec<u8>> {
+    if image.is_empty() || len == 0 { return None; }
 
-        let logical_page_size = layout.page_size();
-        let mut result = vec![0u8; len];
-        let mut cur = 0;
+    let logical_page_size = layout.page_size();
+    let mut result = vec![0u8; len];
+    let mut cur = 0;
 
-        while cur < len {
-            let current_logical = logical_page + (cur / logical_page_size);
-            let phys_offset = layout.logical_to_physical(current_logical);
-            let page_offset = current_logical % logical_page_size;
-            let chunk_len = logical_page_size - page_offset;
-            let to_read = std::cmp::min(chunk_len, len - cur);
+    while cur < len {
+        let current_logical = logical_page + (cur / logical_page_size);
+        let phys_offset = layout.logical_to_physical(current_logical);
+        let page_offset = current_logical % logical_page_size;
+        let chunk_len = logical_page_size - page_offset;
+        let to_read = std::cmp::min(chunk_len, len - cur);
 
-            if (phys_offset as usize) + to_read > image.len() {
-                result.truncate(cur);
-                if result.is_empty() { return None; }
-                break;
-            }
-
-            let src_start = phys_offset as usize + page_offset;
-            result[cur..cur + to_read].copy_from_slice(&image[src_start..src_start + to_read]);
-            cur += to_read;
+        if (phys_offset as usize) + to_read > image.len() {
+            result.truncate(cur);
+            if result.is_empty() { return None; }
+            break;
         }
 
-        Some(result)
+        let src_start = phys_offset as usize + page_offset;
+        result[cur..cur + to_read].copy_from_slice(&image[src_start..src_start + to_read]);
+        cur += to_read;
     }
+
+    Some(result)
+}
+
+/// Writes `data` starting from logical byte offset `logical_offset` into a physical NAND image.
+/// Safely handles spare area gaps by translating the logical offset to physical and writing
+/// across page boundaries.
+pub fn write_logical_data(
+    image: &mut [u8],
+    logical_offset: usize,
+    data: &[u8],
+    layout: NandLayout,
+) {
+    if image.is_empty() || data.is_empty() { return; }
+
+    let logical_page_size = layout.page_size();
+    let mut cur = 0;
+    let len = data.len();
+
+    while cur < len {
+        let current_logical_byte = logical_offset + cur;
+        let phys_offset = layout.logical_to_physical(current_logical_byte);
+        
+        // Calculate how many bytes we can write in the current physical page
+        let page_offset = current_logical_byte % logical_page_size;
+        let chunk_len = logical_page_size - page_offset;
+        let to_write = std::cmp::min(chunk_len, len - cur);
+
+        if (phys_offset as usize) + to_write > image.len() {
+            break;
+        }
+
+        let dest_start = phys_offset as usize;
+        image[dest_start..dest_start + to_write].copy_from_slice(&data[cur..cur + to_write]);
+        cur += to_write;
+    }
+}
+
+impl NandLayout {
 
     pub fn marker_offset(&self) -> usize {
         match self {
@@ -233,7 +270,10 @@ pub fn calculate_ecc(data: &mut [u8]) {
         val >>= 1;
     }
     val = !val;
-    let ecc_temp = (val << 6).to_le_bytes();
+    let mut ecc_temp = (val << 6).to_le_bytes();
+    // Merge FsBlockType (bottom 6 bits) from the existing metadata byte
+    // We mask out the bottom 6 bits of the new ECC byte to prevent bit collision.
+    ecc_temp[0] = (ecc_temp[0] & !0x3f) | (data[0x20C] & 0x3F);
     data[0x20C..0x210].copy_from_slice(&ecc_temp);
 }
 
@@ -315,9 +355,11 @@ pub fn add_spare(
 
                 // Calculate ECC for the entire chunk (data + spare)
                 // Big-block ECC is calculated per-page over data+spare combined
+                let page_size = layout.page_size();
                 for page_in_chunk in 0..4 {
-                    let page_start = chunk_offset + (page_in_chunk * 0x200);
-                    let spare_start = chunk_offset + 0x800 + (page_in_chunk * 0x10);
+                    let page_size_512 = 0x200; // BB internal ECC chunks are always 512
+                    let page_start = chunk_offset + (page_in_chunk * page_size_512);
+                    let spare_start = chunk_offset + page_size + (page_in_chunk * 0x10);
                     let mut page_with_spare = [0u8; 0x210];
                     page_with_spare[..0x200].copy_from_slice(&result[page_start..page_start + 0x200]);
                     page_with_spare[0x200..0x210].copy_from_slice(&result[spare_start..spare_start + 0x10]);
@@ -337,10 +379,10 @@ pub fn add_spare(
 
             for i in 0..total_pages {
                 let read_offset = i * page_size;
-                let mut data_block = [0u8; 0x200];
+                let mut data_block = vec![0u8; page_size];
                 let bytes_remaining = image.len().saturating_sub(read_offset);
                 if bytes_remaining > 0 {
-                    let sz = std::cmp::min(0x200, bytes_remaining);
+                    let sz = std::cmp::min(page_size, bytes_remaining);
                     data_block[..sz].copy_from_slice(&image[read_offset..read_offset + sz]);
                 }
 
@@ -393,8 +435,8 @@ pub fn add_spare(
 
                 let write_offset = i * p_page_size;
                 let page_slice = &mut result[write_offset..write_offset + p_page_size];
-                page_slice[..0x200].copy_from_slice(&data_block);
-                page_slice[0x200..p_page_size].copy_from_slice(&spare);
+                page_slice[..page_size].copy_from_slice(&data_block);
+                page_slice[page_size..p_page_size].copy_from_slice(&spare);
                 calculate_ecc(page_slice);
             }
             result

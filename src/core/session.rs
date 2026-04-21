@@ -13,6 +13,10 @@ use crate::builder::builder::NandSkeleton;
 use std::fs;
 #[cfg(feature = "python")]
 use crate::core::interface::python::{python_interpreter, python_shell, python_script};
+use crate::core::data::blocks::*;
+use crate::builder::chain::*;
+use crate::builder::builder::{SouthbridgeType, LayoutCalculator};
+use crate::builder::chain::flashfs::FlashFS;
 use crate::core::data::gxp::parse_patch_binary;
 use crate::core::data::filesearch::IniSearch;
 use log::{info, error, warn};
@@ -645,27 +649,51 @@ impl Session {
                     if let Some(nand) = &self.active_nand {
                         let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
                         let layout = nand.layout;
+                        
+                        let sb_type = SouthbridgeType::from(nand.options.motherboard);
+                        let _ = LayoutCalculator::calculate(sb_type, nand.options.image_type, layout);
+
                         match nand.build(cpukey) {
                             Ok(clean_bytes) => {
                                 let mut fs_meta = std::collections::HashMap::new();
                                 let page_count_encoded = if layout == crate::core::data::blocks::NandLayout::Bb {
-                                    (layout.logical_pages_per_block() / 4) as u8
-                                } else {
-                                    layout.logical_pages_per_block() as u8
-                                };
-                                
-                                for (val, &block) in nand.flashfs.root.block_map.iter().enumerate() {
-                                    if block != 0 && block != 0x1FFE {
-                                        let is_root = val == nand.flashfs.root.block_number as usize;
-                                        let btype = if is_root { 0x30 } else { 0x01 };
-                                        let fs_size = if is_root { (layout.logical_pages_per_block() * 0x200) as u16 } else { 0 };
+                                    match nand.layout {
+                                        crate::core::data::blocks::NandLayout::Bb => 0x00,
+                                        _ => 0x01,
+                                    }
+                                } else { 0x01 };
+
+                                let mut all_partitions = std::collections::HashMap::new();
+                                if !nand.flashfs.root.entries.is_empty() {
+                                    all_partitions.insert(nand.flashfs.root.partition_type, nand.flashfs.root.clone());
+                                }
+
+                                for (btype, root) in all_partitions {
+                                    if root.block_number < 0 { continue; }
+                                    
+                                    // Branding strategy: Every block in the FlashFS partition must have 
+                                    // the correct partition type (e.g. 0x30) and version sequence in its spare area.
+                                    for (val, &block) in root.block_map.iter().enumerate() {
+                                        // 0x1FFE is the only marker for a truly 'free' block in the block map.
+                                        // All other values (including 0 and 0x1FFF) represent occupied space.
+                                        let is_free = (block & 0x7FFF) == 0x1FFE;
                                         
-                                        fs_meta.insert(val, crate::core::data::blocks::FsSpareInfo {
-                                            sequence: nand.flashfs.root.version as u32,
-                                            size: fs_size,
-                                            page_count: page_count_encoded,
-                                            block_type: btype,
-                                        });
+                                        if !is_free {
+                                            let absolute_block = val + (root.block_number as usize);
+                                            let is_root = val == 0;
+                                            
+                                            // Branding: Root block gets the partition type (0x30, 0x31, etc.)
+                                            // Data blocks technically can also carry the partition type for better discovery.
+                                            // RGBuild and others advanced by partition type scanning.
+                                            let block_type = if is_root { btype } else { 0x01 };
+                                            
+                                            fs_meta.insert(absolute_block, crate::core::data::blocks::FsSpareInfo {
+                                                sequence: root.version as u32,
+                                                size: 0x4000, // Standard 16KB block size (physical)
+                                                page_count: page_count_encoded,
+                                                block_type,
+                                            });
+                                        }
                                     }
                                 }
                                 
@@ -817,7 +845,7 @@ impl Session {
                             crate::core::data::blocks::NandLayout::Bb => 0x1E0,
                             _ => 0x4E,  // Small block default: block 78
                         };
-                        match crate::builder::chain::flashfs::FileSystemRoot::build_from_folder(&mut nand.image, &nand.layout, &path, fs_start) {
+                        match crate::builder::chain::flashfs::FileSystemRoot::build_from_folder(&mut nand.image, &nand.layout, &path, fs_start, 0x30) {
                             Ok(new_root) => {
                                 nand.flashfs.root = new_root;
                                 info!("[session] FlashFS constructed and injected successfully.");
@@ -1003,7 +1031,7 @@ impl Session {
                                 _ => 0x4E,  // Small block default: block 78
                             };
                             info!("[session] FlashFS start block: 0x{:X} ({})", fs_start, fs_start);
-                            match crate::builder::chain::flashfs::FileSystemRoot::build_from_memory(&mut nand.image, &nand.layout, &self.flashfs_assets, fs_start) {
+                            match crate::builder::chain::flashfs::FileSystemRoot::build_from_memory(&mut nand.image, &nand.layout, &self.flashfs_assets, fs_start, 0x30) {
                                 Ok(new_root) => {
                                     nand.flashfs.root = new_root;
                                     info!(" -> FlashFS generation complete.");

@@ -9,7 +9,8 @@ pub enum XellType {
     Xell1f = 0,
     Xell2f = 1,
     XellGg = 2,
-    XellReloaded = 3,
+    Xellous = 3,
+    XellReloaded = 4,
     XellUnknown = 0xFF,
 }
 
@@ -23,8 +24,18 @@ impl Xell {
     pub fn parse(data: &[u8]) -> Self {
         let mut xell_type = XellType::XellUnknown;
         
-        if data.len() >= 0x10 && &data[0..4] == b"XeLL" {
-            xell_type = XellType::XellReloaded;
+        // XeLLous (Unfinished)
+        if data.len() == 0x38C00 {
+            if &data[0..4] == b"Xell" {
+                xell_type = XellType::Xellous;
+            }
+        }
+
+        // XeLL Reloaded
+        if data.len() == 0x40000 {
+            if &data[0..4] == b"XeLL" {
+                xell_type = XellType::XellReloaded;
+            }
         }
 
         Self {
