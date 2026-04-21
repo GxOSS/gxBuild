@@ -37,6 +37,7 @@ Documentation is hosted on the [GGX Project](https://ggx-project.github.io/gxBui
 Any testing is greatly appreciated, as I don't have the funds for every platform.
 
 | Platform | Retail Single | Retail Split | ArgonData | AudClamp | RJTAG | Glitch1 | Glitch2 | Glitch3 | Glitch2.3 | XDKBuild | RGBuild |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | 
 | Xenon |  |  |  |  |  |  |  |  |  |  |  |
 | Zephyr |  |  |  |  |  |  |  |  |  |  |  |
 | Falcon |  |  |  |  |  |  |  |  |  |  |  |
