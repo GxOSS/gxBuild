@@ -13,19 +13,10 @@ Everyone who has knowingly or unknowingly contributed to gxBuild
 - [Mena PhenomMod](https://github.com/Pheeeeenom)
 - [wurthless-elektroniks](https://github.com/wurthless-elektroniks)
 - [GoobyCorp](https://github.com/GoobyCorp)
-
-**XeLL / XeLL Reloaded / LibXenon / Free60:**
-- [GliGli](https://github.com/GliGli)
-- [Tiros](https://github.com/Tiros)
-- [Swizzy](https://github.com/Swizzy)
-- [Tuxuser](https://github.com/Tuxuser)
-- [mitchellwaite](https://github.com/mitchellwaite)
-- [Cancerous](https://github.com/Cancerous)
-- [InvoxiPlayGames](https://github.com/InvoxiPlayGames)
-
-**RGBuild Team:**
 - [emoose](https://github.com/emoose)
 - [tydye81](https://github.com/tydye81)
+- [Swizzy](https://github.com/Swizzy)
+- [InxoviPlayGames](https://github.com/InvoxiPlayGames)
 
 ## Projects used
 
