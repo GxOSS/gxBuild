@@ -16,13 +16,15 @@ Officially supported:
 - [Linux AMD64]()
 - [MacOS aarch64]()
 
+Prebuilt binaries can be downloaded [here]()
+
 ## Documentation
 
 Documentation is hosted on the [GGX Project](https://ggx-project.github.io/gxBuild/home/) site:
-- [Usage](https://ggx-project.github.io/gxBuild/usage/)  - General Usage
-- [Patches](https://ggx-project.github.io/gxBuild/patches/) - Patch format
-- [Scripting](https://ggx-project.github.io/gxBuild/scripting/) - Python Scripting
-- [Developer](https://ggx-project.github.io/gxBuild/developer/) - FFI Interface
+- [Usage](https://exposuremg.github.io/gxBuild/usage/)  - General Usage
+- [Patches](https://exposuremg.github.io/gxBuild/patches/) - Patch format
+- [Scripting](https://exposuremg.github.io/gxBuild/scripting/) - Python Scripting
+- [Developer](https://exposuremg.github.io/gxBuild/developer/) - FFI Interface
 
 ## Info
 
@@ -35,6 +37,11 @@ Documentation is hosted on the [GGX Project](https://ggx-project.github.io/gxBui
 ## Testing
 
 Any testing is greatly appreciated, as I don't have the funds for every platform.
+
+✓ = Tested Working
+- = Builds correctly
+× = Does not built correctly
+
 
 | Platform | Retail Single | Retail Split | ArgonData | AudClamp | RJTAG | Glitch1 | Glitch2 | Glitch3 | Glitch2.3 | XDKBuild | RGBuild |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | 
