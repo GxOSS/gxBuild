@@ -7,7 +7,7 @@
 
 use std::fs;
 use std::path::Path;
-use chrono::Local;
+use std::time::{SystemTime, UNIX_EPOCH};
 use fern::colors::{Color, ColoredLevelConfig};
 
 pub fn init_logger(mode: &str, verbose: bool) -> Result<(), fern::InitError> {
@@ -17,9 +17,12 @@ pub fn init_logger(mode: &str, verbose: bool) -> Result<(), fern::InitError> {
         fs::create_dir_all(log_dir)?;
     }
 
-    // 2. Generate filename: gxbuild-<mode>-<date>-<time>.log
-    let now = Local::now();
-    let timestamp = now.format("%Y-%m-%d-%H-%M-%S").to_string();
+    // 2. Generate filename: gxbuild-<mode>-<secs>.log
+    let start = SystemTime::now();
+    let since_the_epoch = start
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards");
+    let timestamp = since_the_epoch.as_secs();
     let filename = format!("logs/gxbuild-{}-{}.log", mode, timestamp);
 
     // 3. Configure logging level
@@ -41,8 +44,7 @@ pub fn init_logger(mode: &str, verbose: bool) -> Result<(), fern::InitError> {
     fern::Dispatch::new()
         .format(move |out, message, record| {
             out.finish(format_args!(
-                "[{}] [{}] {}",
-                Local::now().format("%Y-%m-%d %H:%M:%S"),
+                "[{}] {}",
                 colors.color(record.level()),
                 message
             ))

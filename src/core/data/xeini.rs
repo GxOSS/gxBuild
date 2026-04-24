@@ -11,7 +11,7 @@ use std::fs;
 use crc32fast::Hasher;
 use thiserror::Error;
 use crate::builder::builder::NandSkeleton;
-use log::{info, warn};
+use log::{info, warn, error};
 
 #[derive(Error, Debug)]
 pub enum IniError {
@@ -399,17 +399,22 @@ pub fn parse_xe_ini(
     }
 
     let mut jtag = JtagConfig::default();
-    if let Some(jtag_section) = config.get("jtag") {
-        if let Some(s) = jtag_section.get("syscall") {
-            jtag.syscall = u16::from_str_radix(s.trim_start_matches("0x"), 16).ok();
-        }
-        if let Some(p) = jtag_section.get("2blpairing") {
-            // format: 0x11,0x22,0x33
-            let parts: Vec<u8> = p.split(',')
-                .filter_map(|s| u8::from_str_radix(s.trim().trim_start_matches("0x"), 16).ok())
-                .collect();
-            if parts.len() == 3 {
-                jtag.pairing_2bl = Some([parts[0], parts[1], parts[2]]);
+    if let Some(jtag_data) = sections.get("jtag") {
+        for entry in jtag_data {
+            if entry.len() >= 2 {
+                let key = entry[0].to_lowercase();
+                let val = &entry[1];
+                if key == "syscall" {
+                    jtag.syscall = u16::from_str_radix(val.trim_start_matches("0x"), 16).ok();
+                } else if key == "2blpairing" {
+                    // format: 0x11,0x22,0x33
+                    let parts: Vec<u8> = val.split(',')
+                        .filter_map(|s: &str| u8::from_str_radix(s.trim().trim_start_matches("0x"), 16).ok())
+                        .collect();
+                    if parts.len() == 3 {
+                        jtag.pairing_2bl = Some([parts[0], parts[1], parts[2]]);
+                    }
+                }
             }
         }
     }
@@ -551,30 +556,29 @@ pub fn apply_xe_ini(
                 let x_type = xell.identify();
                 
                 let is_unsafe = nand.options.gxunsafe;
-                let build_type = nand.options.build_type;
 
                 match x_type {
                     crate::builder::chain::xell::XellType::XellGg => {
-                        if build_type != crate::builder::builder::BuildType::Glitch && !is_unsafe {
-                            error!("[ini] FATAL: xell-gggggg is for Glitch builds only.");
-                            return Err(IniError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid XeLL for build type")));
+                        if !nand.options.image_profile.contains("glitch") && !is_unsafe {
+                            error!("[ini] FATAL: xell-gggggg is for Glitch builds only (Profile: {}).", nand.options.image_profile);
+                            return Err(IniError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid XeLL for build profile")));
                         }
                         nand.bootloaders.xell = Some(xell);
                         info!("[ini] Assigned xell-gggggg to primary slot");
                     },
                     crate::builder::chain::xell::XellType::Xell1f => {
-                        if build_type != crate::builder::builder::BuildType::Jtag && !is_unsafe {
-                            error!("[ini] FATAL: xell-1f is for Rebooter XeLL images only.");
-                            return Err(IniError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid XeLL for build type")));
+                        if !nand.options.image_profile.contains("jtag") && !is_unsafe {
+                            error!("[ini] FATAL: xell-1f is for Rebooter XeLL images only (Profile: {}).", nand.options.image_profile);
+                            return Err(IniError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid XeLL for build profile")));
                         }
                         info!("[ini] Detected xell-1f: Switching to Onef profile (XeLL-only rebooter)");
-                        nand.options.image_type = crate::builder::builder::ImageType::Onef;
+                        nand.options.image_profile = "onef".to_string();
                         nand.bootloaders.xell = Some(xell);
                     },
                     crate::builder::chain::xell::XellType::Xell2f => {
-                        if build_type != crate::builder::builder::BuildType::Jtag && !is_unsafe {
-                            error!("[ini] FATAL: xell-2f is for Full Rebooter images only.");
-                            return Err(IniError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid XeLL for build type")));
+                        if !nand.options.image_profile.contains("jtag") && !is_unsafe {
+                            error!("[ini] FATAL: xell-2f is for Full Rebooter images only (Profile: {}).", nand.options.image_profile);
+                            return Err(IniError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid XeLL for build profile")));
                         }
                         nand.rebooter.as_mut().map(|r| r.xell = Some(xell));
                         info!("[ini] Assigned xell-2f to Full Rebooter secondary slot");
@@ -593,7 +597,7 @@ pub fn apply_xe_ini(
                     fixed_address: None,
                 };
 
-                if build_type == "jtag" {
+                if nand.options.image_profile == "jtag" {
                     if lower == "jtag_payload.bin" {
                         p_entry.fixed_address = Some(0x200);
                         p_entry.description = "JTAG Exploit Payload".to_string();
@@ -634,13 +638,13 @@ pub fn apply_xe_ini(
 
     nand.bootloaders.khvpatch = ini.patch.khv.clone();
 
-    if nand.options.build_type == crate::builder::builder::BuildType::Glitch2 || nand.options.build_type == crate::builder::builder::BuildType::DevGl {
-        info!("[ini] Build type '{:?}' detected: Using 0x60 KHV vfuse header", nand.options.build_type);
-        nand.options.khv_header_size = 0x60;
+    if nand.options.image_profile == "glitch2" || nand.options.image_profile == "devgl" {
+        info!("[ini] Detected Glitch2/DevGL profile, ensuring appropriate patches are applied.");
     }
 
+
     // Finalize image profile enforcement
-    if nand.options.image_type == crate::builder::builder::ImageType::Onef {
+    if nand.options.image_profile == "onef" {
         info!("[ini] Enforcing Onef profile: Clearing second-chain kernel and FlashFS");
         nand.update = crate::builder::builder::NandUpdate::default();
         let total_blocks = nand.flashfs.root.block_map.len();

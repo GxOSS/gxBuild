@@ -5,7 +5,6 @@
     Licensed under GPLv2 (inherited from xenon-bltool).
 */
 
-use std::collections::HashMap;
 use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
 use zerocopy::byteorder::{U16, U32, I16, BigEndian};
 use log::{info, error, warn};
@@ -179,6 +178,12 @@ impl NandUpdate {
     }
 }
 
+impl Default for NandUpdate {
+    fn default() -> Self {
+        NandUpdate { cf_0: None, cg_0: None, cf_1: None, cg_1: None }
+    }
+}
+
 #[derive(Clone)]
 pub struct NandExtra {
     pub smc: Vec<u8>,
@@ -236,7 +241,7 @@ impl From<MotherboardType> for SouthbridgeType {
 pub struct LayoutCalculator;
 
 impl LayoutCalculator {
-    pub fn calculate(sb: SouthbridgeType, image_type: ImageType, layout: NandLayout) -> (u32, u32, u32) {
+    pub fn calculate(sb: SouthbridgeType, image_profile: &str, layout: NandLayout) -> (u32, u32, u32) {
         // Returns (header.fs_addr, header.smc_config_offset, physical_fs_block)
         let smc_config = match layout {
             NandLayout::Xsb | NandLayout::Sb => 0xF70000,
@@ -248,9 +253,9 @@ impl LayoutCalculator {
             return (0, smc_config, 0);
         }
 
-        // SmallBlock FlashFS relocation based on SB and CB type
-        let is_split = match image_type {
-            ImageType::Split | ImageType::Devgl | ImageType::Devkit | ImageType::Xdkbuild => true,
+        // SmallBlock FlashFS relocation based on SB and profile
+        let is_split = match image_profile {
+            "split" | "devgl" | "devkit" | "xdkbuild" | "glitch2m" | "glitchr" | "glitch2r" => true,
             _ => false,
         };
 
@@ -273,21 +278,19 @@ impl LayoutCalculator {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum ImageType {
-    Single, Split, Devkit, Devgl, Rgbuild, Xdkbuild, Onef,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum BuildType {
-    Retail, Jtag, Glitch, Conversion,
+pub enum BuildMode {
+    Normal,
+    Xell,
+    Shadowboot,
+    Devkit,
 }
 
 #[derive(Clone)]
 pub struct BuildOptions {
     pub layout: NandLayout,
     pub block_map: BlockMap,
-    pub image_type: ImageType,
-    pub build_type: BuildType,
+    pub image_profile: String, // e.g. "glitch2", "jtag", "devkit"
+    pub build_mode: BuildMode,
     pub motherboard: MotherboardType,
     pub bigonsmall: bool,
     pub shadowboot: bool,
@@ -298,7 +301,31 @@ pub struct BuildOptions {
     pub patches: Option<NandPatches>,
     pub jtag_syscall: Option<u16>,
     pub jtag_pairing_2bl: Option<[u8; 3]>,
+    pub gxunsafe: bool,
 }
+
+impl Default for BuildOptions {
+    fn default() -> Self {
+        BuildOptions {
+            layout: NandLayout::Sb,
+            block_map: BlockMap { blocks: Vec::new(), layout: NandLayout::Sb },
+            image_profile: "retail".to_string(),
+            build_mode: BuildMode::Normal,
+            motherboard: MotherboardType::Unknown,
+            bigonsmall: false,
+            shadowboot: false,
+            mfg: false,
+            noremap: false,
+            khv_apply: false,
+            khv_header_size: 0x4000,
+            patches: None,
+            jtag_syscall: None,
+            jtag_pairing_2bl: None,
+            gxunsafe: false,
+        }
+    }
+}
+
 
 #[derive(Clone)]
 pub struct NandSkeleton {
@@ -308,6 +335,7 @@ pub struct NandSkeleton {
     pub options: BuildOptions,
     pub header: NandHeader,
     pub extra: NandExtra,
+    pub kv: Option<crate::builder::chain::kv::Keyvault>,
     pub bootloaders: NandBootloaders,
     pub rebooter: Option<NandBootloaders>,
     pub update: NandUpdate,
@@ -336,11 +364,11 @@ impl NandSkeleton {
             block_map: Some(BlockMap { blocks: Vec::new(), layout }),
             options: BuildOptions {
                 layout,
-                block_map: BlockMap { blocks: Vec::new(), layout },
-                image_type: ImageType::Single,
-                build_type: BuildType::Retail,
+                image_profile: "retail".to_string(),
+                build_mode: BuildMode::Normal,
                 motherboard: MotherboardType::Unknown,
-                bigonsmall: false, shadowboot: false, mfg: false, noremap: false, khv_apply: false, khv_header_size: 0, patches: None,
+                gxunsafe: false,
+                ..Default::default()
             },
             header: NandHeader {
                 prefix: NandHeaderPrefix {
@@ -386,6 +414,7 @@ impl NandSkeleton {
                 power_on_cause_a: 0,
                 power_on_cause_b: 0,
             },
+            kv: None,
             bootloaders: NandBootloaders {
                 cb: None, cb_a: None, cb_x: None, cb_b: None,
                 sc: None, cd: None, ce: None, khvpatch: None, xell: None,
@@ -449,12 +478,7 @@ impl NandSkeleton {
         }
         info!("[builder] Extracting and decrypting Keyvault (Addr: 0x{:X}, Size: 0x{:X})...", kv_addr, kv_size);
         let mut kv = crate::builder::chain::kv::Keyvault::parse(&image[kv_addr..kv_addr + kv_size])?;
-        // KV version 0x712 = v1 retail (RC4 only, no HMAC outer wrap).
-        // Any other non-zero value = v2+ = hashed (HMAC-SHA1 outer).
-        // Reference: RGBuild BootloaderFlashHeader uses KeyVaultVersion == 0x712 as the v1 sentinel.
-        let kv_version = header.kv_version.get();
-        let hashed = kv_version != 0 && kv_version != 0x712;
-        kv.decrypt(&cpukey, hashed)?;
+        kv.decrypt(&cpukey)?;
 
         // 3. Extract and decrypt SMC
         let smc_offset = header.smc_boot_offset.get() as usize;
@@ -484,7 +508,7 @@ impl NandSkeleton {
         let extra = NandExtra {
             smc: smc.data,
             smc_config: config_data,
-            keyvault: kv.data,
+            keyvault: kv.data.clone(),
             fcrt: None,
             power_on_cause_a: 0,
             power_on_cause_b: 0,
@@ -522,7 +546,6 @@ impl NandSkeleton {
         } else {
             MotherboardType::Unknown
         };
-        let image_type = if bl_mut.cb_b.is_some() { ImageType::Split } else { ImageType::Single };
         
         // Initialize FlashFS root block from header fs_addr
         let mut final_flashfs = flashfs;
@@ -546,21 +569,20 @@ impl NandSkeleton {
             options: BuildOptions {
                 layout,
                 block_map: BlockMap { blocks: Vec::new(), layout },
-                image_type,
-                build_type: BuildType::Retail,
+                image_profile: (if bl_mut.cb_b.is_some() { "split" } else { "single" }).to_string(),
+                build_mode: BuildMode::Normal,
                 motherboard,
-                bigonsmall: false,
-                shadowboot: false,
-                mfg: false,
-                noremap: false,
-                patches: None,
+                gxunsafe: false,
+                ..Default::default()
             },
             header,
             extra,
+            kv: Some(kv),
             bootloaders: bl_mut,
             rebooter: None,
             update,
             rebooter_update: None,
+            payloads: Vec::new(),
             flashfs: final_flashfs,
         })
     }
@@ -741,8 +763,8 @@ impl NandSkeleton {
     /// Assembles a JTAG rebooter image with two bootloader chains.
     /// Chain 0 (Base) starts at 0x8000.
     /// Chain 1 (Update) starts at 0x20000.
-    pub fn assemble_rebooter(&self) -> Result<Vec<u8>, String> {
-        let layout = &self.options.layout;
+    pub fn assemble_rebooter(&mut self) -> Result<Vec<u8>, String> {
+        let layout = &self.layout;
         let expected_size = self.total_blocks * layout.logical_pages_per_block() * 0x200;
         
         let mut logical_image = self.image.clone();
@@ -844,7 +866,7 @@ impl NandSkeleton {
             logical_image[curr_update..curr_update+data.len()].copy_from_slice(&data);
             curr_update += data.len();
             
-            if let Some(mut cg) = cg0.cloned() {
+            if let Some(cg) = cg0.cloned() {
                 let cg_off = (curr_update + 0xF) & !0xF;
                 let data = cg.serialize();
                 logical_image[cg_off..cg_off+data.len()].copy_from_slice(&data);
@@ -854,7 +876,7 @@ impl NandSkeleton {
         // 5. FlashFS & Layout Calculation
         let (fs_addr_calc, smc_config_offset, _phys_fs_block) = LayoutCalculator::calculate(
             SouthbridgeType::from(self.options.motherboard),
-            self.options.image_type,
+            &self.options.image_profile,
             *layout
         );
         header.fs_addr.set(fs_addr_calc);
@@ -863,7 +885,7 @@ impl NandSkeleton {
         // 4. Dynamic Payloads (KHV, RGLP, etc.)
         let mut final_payloads = self.payloads.clone();
         if let Some(records) = &self.bootloaders.khvpatch {
-            if !self.options.khv_apply && self.options.build_type != BuildType::Retail {
+            if !self.options.khv_apply && self.options.build_mode != BuildMode::Normal {
                 let header_size = self.options.khv_header_size;
                 let mut patch_binary = vec![0u8; header_size as usize]; 
                 patch_binary.extend(crate::core::data::gxp::serialize_records(records));
@@ -951,17 +973,17 @@ impl NandSkeleton {
         logical_image[..header_bytes.len()].copy_from_slice(header_bytes);
 
         // 6. XeLL Injection
-        if self.options.image_type == crate::builder::builder::ImageType::Onef {
+        if self.options.image_profile == "onef" {
             if let Some(xell) = self.bootloaders.xell.as_ref() {
                 let x_type = xell.identify();
-                let xell_offset = crate::builder::chain::xell::Xell::get_target_offset(x_type, self.options.build_type, self.options.image_type) as usize;
+                let xell_offset = crate::builder::chain::xell::Xell::get_target_offset(x_type, &self.options.image_profile) as usize;
                 info!("[builder] JTAG Chain 1: Injecting XeLL-1F payload at 0x{:08X}", xell_offset);
                 logical_image[xell_offset..xell_offset + xell.data.len()].copy_from_slice(&xell.data);
             }
         } else if let Some(rebooter) = &self.rebooter {
             if let Some(xell) = rebooter.xell.as_ref() {
                 let x_type = xell.identify();
-                let xell_offset = crate::builder::chain::xell::Xell::get_target_offset(x_type, self.options.build_type, self.options.image_type) as usize;
+                let xell_offset = crate::builder::chain::xell::Xell::get_target_offset(x_type, &self.options.image_profile) as usize;
                 info!("[builder] JTAG Chain 1: Injecting XeLL-2F payload at 0x{:08X}", xell_offset);
                 logical_image[xell_offset..xell_offset + xell.data.len()].copy_from_slice(&xell.data);
             }
@@ -970,8 +992,8 @@ impl NandSkeleton {
         Ok(logical_image)
     }
 
-    pub fn assemble_logical(&self) -> Result<Vec<u8>, String> {
-        let layout = &self.options.layout;
+    pub fn assemble_logical(&mut self) -> Result<Vec<u8>, String> {
+        let layout = &self.layout;
         let expected_size = self.total_blocks * layout.logical_pages_per_block() * 0x200;
         
         let mut logical_image = self.image.clone();
@@ -1043,7 +1065,7 @@ impl NandSkeleton {
 
         // NAND Header preparation
         let sb_type = SouthbridgeType::from(self.options.motherboard);
-        let (fs_addr, smc_config_offset, phys_fs_block) = LayoutCalculator::calculate(sb_type, self.options.image_type, self.layout);
+        let (fs_addr, smc_config_offset, phys_fs_block) = LayoutCalculator::calculate(sb_type, &self.options.image_profile, self.layout);
 
         header.fs_addr = U32::new(fs_addr);
         header.smc_config_offset = U32::new(smc_config_offset);
@@ -1159,7 +1181,7 @@ impl NandSkeleton {
         for (xell_opt, _is_rebooter) in xell_payloads {
             if let Some(xell) = xell_opt {
                 let x_type = xell.identify();
-                let xell_offset = crate::builder::chain::xell::Xell::get_target_offset(x_type, self.options.build_type, self.options.image_type) as usize;
+                let xell_offset = crate::builder::chain::xell::Xell::get_target_offset(x_type, &self.options.image_profile) as usize;
                 if xell_offset + xell.data.len() > logical_image.len() {
                     return Err(format!("XeLL ({:?}) overflow at 0x{:X}: need 0x{:X} bytes", x_type, xell_offset, xell.data.len()));
                 }
@@ -1171,7 +1193,7 @@ impl NandSkeleton {
         // 4. Dynamic Payloads (KHV, RGLP, etc.)
         let mut final_payloads = self.payloads.clone();
         if let Some(records) = &self.bootloaders.khvpatch {
-            if !self.options.khv_apply && self.options.build_type != BuildType::Retail {
+            if !self.options.khv_apply && self.options.build_mode != BuildMode::Normal {
                 let header_size = self.options.khv_header_size;
                 let mut patch_binary = vec![0u8; header_size as usize]; 
                 patch_binary.extend(crate::core::data::gxp::serialize_records(records));
@@ -1181,6 +1203,7 @@ impl NandSkeleton {
                     size: patch_binary.len() as u32,
                     description: "xeBuild KHV Patches".to_string(),
                     data: patch_binary,
+                    fixed_address: None,
                 });
             }
         }
@@ -1375,7 +1398,7 @@ impl NandSkeleton {
     pub fn build(&self, cpukey: [u8; 16]) -> Result<Vec<u8>, String> {
         let mut skel = self.clone();
         skel.cpukey = Some(cpukey);
-        info!("[builder] Starting final image build (Type: {:?})...", skel.options.build_type);
+        info!("[builder] Starting final image build (Profile: {}, Mode: {:?})...", skel.options.image_profile, skel.options.build_mode);
 
         // 0. Universal Metadata Synchronization
         if let Some(pairing) = skel.options.jtag_pairing_2bl {
@@ -1404,16 +1427,19 @@ impl NandSkeleton {
             }
         }
         
-        let mut kv = crate::builder::chain::kv::Keyvault::parse(&skel.extra.keyvault)?;
-        info!("[builder] Encrypting Keyvault...");
-        let hashed = skel.header.kv_version.get() >= 2;
-        kv.encrypt(&cpukey, hashed)?;
-        skel.extra.keyvault = kv.data;
+        // 1. Re-encrypt Keyvault
+        if let Some(ref mut kv) = skel.kv {
+            info!("[builder] Encrypting Keyvault...");
+            kv.encrypt(&cpukey)?;
+            skel.extra.keyvault = kv.data.clone();
+        } else {
+            // Fallback for cases where KV wasn't parsed (e.g. assembling from scratch with manual extra.keyvault)
+            warn!("[builder] No internal Keyvault object found, using raw bytes from extra.keyvault");
+        }
 
         let mut smc = crate::builder::chain::smc::RawSmc::new(skel.extra.smc.clone());
         
-        if skel.options.build_type == BuildType::Jtag {
-            let rebooter = skel.rebooter.as_mut().ok_or("Rebooter chain missing for JTAG build")?;
+        if let Some(rebooter) = skel.rebooter.as_mut() {
             encrypt_rebooter_chain(
                 skel.bootloaders.cb_a.as_mut().or(skel.bootloaders.cb.as_mut()).ok_or("Missing Chain 0 CB")?,
                 skel.bootloaders.cd.as_mut().ok_or("Missing Chain 0 CD")?,
@@ -1445,9 +1471,10 @@ impl NandSkeleton {
         smc.encrypt();
         skel.extra.smc = smc.data;
 
-        match skel.options.build_type {
-            BuildType::Jtag => skel.assemble_rebooter(),
-            _ => skel.assemble_logical(),
+        if skel.rebooter.is_some() {
+            skel.assemble_rebooter()
+        } else {
+            skel.assemble_logical()
         }
     }
 
@@ -1472,7 +1499,7 @@ impl NandSkeleton {
         }
 
         if let Some(cb) = patch.cb {
-            if self.options.build_type == BuildType::Jtag {
+            if self.rebooter.is_some() {
                 if let Some(rebooter) = &mut self.rebooter {
                     if let Some(cb_bl) = &mut rebooter.cb {
                         info!("[builder] JTAG: Applying primary patches to Chain 1 CB");
@@ -1491,7 +1518,7 @@ impl NandSkeleton {
         }
 
         if let Some(cd) = patch.cd {
-            if self.options.build_type == BuildType::Jtag {
+            if self.rebooter.is_some() {
                 if let Some(rebooter) = &mut self.rebooter {
                     if let Some(cd_bl) = &mut rebooter.cd {
                         info!("[builder] JTAG: Applying patches to Chain 1 CD");

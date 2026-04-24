@@ -11,7 +11,7 @@
 /logs
 Cargo.lock
 errors.log
-Cargo_errors.txt
+cargo_errors.log
 ggx.code-workspace
 CLAUDE.md
 .vscode

@@ -94,6 +94,14 @@ impl BootloaderCe {
         });
     }
 
+    pub fn sync_metadata(&mut self) {
+        if !self.is_decrypted() || self.data.len() < 0x20 { return; }
+        if let Some(meta) = &self.metadata {
+            RealBigEndian::write_u64(&mut self.data[0x10..0x18], meta.target_address);
+            RealBigEndian::write_u32(&mut self.data[0x18..0x1C], meta.uncompressed_size);
+        }
+    }
+
     pub fn is_decrypted(&self) -> bool {
         if self.data.len() < 0x20 { return false; }
         // `unknown` field is at relative 0x1C (absolute 0x2C); zero in all decrypted retail CEs.

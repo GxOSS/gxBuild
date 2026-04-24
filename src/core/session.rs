@@ -11,10 +11,6 @@ use std::path::{Path, PathBuf};
 
 use crate::builder::builder::NandSkeleton;
 use std::fs;
-#[cfg(feature = "python")]
-use crate::core::interface::python::{python_interpreter, python_shell, python_script};
-use crate::core::data::blocks::*;
-use crate::builder::chain::*;
 use crate::builder::builder::{SouthbridgeType, LayoutCalculator};
 use crate::builder::chain::flashfs::FlashFS;
 use crate::core::data::gxp::parse_patch_binary;
@@ -44,10 +40,6 @@ pub enum InternalCommand {
     SessionList,
     SessionDelete { id: u8 },
     SessionRun,
-    #[cfg(feature = "python")]
-    PythonShell,
-    #[cfg(feature = "python")]
-    RunPythonScript { path: PathBuf },
     CreateImage { layout: crate::core::data::blocks::NandLayout },
     ExtractStfs { path: PathBuf, target_dir: PathBuf },
 }
@@ -72,17 +64,15 @@ impl InternalCommand {
     ///    79 - ApplyPatch
     ///    78 - Compress
     ///    50 - SessionRun: drains and re-executes queue; must fire after all real work is dispatched
-    ///     2 - RunPythonScript
-    ///     1 - PythonShell
     ///     0 - Build: always the final step
     fn priority_score(&self) -> u8 {
         match self {
+            // ── Key assignment (Must happen before ParseImage) ───────────
+            Self::ParseKey { .. }     => 160,
+            Self::ParseKeybin { .. }  => 160,
             // ── Foundation ────────────────────────────────────────────────
             Self::ParseImage { .. }   => 150,
             Self::CreateImage { .. }  => 150,
-            // ── Key assignment (must follow ParseImage) ───────────────────
-            Self::ParseKey { .. }     => 145,
-            Self::ParseKeybin { .. }  => 145,
             // ── Standalone ops (no active-NAND dependency) ────────────────
             Self::ExtractStfs { .. }  => 110,
             Self::Update { .. }       => 110,
@@ -110,11 +100,6 @@ impl InternalCommand {
             Self::Compress            => 78,
             // ── SessionRun: drains queue; must follow all real work ───────
             Self::SessionRun          => 50,
-            // ── Scripting ─────────────────────────────────────────────────
-            #[cfg(feature = "python")]
-            Self::RunPythonScript { .. } => 2,
-            #[cfg(feature = "python")]
-            Self::PythonShell            => 1,
             // ── Build: always last ────────────────────────────────────────
             Self::Build { .. }        => 0,
         }
@@ -170,6 +155,8 @@ pub struct Session {
     pub active_nand: Option<NandSkeleton>,
     /// Global xeBuild options / preferences
     pub options: crate::core::data::xeini::OptionsIni,
+    /// CPU Key buffer if provided before NAND is loaded
+    pub pending_key: Option<[u8; 16]>,
 }
 
 impl Session {
@@ -183,6 +170,7 @@ impl Session {
             flashfs_assets: HashMap::new(),
             active_nand: None,
             options: crate::core::data::xeini::OptionsIni::new(),
+            pending_key: None,
         }
     }
 
@@ -292,7 +280,7 @@ impl Session {
     /// Pulls hardware/image defaults from the active NAND into the session options.
     /// Only populates options that are currently None.
     pub fn extract_options_from_nand(&mut self) {
-        if let Some(nand) = &self.active_nand {
+        if let Some(nand) = &mut self.active_nand {
             info!("[session] Extracting hardware defaults from active NAND image...");
             
             // CPU Key
@@ -308,17 +296,16 @@ impl Session {
             }
 
             // Keyvault Metadata (Region, DVD Key, etc.)
-            // We can re-parse the KV to get the latest info
-            if let Ok(mut kv) = crate::builder::chain::kv::Keyvault::parse(&nand.extra.keyvault) {
+            if let Some(ref mut kv) = nand.kv {
                 // If it was decrypted in the skeleton, we can read it
                 if !kv.is_decrypted {
                     let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
-                    if let Err(e) = kv.decrypt(&cpukey, nand.header.kv_version.get() >= 2) {
+                    if let Err(e) = kv.decrypt(&cpukey) {
                         warn!("[session] Failed to decrypt Keyvault for metadata extraction: {}", e);
                     }
                 }
 
-                if let Some(meta) = kv.metadata {
+                if let Some(meta) = &kv.metadata {
                     if self.options.avregion.is_none() {
                         self.options.avregion = Some(format!("0x{:04X}", meta.region));
                     }
@@ -385,35 +372,35 @@ impl Session {
             }
 
             // --- 3. Keyvault Overrides (Region, DVD Key) ---
-            let mut kv = crate::builder::chain::kv::Keyvault::parse(&nand.extra.keyvault)?;
-            
-            // Decrypt with current session key if possible
-            if !kv.is_decrypted {
-                if let Err(e) = kv.decrypt(&cpukey, nand.header.kv_version.get() >= 2) {
-                    warn!("[session] Failed to decrypt Keyvault for option patching: {}", e);
-                }
-            }
-
-            if kv.is_decrypted {
-                if let Some(dvdkey_str) = &self.options.dvdkey {
-                    if let Ok(key_bytes) = crate::builder::builder::hex_to_bytes(dvdkey_str) {
-                        if key_bytes.len() == 16 {
-                            let mut arr = [0u8; 16];
-                            arr.copy_from_slice(&key_bytes);
-                            kv.set_dvd_key(&arr)?;
-                        }
+            if let Some(ref mut kv) = nand.kv {
+                // Decrypt with current session key if possible
+                if !kv.is_decrypted {
+                    if let Err(e) = kv.decrypt(&cpukey) {
+                        warn!("[session] Failed to decrypt Keyvault for option patching: {}", e);
                     }
                 }
 
-                // AV Region sync to KV
-                if let Some(region_str) = &self.options.avregion {
-                    let region = Self::parse_u16_hex_or_dec(region_str)?;
-                    kv.set_region(region)?;
+                if kv.is_decrypted {
+                    if let Some(dvdkey_str) = &self.options.dvdkey {
+                        if let Ok(key_bytes) = crate::builder::builder::hex_to_bytes(dvdkey_str) {
+                            if key_bytes.len() == 16 {
+                                let mut arr = [0u8; 16];
+                                arr.copy_from_slice(&key_bytes);
+                                kv.set_dvd_key(&arr)?;
+                            }
+                        }
+                    }
+
+                    // AV Region sync to KV
+                    if let Some(region_str) = &self.options.avregion {
+                        let region = Self::parse_u16_hex_or_dec(region_str)?;
+                        kv.set_region(region)?;
+                    }
+                    
+                    // Re-encrypt and store Keyvault
+                    kv.encrypt(&cpukey)?;
+                    nand.extra.keyvault = kv.data.clone();
                 }
-                
-                // Re-encrypt and store Keyvault
-                kv.encrypt(&cpukey, nand.header.kv_version.get() >= 2)?;
-                nand.extra.keyvault = kv.data;
             }
 
             // --- 3. SMC Configuration Patching ---
@@ -551,15 +538,6 @@ impl Session {
         });
     }
 
-    #[cfg(feature = "python")]
-    pub fn run_python_script(&mut self, path: impl AsRef<Path>) {
-        self.enqueue(InternalCommand::RunPythonScript { path: path.as_ref().to_path_buf() });
-    }
-
-    #[cfg(feature = "python")]
-    pub fn open_python_shell(&mut self) {
-        self.enqueue(InternalCommand::PythonShell);
-    }
 
     pub fn extract_stfs(&mut self, path: PathBuf, target_dir: PathBuf) {
         self.enqueue(InternalCommand::ExtractStfs { path, target_dir });
@@ -659,7 +637,7 @@ impl Session {
                         let layout = nand.layout;
                         
                         let sb_type = SouthbridgeType::from(nand.options.motherboard);
-                        let _ = LayoutCalculator::calculate(sb_type, nand.options.image_type, layout);
+                        let _ = LayoutCalculator::calculate(sb_type, &nand.options.image_profile, layout);
 
                         match nand.build(cpukey) {
                             Ok(clean_bytes) => {
@@ -764,20 +742,6 @@ impl Session {
                         return Err("No active NAND skeleton active to apply INI map onto!".to_string());
                     }
                 }
-                #[cfg(feature = "python")]
-                InternalCommand::RunPythonScript { path } => {
-                    let interp = python_interpreter();
-                    if let Err(e) = python_script(&interp, &path) {
-                        error!("[session] Python script execution failed: {}", e);
-                    }
-                }
-                #[cfg(feature = "python")]
-                InternalCommand::PythonShell => {
-                    let interp = python_interpreter();
-                    if let Err(e) = python_shell(&interp) {
-                        error!("[session] Python shell exited with error: {}", e);
-                    }
-                }
                 InternalCommand::ParseImage { path, key } => {
                     info!("[session] Parsing image {:?}...", path);
                     match fs::read(&path) {
@@ -786,9 +750,12 @@ impl Session {
                             match crate::core::data::blocks::NandProcessor::preprocess_nand_with_lba(&raw_data) {
                                 Ok((clean_data, layout, lba_map)) => {
                                     info!("[session] Detected {} bad block(s) during preprocessing", lba_map.bad_blocks.len());
+                                    // Use provided key or buffered pending key
+                                    let active_key = key.or(self.pending_key).unwrap_or([0u8; 16]);
+                                    
                                     // Scan FlashFS with LBA map for accurate block mapping
                                     let flashfs = crate::builder::chain::flashfs::FlashFS::scan_physical_with_lba(&raw_data, &layout, &lba_map);
-                                    match NandSkeleton::parse_clean(clean_data, layout, key.unwrap_or([0u8; 16]), flashfs) {
+                                    match NandSkeleton::parse_clean(clean_data, layout, active_key, flashfs) {
                                         Ok(nand) => {
                                             // Verify bootloader decryption using zero-region checks
                                             if let Some(cb) = &nand.bootloaders.cb_a {
@@ -814,30 +781,32 @@ impl Session {
                                             self.extract_options_from_nand();
                                             info!("[session] Successfully parsed NAND from {:?} (Layout: {:?})", path, layout);
                                         }
-                                        Err(e) => error!("[session] Failed to interpret clean NAND: {}", e),
+                                        Err(e) => return Err(format!("Failed to interpret clean NAND: {}", e)),
                                     }
                                 }
-                                Err(e) => error!("[session] Failed to pre-process NAND image: {}", e),
+                                Err(e) => return Err(format!("Failed to pre-process NAND image: {}", e)),
                             }
                         }
-                        Err(e) => error!("[session] Failed to read image file '{}': {}", path.display(), e),
+                        Err(e) => return Err(format!("Failed to read image file '{}': {}", path.display(), e)),
                     }
                 }
                 InternalCommand::ParseKey { key } => {
+                    self.pending_key = Some(key);
                     if let Some(nand) = &mut self.active_nand {
                         nand.cpukey = Some(key);
-                        info!("[session] CPU Key set (16 bytes).");
+                        info!("[session] CPU Key assigned to active NAND.");
                     } else {
-                        error!("[session] No active NAND image to assign key to.");
+                        info!("[session] CPU Key buffered (awaiting NAND image).");
                     }
                 }
                 InternalCommand::ParseKeybin { key } => {
                     if let Some(k) = key {
+                        self.pending_key = Some(k);
                         if let Some(nand) = &mut self.active_nand {
                             nand.cpukey = Some(k);
-                            info!("[session] CPU Keybin assigned.");
+                            info!("[session] CPU Keybin assigned to active NAND.");
                         } else {
-                            error!("[session] No active NAND image to assign keybin to.");
+                            info!("[session] CPU Keybin buffered (awaiting NAND image).");
                         }
                     } else {
                         error!("[session] No key provided in keybin.");
@@ -872,7 +841,7 @@ impl Session {
                             info!("[session] Successfully parsed patch: Type {:?}, Legacy: {}", 
                                      patch.header.patch_type, patch.is_legacy);
                         }
-                        Err(e) => error!("[session] Failed to parse patch binary: {}", e),
+                        Err(e) => return Err(format!("Failed to parse patch binary: {}", e)),
                     }
                 }
                 InternalCommand::ApplyPatch { path, .. } => {
@@ -881,7 +850,7 @@ impl Session {
                         match parse_patch_binary(path) {
                             Ok(patch) => {
                                 if let Err(e) = nand.apply_patch(patch) {
-                                    error!("[session] Failed to apply patch: {}", e);
+                                    return Err(format!("Failed to apply patch: {}", e));
                                 } else {
                                     info!("[session] Successfully applied patch and routed components.");
                                 }
@@ -1024,7 +993,7 @@ impl Session {
                             self.pending_assets.insert(name.clone(), data);
                             info!("[session] Discovered asset '{}' added to session pool.", name);
                         }
-                        Err(e) => error!("[session] Failed to read asset at {:?}: {}", path, e),
+                        Err(e) => return Err(format!("Failed to read asset at {:?}: {}", path, e)),
                     }
                 }
                 InternalCommand::FinalizeFlashfs => {

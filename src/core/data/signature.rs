@@ -6,7 +6,6 @@
 */
 
 use log::{info, warn};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct Signature {
@@ -33,19 +32,28 @@ impl Signature {
         })
     }
 
-    /// Parses a JSON map of "pattern": "replacement" and applies it to the data.
+    /// Parses a simple JSON-like map of "pattern": "replacement" and applies it to the data.
+    /// Does not require serde_json.
     pub fn apply_batch(data: &mut [u8], json_str: &str) -> Result<usize, String> {
-        let batch: HashMap<String, String> = serde_json::from_str(json_str)
-            .map_err(|e| format!("Failed to parse signature batch JSON: {}", e))?;
-
         let mut total_matches = 0;
-        for (pattern_hex, replacement_hex) in batch {
-            match Self::from_hex(None, &pattern_hex, &replacement_hex) {
-                Ok(sig) => {
-                    total_matches += sig.apply(data);
-                }
-                Err(e) => {
-                    warn!("[signature] Skipping invalid signature pair in batch: {}", e);
+        
+        // Very basic JSON-subset parser for { "key": "value", ... }
+        let content = json_str.trim().trim_start_matches('{').trim_end_matches('}');
+        for pair in content.split(',') {
+            let parts: Vec<&str> = pair.split(':').collect();
+            if parts.len() == 2 {
+                let pattern_hex = parts[0].trim().trim_matches('"');
+                let replacement_hex = parts[1].trim().trim_matches('"');
+                
+                if pattern_hex.is_empty() || replacement_hex.is_empty() { continue; }
+
+                match Self::from_hex(None, pattern_hex, replacement_hex) {
+                    Ok(sig) => {
+                        total_matches += sig.apply(data);
+                    }
+                    Err(e) => {
+                        warn!("[signature] Skipping invalid signature pair in batch: {}", e);
+                    }
                 }
             }
         }

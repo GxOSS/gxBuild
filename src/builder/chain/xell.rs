@@ -51,7 +51,7 @@ impl Xell {
     }
 
     /// Returns the logical NAND offset for this XeLL payload.
-    pub fn get_target_offset(xell_type: XellType, _build_type: crate::builder::builder::BuildType, _image_type: crate::builder::builder::ImageType) -> u32 {
+    pub fn get_target_offset(xell_type: XellType, _image_profile: &str) -> u32 {
         match xell_type {
             XellType::Xell1f => 0xC0000,
             XellType::Xell2f => 0xE2A600,
