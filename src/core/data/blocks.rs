@@ -289,7 +289,8 @@ pub fn add_spare(
     image: &[u8],
     layout: NandLayout,
     blockstart: usize,
-    fs_meta: Option<&std::collections::HashMap<usize, FsSpareInfo>>
+    fs_meta: Option<&std::collections::HashMap<usize, FsSpareInfo>>,
+    jtag_syscall: Option<u16>
 ) -> Vec<u8> {
     let page_size = layout.page_size();
     let total_pages = (image.len() + page_size - 1) / page_size;
@@ -389,6 +390,15 @@ pub fn add_spare(
                 let mut spare = [0u8; 16];
                 let val = (i / 32) + block_number_base;
                 
+                // JTAG syscall injection into Page 1 spare (offset 10, Big Endian)
+                if i == 1 {
+                    if let Some(syscall) = jtag_syscall {
+                        spare[10] = (syscall >> 8) as u8;
+                        spare[11] = (syscall & 0xFF) as u8;
+                        info!("[blocks] Injected JTAG Syscall 0x{:04X} into Page 1 spare", syscall);
+                    }
+                }
+
                 if let Some(fs) = fs_meta.and_then(|m| m.get(&val)) {
                     match layout {
                         NandLayout::Xsb => {
@@ -921,8 +931,8 @@ impl NandProcessor {
 
     /// Finalizes a clean NAND image by adding ECC/spare data for physical output.
     /// If an LbaMap is provided, it uses the metadata format for correct spare layout.
-    pub fn finalize_nand(clean_data: &[u8], layout: NandLayout, fs_meta: Option<&std::collections::HashMap<usize, FsSpareInfo>>) -> Vec<u8> {
+    pub fn finalize_nand(clean_data: &[u8], layout: NandLayout, fs_meta: Option<&std::collections::HashMap<usize, FsSpareInfo>>, jtag_syscall: Option<u16>) -> Vec<u8> {
         if layout == NandLayout::Emmc { return clean_data.to_vec(); }
-        add_spare(clean_data, layout, 0, fs_meta)
+        add_spare(clean_data, layout, 0, fs_meta, jtag_syscall)
     }
 }

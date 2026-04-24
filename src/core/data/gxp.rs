@@ -400,6 +400,27 @@ pub fn parse_gxs_source<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpSection> {
     Ok(GxpSection { records })
 }
 
+/// Serializes a list of patch records back into a binary blob.
+/// This assumes word-based records (standard for KHV and RGLoader patches).
+pub fn serialize_records(records: &[PatchRecord]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    for record in records {
+        buf.extend_from_slice(&record.address.to_be_bytes());
+        // Amount is count of 32-bit words for standard patches
+        let word_count = (record.data.len() + 3) / 4;
+        buf.extend_from_slice(&(word_count as u32).to_be_bytes());
+        
+        let mut data = record.data.clone();
+        if data.len() % 4 != 0 {
+            data.resize((data.len() + 3) & !3, 0); // Align to 4 bytes
+        }
+        buf.extend(data);
+    }
+    // Terminator
+    buf.extend_from_slice(&0xFFFFFFFFu32.to_be_bytes());
+    buf
+}
+
 /// Low-level function to apply a set of patch records to a buffer.
 pub fn apply_records(records: &[PatchRecord], data: &mut Vec<u8>) -> anyhow::Result<()> {
     info!("[gxp] Applying {} records to buffer (size 0x{:X})", records.len(), data.len());
@@ -415,34 +436,13 @@ pub fn apply_records(records: &[PatchRecord], data: &mut Vec<u8>) -> anyhow::Res
             }
             data.resize(offset + record.data.len(), 0);
         }
-
+        
         data[offset..offset + record.data.len()].copy_from_slice(&record.data);
-        modified_words += (record.data.len() + 3) / 4;
+        modified_words += (record.data.len() as u32 + 3) / 4;
     }
     
-    info!("[gxp] Modified {} words.", modified_words);
+    info!("[gxp]   - Patched {} words (0x{:X} bytes)", modified_words, modified_words * 4);
     Ok(())
-}
-
-/// Serializes a set of patch records back into the binary format expected by the KHV patch engine.
-/// Format: [Address (BE)] [Count (BE)] [Data...]
-pub fn serialize_records(records: &[PatchRecord]) -> Vec<u8> {
-    let mut out = Vec::new();
-    for record in records {
-        out.extend_from_slice(&record.address.to_be_bytes());
-        // Amount is count of 32-bit words for standard patches
-        let word_count = (record.data.len() + 3) / 4;
-        out.extend_from_slice(&(word_count as u32).to_be_bytes());
-        
-        let mut data = record.data.clone();
-        if data.len() % 4 != 0 {
-            data.resize((data.len() + 3) & !3, 0); // Align to 4 bytes
-        }
-        out.extend(data);
-    }
-    // Terminator
-    out.extend_from_slice(&0xFFFFFFFFu32.to_be_bytes());
-    out
 }
 
 /// Convenience function: Parses a patch file and applies its first section to a buffer.

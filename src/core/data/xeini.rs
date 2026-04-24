@@ -52,6 +52,12 @@ pub struct BuildIniEntry {
     pub chain: u8,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct JtagConfig {
+    pub syscall: Option<u16>,
+    pub pairing_2bl: Option<[u8; 3]>,
+}
+
 #[derive(Debug, Clone)]
 pub struct BuildIniPatch {
     pub enabled: bool,
@@ -69,6 +75,7 @@ pub struct XeBuildIni {
     pub payloads: Vec<BuildIniEntry>,
     pub patch: BuildIniPatch,
     pub rebooter: bool,
+    pub jtag: JtagConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -380,7 +387,30 @@ pub fn parse_xe_ini(
     let mut payloads_entries = Vec::new();
     for entry in payloads_data_raw {
         if !entry.is_empty() {
-            payloads_entries.push(resolve(&entry[0], entry.get(1).map(|s| s.as_str()), 0)?);
+            let line = &entry[0];
+            // Format: [offset:]filename [= description]
+            let parts: Vec<&str> = line.split('=').collect();
+            let file_part = parts[0].trim();
+            let subparts: Vec<&str> = file_part.split(':').collect();
+            let filename = if subparts.len() > 1 { subparts[1].trim() } else { subparts[0].trim() };
+            
+            payloads_entries.push(resolve(filename, entry.get(1).map(|s| s.as_str()), 0)?);
+        }
+    }
+
+    let mut jtag = JtagConfig::default();
+    if let Some(jtag_section) = config.get("jtag") {
+        if let Some(s) = jtag_section.get("syscall") {
+            jtag.syscall = u16::from_str_radix(s.trim_start_matches("0x"), 16).ok();
+        }
+        if let Some(p) = jtag_section.get("2blpairing") {
+            // format: 0x11,0x22,0x33
+            let parts: Vec<u8> = p.split(',')
+                .filter_map(|s| u8::from_str_radix(s.trim().trim_start_matches("0x"), 16).ok())
+                .collect();
+            if parts.len() == 3 {
+                jtag.pairing_2bl = Some([parts[0], parts[1], parts[2]]);
+            }
         }
     }
 
@@ -393,6 +423,7 @@ pub fn parse_xe_ini(
         payloads: payloads_entries,
         patch: BuildIniPatch { enabled: build_type != "retail", path: None, khv: None },
         rebooter: counts.values().any(|&c| c > 1),
+        jtag,
     };
 
     Ok(ini)
@@ -516,11 +547,72 @@ pub fn apply_xe_ini(
         
         if let Some(data) = pending.bootloaders.get(&lower) {
             if lower.contains("xell") {
-                nand.bootloaders.xell = Some(crate::builder::chain::xell::Xell::parse(data));
-                info!("[ini] Assigned XeLL payload from '{}' ({} bytes)", filename, data.len());
+                let xell = crate::builder::chain::xell::Xell::parse(data, Some(filename));
+                let x_type = xell.identify();
+                
+                let is_unsafe = nand.options.gxunsafe;
+                let build_type = nand.options.build_type;
+
+                match x_type {
+                    crate::builder::chain::xell::XellType::XellGg => {
+                        if build_type != crate::builder::builder::BuildType::Glitch && !is_unsafe {
+                            error!("[ini] FATAL: xell-gggggg is for Glitch builds only.");
+                            return Err(IniError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid XeLL for build type")));
+                        }
+                        nand.bootloaders.xell = Some(xell);
+                        info!("[ini] Assigned xell-gggggg to primary slot");
+                    },
+                    crate::builder::chain::xell::XellType::Xell1f => {
+                        if build_type != crate::builder::builder::BuildType::Jtag && !is_unsafe {
+                            error!("[ini] FATAL: xell-1f is for Rebooter XeLL images only.");
+                            return Err(IniError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid XeLL for build type")));
+                        }
+                        info!("[ini] Detected xell-1f: Switching to Onef profile (XeLL-only rebooter)");
+                        nand.options.image_type = crate::builder::builder::ImageType::Onef;
+                        nand.bootloaders.xell = Some(xell);
+                    },
+                    crate::builder::chain::xell::XellType::Xell2f => {
+                        if build_type != crate::builder::builder::BuildType::Jtag && !is_unsafe {
+                            error!("[ini] FATAL: xell-2f is for Full Rebooter images only.");
+                            return Err(IniError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid XeLL for build type")));
+                        }
+                        nand.rebooter.as_mut().map(|r| r.xell = Some(xell));
+                        info!("[ini] Assigned xell-2f to Full Rebooter secondary slot");
+                    },
+                    _ => {
+                        warn!("[ini] Unknown XeLL type, assigning to primary slot");
+                        nand.bootloaders.xell = Some(xell);
+                    }
+                }
+            } else {
+                let mut p_entry = crate::builder::builder::PayloadEntry {
+                    address: 0, // Dynamic
+                    size: data.len() as u32,
+                    description: filename.clone(),
+                    data: data.clone(),
+                    fixed_address: None,
+                };
+
+                if build_type == "jtag" {
+                    if lower == "jtag_payload.bin" {
+                        p_entry.fixed_address = Some(0x200);
+                        p_entry.description = "JTAG Exploit Payload".to_string();
+                        info!("[ini] Detected JTAG Exploit Payload, assigning to fixed address 0x200");
+                    } else if lower == "fuses.bin" {
+                        p_entry.description = "Virtual Fuses".to_string();
+                    } else if lower == "freeboot.bin" {
+                        p_entry.description = "Freeboot Kernel".to_string();
+                    }
+                }
+
+                nand.payloads.push(p_entry);
+                info!("[ini] Assigned payload '{}' ({} bytes)", filename, data.len());
             }
         }
     }
+
+    nand.options.jtag_syscall = ini.jtag.syscall;
+    nand.options.jtag_pairing_2bl = ini.jtag.pairing_2bl;
 
     // Process File Entries (Security & FlashFS)
     // In the new architecture, FlashFS entries are added directly to the FlashFS struct 
@@ -542,9 +634,16 @@ pub fn apply_xe_ini(
 
     nand.bootloaders.khvpatch = ini.patch.khv.clone();
 
-    if build_type == "glitch2" || build_type == "devgl" {
-        info!("[ini] Build type '{}' detected: Using 0x60 KHV vfuse header", build_type);
+    if nand.options.build_type == crate::builder::builder::BuildType::Glitch2 || nand.options.build_type == crate::builder::builder::BuildType::DevGl {
+        info!("[ini] Build type '{:?}' detected: Using 0x60 KHV vfuse header", nand.options.build_type);
         nand.options.khv_header_size = 0x60;
+    }
+
+    // Finalize image profile enforcement
+    if nand.options.image_type == crate::builder::builder::ImageType::Onef {
+        info!("[ini] Enforcing Onef profile: Clearing second-chain kernel and FlashFS");
+        nand.update = crate::builder::builder::NandUpdate::default();
+        nand.flashfs = crate::builder::chain::flashfs::FlashFS::new();
     }
 
     Ok(nand)

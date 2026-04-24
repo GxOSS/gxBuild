@@ -705,7 +705,8 @@ impl Session {
                                     }
                                 }
                                 
-                                let finalized_bytes = crate::core::data::blocks::NandProcessor::finalize_nand(&clean_bytes, layout, Some(&fs_meta));
+                                let jtag_syscall = self.active_nand.as_ref().and_then(|n| n.options.jtag_syscall);
+                                let finalized_bytes = crate::core::data::blocks::NandProcessor::finalize_nand(&clean_bytes, layout, Some(&fs_meta), jtag_syscall);
                                 let final_size = finalized_bytes.len();
                                 if let Err(e) = std::fs::write(&output, finalized_bytes) {
                                     error!("[session] Failed to write build output to '{}': {}", output.display(), e);

@@ -190,6 +190,21 @@ impl BootloaderCb {
         }
     }
 
+    pub fn recalculate_per_box_digest(&mut self, cpu_key: &[u8; 16]) {
+        if let Some(ref mut meta) = self.metadata {
+            let mut data_to_hash = [0u8; 0x10];
+            data_to_hash[0..3].copy_from_slice(&meta.pairing_data);
+            data_to_hash[3] = meta.lockdown_value;
+            data_to_hash[4..16].copy_from_slice(&meta.reserved_per_box);
+
+            if let Ok(digest) = excrypt::hmac_sha(cpu_key, &[&data_to_hash]) {
+                meta.per_box_digest.copy_from_slice(&digest[..16]);
+                self.sync_metadata();
+                info!("[builder] Recalculated CB PerBoxDigest with updated pairing data");
+            }
+        }
+    }
+
     pub fn is_decrypted(&self) -> bool {
         if self.data.len() < 0x380 { return false; }
         // Use the zero-padding chunk (CB[0x270:0x390] relative to 0x10 header offset) to verify success
