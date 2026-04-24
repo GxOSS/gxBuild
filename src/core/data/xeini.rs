@@ -66,6 +66,7 @@ pub struct XeBuildIni {
     pub main: Vec<BuildIniEntry>,
     pub security: Vec<BuildIniEntry>,
     pub flashfs: Vec<BuildIniEntry>,
+    pub payloads: Vec<BuildIniEntry>,
     pub patch: BuildIniPatch,
     pub rebooter: bool,
 }
@@ -337,6 +338,10 @@ pub fn parse_xe_ini(
         .cloned()
         .unwrap_or_default();
 
+    let payloads_data_raw = sections.get("payloads")
+        .cloned()
+        .unwrap_or_default();
+
     let resolve = |filename: &str, expected_hash: Option<&str>, chain: u8| -> Result<BuildIniEntry, IniError> {        
         Ok(BuildIniEntry {
             filename: filename.to_string(),
@@ -372,12 +377,20 @@ pub fn parse_xe_ini(
         }
     }
 
+    let mut payloads_entries = Vec::new();
+    for entry in payloads_data_raw {
+        if !entry.is_empty() {
+            payloads_entries.push(resolve(&entry[0], entry.get(1).map(|s| s.as_str()), 0)?);
+        }
+    }
+
     let ini = XeBuildIni {
         name: target_section.to_string(),
         buildtype: build_type.clone(),
         main: main_entries,
         security: security_entries,
         flashfs: flashfs_entries,
+        payloads: payloads_entries,
         patch: BuildIniPatch { enabled: build_type != "retail", path: None, khv: None },
         rebooter: counts.values().any(|&c| c > 1),
     };
@@ -493,6 +506,19 @@ pub fn apply_xe_ini(
             }
         } else {
             warn!("[ini] '{}' did not match any known bootloader prefix, skipping.", filename);
+        }
+    }
+
+    // process [payloads]
+    for entry in &ini.payloads {
+        let filename = &entry.filename;
+        let lower = filename.to_lowercase();
+        
+        if let Some(data) = pending.bootloaders.get(&lower) {
+            if lower.contains("xell") {
+                nand.bootloaders.xell = Some(crate::builder::chain::xell::Xell::parse(data));
+                info!("[ini] Assigned XeLL payload from '{}' ({} bytes)", filename, data.len());
+            }
         }
     }
 

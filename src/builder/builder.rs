@@ -251,6 +251,7 @@ pub struct BuildOptions {
     pub shadowboot: bool,
     pub mfg: bool,
     pub noremap: bool,
+    pub khv_apply: bool,
     pub patches: Option<NandPatches>,
 }
 
@@ -293,7 +294,7 @@ impl NandSkeleton {
                 image_type: ImageType::Single,
                 build_type: BuildType::Retail,
                 motherboard: MotherboardType::Unknown,
-                bigonsmall: false, shadowboot: false, mfg: false, noremap: false, patches: None,
+                bigonsmall: false, shadowboot: false, mfg: false, noremap: false, khv_apply: false, patches: None,
             },
             header: NandHeader {
                 prefix: NandHeaderPrefix {
@@ -820,6 +821,21 @@ impl NandSkeleton {
             }
         }
 
+        // 3b. XeLL Placement
+        if let Some(xell) = &self.bootloaders.xell {
+            if self.options.build_type != crate::builder::builder::BuildType::Retail {
+                let xell_offset = crate::builder::chain::xell::Xell::get_target_offset(self.options.build_type, self.options.image_type) as usize;
+                if xell_offset + xell.data.len() > logical_image.len() {
+                    return Err(format!("XeLL overflow at 0x{:X}: need 0x{:X} bytes", xell_offset, xell.data.len()));
+                }
+                if xell_offset < curr_bl {
+                    warn!("[builder] XeLL offset 0x{:X} overlaps with bootloaders (end at 0x{:X})!", xell_offset, curr_bl);
+                }
+                info!("[builder] Injecting XeLL payload at hardcoded offset 0x{:08X} (type: {:?})", xell_offset, xell.xell_type);
+                logical_image[xell_offset..xell_offset + xell.data.len()].copy_from_slice(&xell.data);
+            }
+        }
+
         header.prefix.entrypoint.set(bootchain_start as u32);
         let header_bytes = zerocopy::IntoBytes::as_bytes(&header);
         logical_image[..header_bytes.len()].copy_from_slice(header_bytes);
@@ -863,6 +879,122 @@ impl NandSkeleton {
             }
         }
 
+        // 5. KHV Patches
+        if let Some(records) = &self.bootloaders.khvpatch {
+            if self.options.khv_apply {
+                return Err("KHV Apply (direct patching) is not yet implemented for devkit/RGH images. Please set khv_apply: false to use standard NAND injection.".to_string());
+            }
+
+            if self.options.build_type != BuildType::Retail {
+                let cf_off = self.header.cf_offset.get();
+                let fs_off = self.header.fs_addr.get();
+                // Formula: Target = cf_offset + fs_addr + 0x60
+                let patch_target = (cf_off + fs_off + 0x60) as usize;
+                
+                info!("[builder] Injecting KHV patches at calculated offset: 0x{:08X}", patch_target);
+                
+                let mut patch_binary = vec![0u8; 0x60]; // 0x60 byte Virtual Fuse header (padding)
+                patch_binary.extend(crate::core::data::gxp::serialize_records(records));
+                
+                if patch_target + patch_binary.len() > logical_image.len() {
+                    warn!("[builder] KHV patch injection overflows logical image! Resizing...");
+                    logical_image.resize(patch_target + patch_binary.len(), 0xFF);
+                }
+                
+                logical_image[patch_target..patch_target + patch_binary.len()].copy_from_slice(&patch_binary);
+            }
+        }
+
+        Ok(logical_image)
+    }
+
+    /// Assembles a specialized minimal NAND image containing only the essential boot chain and XeLL.
+    /// This follows the layout found in "ECC" or "XeLL" builder scripts like buildpy.
+    pub fn assemble_xell_image(&self) -> Result<Vec<u8>, String> {
+        let layout = &self.options.layout;
+        // Standard ECC/XeLL images are typically 1.3MB (enough to cover the 0x100000 XeLL slot)
+        let image_size = 0x140000;
+        let mut logical_image = vec![0xFFu8; image_size];
+        
+        let mut header = self.header.clone();
+        
+        // 1. SMC and Keyvault
+        let smc_len = self.extra.smc.len();
+        let target_smc_offset = match layout {
+            NandLayout::Emmc => 0x800,
+            _                => 0x1000,
+        };
+        if !self.extra.smc.is_empty() {
+            logical_image[target_smc_offset..target_smc_offset + smc_len].copy_from_slice(&self.extra.smc);
+        }
+        
+        let kv_offset = 0x4000;
+        if !self.extra.keyvault.is_empty() {
+            logical_image[kv_offset..kv_offset + self.extra.keyvault.len()].copy_from_slice(&self.extra.keyvault);
+        }
+        
+        // 2. Bootloaders (CB, CD only)
+        let bootchain_start = 0x8000;
+        let mut curr_bl = bootchain_start;
+        let mut bl_stages = Vec::new();
+        if let Some(cb) = &self.bootloaders.cb { bl_stages.push(("CB", cb.serialize())); }
+        if let Some(cba) = &self.bootloaders.cb_a { bl_stages.push(("CB_A", cba.serialize())); }
+        if let Some(cbx) = &self.bootloaders.cb_x { bl_stages.push(("CB_X", cbx.serialize())); }
+        if let Some(cbb) = &self.bootloaders.cb_b { bl_stages.push(("CB_B", cbb.serialize())); }
+        if let Some(sc) = &self.bootloaders.sc { bl_stages.push(("SC", sc.serialize())); }
+        if let Some(cd) = &self.bootloaders.cd { bl_stages.push(("CD", cd.serialize())); }
+        
+        // CE, CF, CG are intentionally omitted for XeLL-only images
+        
+        for (name, mut data) in bl_stages {
+            let declared_size = if data.len() >= 16 {
+                let h = BootloaderHeader::read_from_prefix(&data).map(|(h,_)| h.size.get()).unwrap_or(0);
+                h as usize
+            } else { 0 };
+
+            let aligned_declared = (declared_size + 0xF) & !0xF;
+            if aligned_declared > 0 && data.len() != aligned_declared {
+                data.resize(aligned_declared, 0);
+            }
+
+            if curr_bl + data.len() > logical_image.len() {
+                return Err(format!("Bootchain stage {} overflow at 0x{:X}", name, curr_bl));
+            }
+            logical_image[curr_bl..curr_bl+data.len()].copy_from_slice(&data);
+            curr_bl += data.len();
+        }
+        
+        // 3. XeLL Injection (Backup at 0xC0000, Main at 0x100000)
+        if let Some(xell) = &self.bootloaders.xell {
+            let xell_backup_offset = 0xC0000;
+            let xell_main_offset = 0x100000;
+            
+            // Inject Backup
+            if xell_backup_offset + xell.data.len() <= logical_image.len() {
+                info!("[builder] Injecting XeLL backup at 0x{:08X}", xell_backup_offset);
+                logical_image[xell_backup_offset..xell_backup_offset + xell.data.len()].copy_from_slice(&xell.data);
+            }
+            
+            // Inject Main
+            if xell_main_offset + xell.data.len() <= logical_image.len() {
+                info!("[builder] Injecting XeLL main at 0x{:08X}", xell_main_offset);
+                logical_image[xell_main_offset..xell_main_offset + xell.data.len()].copy_from_slice(&xell.data);
+            }
+        } else {
+            warn!("[builder] Assembling XeLL image WITHOUT a XeLL payload!");
+        }
+        
+        // Update header fields for minimal layout
+        header.smc_boot_offset.set(target_smc_offset as u32);
+        header.smc_boot_size.set(smc_len as u32);
+        header.kv_addr.set(kv_offset as u32);
+        header.cf_offset.set(((curr_bl + 0x3FFF) & !0x3FFF) as u32); // Point CF pointer to aligned gap after CD
+        header.prefix.entrypoint.set(bootchain_start as u32);
+        header.fs_addr.set(0); // No filesystem
+        
+        let header_bytes = zerocopy::IntoBytes::as_bytes(&header);
+        logical_image[..header_bytes.len()].copy_from_slice(header_bytes);
+        
         Ok(logical_image)
     }
 

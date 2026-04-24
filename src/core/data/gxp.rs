@@ -424,6 +424,27 @@ pub fn apply_records(records: &[PatchRecord], data: &mut Vec<u8>) -> anyhow::Res
     Ok(())
 }
 
+/// Serializes a set of patch records back into the binary format expected by the KHV patch engine.
+/// Format: [Address (BE)] [Count (BE)] [Data...]
+pub fn serialize_records(records: &[PatchRecord]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for record in records {
+        out.extend_from_slice(&record.address.to_be_bytes());
+        // Amount is count of 32-bit words for standard patches
+        let word_count = (record.data.len() + 3) / 4;
+        out.extend_from_slice(&(word_count as u32).to_be_bytes());
+        
+        let mut data = record.data.clone();
+        if data.len() % 4 != 0 {
+            data.resize((data.len() + 3) & !3, 0); // Align to 4 bytes
+        }
+        out.extend(data);
+    }
+    // Terminator
+    out.extend_from_slice(&0xFFFFFFFFu32.to_be_bytes());
+    out
+}
+
 /// Convenience function: Parses a patch file and applies its first section to a buffer.
 pub fn parse_and_apply_to_buffer<P: AsRef<Path>>(path: P, data: &mut Vec<u8>) -> anyhow::Result<()> {
     let patch = parse_patch_binary(path)?;

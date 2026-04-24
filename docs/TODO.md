@@ -13,13 +13,10 @@ Smc:
 FlashFS:
 - eMMC
 - mobile partitions
-- FlashFS metadata
-- FlashFS placement
 
 Image Building:
 - Fix CRC32
 - Place KHV patches
-
 
 ## Next Release (1.23)
 
@@ -35,4 +32,4 @@ Image Building:
 - Parse and build CF and CG to / from kernel and hypervisor
 - Apply CF and CG to K/HV
 - Patch assembly and dissasembly
-- Loaderpatch / RGLP to GGX
+- Loaderpatch / RGLP to GXP
