@@ -394,7 +394,11 @@ impl NandSkeleton {
             update: NandUpdate { cf_0: None, cg_0: None, cf_1: None, cg_1: None },
             rebooter_update: None,
             payloads: Vec::new(),
-            flashfs: FlashFS::new(),
+            flashfs: {
+                let mut fs = FlashFS::new();
+                fs.root.block_map = vec![0; total_blocks];
+                fs
+            },
             layout,
             total_blocks,
         }
@@ -847,6 +851,15 @@ impl NandSkeleton {
             }
         }
 
+        // 5. FlashFS & Layout Calculation
+        let (fs_addr_calc, smc_config_offset, _phys_fs_block) = LayoutCalculator::calculate(
+            SouthbridgeType::from(self.options.motherboard),
+            self.options.image_type,
+            *layout
+        );
+        header.fs_addr.set(fs_addr_calc);
+        header.smc_config_offset.set(smc_config_offset);
+
         // 4. Dynamic Payloads (KHV, RGLP, etc.)
         let mut final_payloads = self.payloads.clone();
         if let Some(records) = &self.bootloaders.khvpatch {
@@ -860,6 +873,7 @@ impl NandSkeleton {
                     size: patch_binary.len() as u32,
                     description: "xeBuild KHV Patches".to_string(),
                     data: patch_binary,
+                    fixed_address: None,
                 });
             }
         }
@@ -914,15 +928,6 @@ impl NandSkeleton {
                 info!("[builder] Injected payload '{}' at 0x{:08X} (Size: 0x{:X})", payload.description, addr, payload.data.len());
             }
         }
-
-        // 5. FlashFS
-        let (fs_addr_calc, smc_config_offset, _phys_fs_block) = LayoutCalculator::calculate(
-            SouthbridgeType::from(self.options.motherboard),
-            self.options.image_type,
-            *layout
-        );
-        header.fs_addr.set(fs_addr_calc);
-        header.smc_config_offset.set(smc_config_offset);
 
         if !self.flashfs.root.entries.is_empty() && fs_addr_calc > 0 {
             let mut root = self.flashfs.root.clone();

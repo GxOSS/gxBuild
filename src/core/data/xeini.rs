@@ -643,7 +643,9 @@ pub fn apply_xe_ini(
     if nand.options.image_type == crate::builder::builder::ImageType::Onef {
         info!("[ini] Enforcing Onef profile: Clearing second-chain kernel and FlashFS");
         nand.update = crate::builder::builder::NandUpdate::default();
+        let total_blocks = nand.flashfs.root.block_map.len();
         nand.flashfs = crate::builder::chain::flashfs::FlashFS::new();
+        nand.flashfs.root.block_map = vec![0; total_blocks];
     }
 
     Ok(nand)
