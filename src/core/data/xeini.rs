@@ -542,5 +542,10 @@ pub fn apply_xe_ini(
 
     nand.bootloaders.khvpatch = ini.patch.khv.clone();
 
+    if build_type == "glitch2" || build_type == "devgl" {
+        info!("[ini] Build type '{}' detected: Using 0x60 KHV vfuse header", build_type);
+        nand.options.khv_header_size = 0x60;
+    }
+
     Ok(nand)
 }

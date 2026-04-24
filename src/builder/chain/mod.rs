@@ -360,3 +360,86 @@ pub fn encrypt_chain(
 
     Ok(())
 }
+
+pub fn encrypt_rebooter_chain(
+    cb0: &mut cb::BootloaderCb,
+    cd0: &mut cd::BootloaderCd,
+    cb1: &mut cb::BootloaderCb,
+    cd1: &mut cd::BootloaderCd,
+    ce1: &mut ce::BootloaderCe,
+    update: &mut (Option<&mut cf::BootloaderCf>, Option<&mut cg::BootloaderCg>, Option<&mut cf::BootloaderCf>, Option<&mut cg::BootloaderCg>),
+    smc: &mut RawSmc,
+    cpukey: &[u8; 16],
+) -> Result<(), String> {
+    info!("[builder] Re-encrypting JTAG dual-chain...");
+
+    // --- Chain 0 (Base) ---
+    // 1. Sync metadata
+    cb0.sync_metadata();
+    cd0.sync_metadata();
+
+    // 2. Derive base CB key
+    let mut cb0_nonce = [0u8; 16];
+    if cb0.data.len() >= 16 {
+        cb0_nonce.copy_from_slice(&cb0.data[0..16]);
+    }
+    let derived0 = excrypt::hmac_sha(&ONEBL_KEY, &[&cb0_nonce])
+        .map_err(|e| format!("Base CB key derivation failed: {}", e))?;
+    let mut cb0_key = [0u8; 16];
+    cb0_key.copy_from_slice(&derived0[..16]);
+
+    // 3. Marriage digest for base chain
+    let digest0 = fix_per_box_digest(&smc.data, &cb0.header, &cb0.data, &cb0_key, cpukey)?;
+    if cb0.data.len() >= 0x20 {
+        cb0.data[0x10..0x20].copy_from_slice(&digest0);
+    }
+
+    // 4. Encrypt base chain
+    cd0.decrypt(&cb0_key, None);
+    cb0.decrypt(&ONEBL_KEY);
+    info!("[builder] JTAG Chain 0 (Base) re-encrypted.");
+
+    // --- Chain 1 (Rebooter) ---
+    // 1. Sync metadata
+    cb1.sync_metadata();
+    cd1.sync_metadata();
+    ce1.sync_metadata();
+    if let Some(cf) = update.0.as_mut() { cf.sync_metadata(); }
+    if let Some(cg) = update.1.as_mut() { cg.sync_metadata(); }
+    if let Some(cf) = update.2.as_mut() { cf.sync_metadata(); }
+    if let Some(cg) = update.3.as_mut() { cg.sync_metadata(); }
+
+    // 2. Derive rebooter CB key
+    let mut cb1_nonce = [0u8; 16];
+    if cb1.data.len() >= 16 {
+        cb1_nonce.copy_from_slice(&cb1.data[0..16]);
+    }
+    let derived1 = excrypt::hmac_sha(&ONEBL_KEY, &[&cb1_nonce])
+        .map_err(|e| format!("Rebooter CB key derivation failed: {}", e))?;
+    let mut cb1_key = [0u8; 16];
+    cb1_key.copy_from_slice(&derived1[..16]);
+
+    // 3. Encrypt update stages (Reverse order)
+    // Slot 1
+    if let (Some(cf), Some(cg)) = (update.2.as_mut(), update.3.as_mut()) {
+        let mut cg_hmac = [0u8; 16];
+        if cf.data.len() >= 0x330 { cg_hmac.copy_from_slice(&cf.data[0x320..0x330]); }
+        cg.decrypt(&cg_hmac);
+        cf.decrypt(&ONEBL_KEY);
+    }
+    // Slot 0
+    if let (Some(cf), Some(cg)) = (update.0.as_mut(), update.1.as_mut()) {
+        let mut cg_hmac = [0u8; 16];
+        if cf.data.len() >= 0x330 { cg_hmac.copy_from_slice(&cf.data[0x320..0x330]); }
+        cg.decrypt(&cg_hmac);
+        cf.decrypt(&ONEBL_KEY);
+    }
+
+    // 4. Encrypt rebooter stages
+    ce1.decrypt(&cb1_key);
+    cd1.decrypt(&cb1_key, None);
+    cb1.decrypt(&ONEBL_KEY);
+    info!("[builder] JTAG Chain 1 (Rebooter) re-encrypted.");
+
+    Ok(())
+}

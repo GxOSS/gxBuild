@@ -36,6 +36,7 @@ pub struct KeyvaultMetadata {
     pub fcrt: bool,
     pub console_type: u32,
     pub version: u16,
+    pub kv_type: u8,
 }
 
 #[derive(Clone)]
@@ -103,6 +104,7 @@ impl Keyvault {
             fcrt: (flags & 0x120) != 0,
             console_type: u32::from_be_bytes(self.data[0x9E0..0x9E4].try_into().unwrap()),
             version: record.version.get(),
+            kv_type: self.get_kv_type(),
         };
 
         self.metadata = Some(meta);
@@ -132,35 +134,36 @@ impl Keyvault {
     }
 
     pub fn decrypt(&mut self, cpukey: &[u8; 16], hashed: bool) -> Result<(), String> {
+        if self.is_decrypted {
+            return Ok(()); // Already decrypted
+        }
+
         if self.data.len() < 0x10 {
             return Err("Keyvault too small for decryption".to_string());
         }
 
+        // Backup for rollback if validation fails
+        let original_data = self.data.clone();
+
         let mut decrypt_key = [0u8; 16];
 
-        if hashed {
-            // KV2 / Hashed Decryption
-            // 1. Calculate salt: HMAC-SHA1(CPUKey, DecryptedData[0x10..] + {0x07, 0x12})
-            // Wait, decryption for hashed KV uses the salt (nonce) at [0..16]
-            let mut nonce = [0u8; 16];
-            nonce.copy_from_slice(&self.data[..0x10]);
+        // Decryption logic is identical for both branches during the derivation phase,
+        // as the first 16 bytes (nonce) are used as-is from the buffer.
+        let mut nonce = [0u8; 16];
+        nonce.copy_from_slice(&self.data[..0x10]);
 
-            // Derive key: HMAC-SHA1(CPUKey, Nonce[0..16])
-            let hmac_res = excrypt::hmac_sha(cpukey, &[&nonce])
-                .map_err(|e| format!("KV2 key derivation failed: {}", e))?;
-            decrypt_key.copy_from_slice(&hmac_res[..16]);
+        let hmac_res = excrypt::hmac_sha(cpukey, &[&nonce])
+            .map_err(|e| format!("KV key derivation failed: {}", e))?;
+        
+        if hashed {
+            // KV2 / Hashed Decryption uses a second HMAC of the salt
+            let hmac_res_v2 = excrypt::hmac_sha(cpukey, &[&hmac_res[..16]])
+                .map_err(|e| format!("KV2 double-HMAC failed: {}", e))?;
+            decrypt_key.copy_from_slice(&hmac_res_v2[..16]);
             info!("[builder] KV2 Decryption Key Derived: {:02x?}", decrypt_key);
         } else {
-            // KV1 / Standard Decryption
-            // 1. Extract the HMAC-SHA1 Nonce (first 16 bytes)
-            let mut nonce = [0u8; 16];
-            nonce.copy_from_slice(&self.data[..0x10]);
-
-            // 2. Derive the RC4 key: HMAC-SHA1(CPUKey, Nonce)
-            let hmac_res = excrypt::hmac_sha(cpukey, &[&nonce])
-                .map_err(|e| format!("Key derivation failed: {}", e))?;
             decrypt_key.copy_from_slice(&hmac_res[..16]);
-            info!("[builder] Keyvault Decryption Key Derived: {:02x?}", decrypt_key);
+            info!("[builder] KV1 Decryption Key Derived: {:02x?}", decrypt_key);
         }
 
         // 3. Decrypt the rest of the KV (0x10 to end) using RC4
@@ -169,6 +172,12 @@ impl Keyvault {
         
         rc4.crypt(&mut self.data[0x10..])
             .map_err(|e| format!("Decryption failed: {}", e))?;
+
+        // 4. Validate Decryption (Zero-region check)
+        if !self.check_decrypted_signatures() {
+            self.data = original_data; // Rollback
+            return Err("Keyvault decryption failed: Signature check failed (Wrong CPU Key?)".to_string());
+        }
 
         if let Ok(rec) = self.get_record() {
             info!("[builder] Keyvault decrypted: version={}, serial={}", rec.version.get(), self.get_serial());
@@ -204,11 +213,15 @@ impl Keyvault {
             // 4. Store the salt in the first 16 bytes
             self.data[..16].copy_from_slice(&salt[..16]);
         } else {
-            // KV1 / Standard Encryption - RC4 is symmetric, so the encrypt operation is
-            // identical to decrypt: HMAC(cpukey, nonce) → RC4(payload). The nonce at
-            // data[0x00..0x10] is NOT modified by decrypt(), so calling decrypt() on an
-            // already-decrypted KV correctly re-encrypts it using the same derived key.
-            self.decrypt(cpukey, false)?;
+            // KV1 / Standard Encryption
+            let mut nonce = [0u8; 16];
+            nonce.copy_from_slice(&self.data[..0x10]);
+            let hmac_res = excrypt::hmac_sha(cpukey, &[&nonce])
+                .map_err(|e| format!("Key derivation failed: {}", e))?;
+            let mut rc4 = Rc4::new(&hmac_res[..16])
+                .map_err(|e| format!("RC4 init failed: {}", e))?;
+            rc4.crypt(&mut self.data[0x10..])
+                .map_err(|e| format!("Encryption failed: {}", e))?;
         }
         self.is_decrypted = false;
         self.metadata = None;
@@ -238,11 +251,22 @@ impl Keyvault {
 
     pub fn get_osig(&self) -> String {
         let start = OFFSET_OSIG_STR;
-        let end = start + 32;
+        let end = start + 28; // J-Runner reads exactly 28 bytes
         if self.data.len() >= end {
             String::from_utf8_lossy(&self.data[start..end]).trim_matches(char::from(0)).to_string()
         } else {
             "Unknown".to_string()
+        }
+    }
+
+    pub fn get_kv_type(&self) -> u8 {
+        // J-Runner Nand.cs:679 - Check 0x1DF8 (XEKEY_SPECIAL_KEYVAULT_SIGNATURE)
+        if self.data.len() < 0x1E00 { return 1; }
+        let sig_region = &self.data[0x1DF8..0x1E00];
+        if sig_region.iter().all(|&b| b == 0xFF || b == 0x00) {
+            1
+        } else {
+            2
         }
     }
 

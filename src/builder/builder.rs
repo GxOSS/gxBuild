@@ -252,6 +252,7 @@ pub struct BuildOptions {
     pub mfg: bool,
     pub noremap: bool,
     pub khv_apply: bool,
+    pub khv_header_size: u32,
     pub patches: Option<NandPatches>,
 }
 
@@ -294,7 +295,7 @@ impl NandSkeleton {
                 image_type: ImageType::Single,
                 build_type: BuildType::Retail,
                 motherboard: MotherboardType::Unknown,
-                bigonsmall: false, shadowboot: false, mfg: false, noremap: false, khv_apply: false, patches: None,
+                bigonsmall: false, shadowboot: false, mfg: false, noremap: false, khv_apply: false, khv_header_size: 0, patches: None,
             },
             header: NandHeader {
                 prefix: NandHeaderPrefix {
@@ -679,6 +680,161 @@ impl NandSkeleton {
         Ok((bl, update))
     }
 
+    /// Assembles a JTAG rebooter image with two bootloader chains.
+    /// Chain 0 (Base) starts at 0x8000.
+    /// Chain 1 (Update) starts at 0x20000.
+    pub fn assemble_rebooter(&self) -> Result<Vec<u8>, String> {
+        let layout = &self.options.layout;
+        let expected_size = self.total_blocks * layout.logical_pages_per_block() * 0x200;
+        
+        let mut logical_image = self.image.clone();
+        if logical_image.len() != expected_size {
+            logical_image.resize(expected_size, 0);
+        }
+        
+        let mut header = self.header.clone();
+
+        // 1. SMC and Keyvault
+        let smc_len = self.extra.smc.len();
+        let target_smc_offset = match layout {
+            NandLayout::Emmc => 0x800,
+            _                => 0x1000,
+        };
+        if !self.extra.smc.is_empty() {
+            logical_image[target_smc_offset..target_smc_offset + smc_len].copy_from_slice(&self.extra.smc);
+        }
+        
+        let kv_offset = 0x4000;
+        if !self.extra.keyvault.is_empty() {
+            logical_image[kv_offset..kv_offset + self.extra.keyvault.len()].copy_from_slice(&self.extra.keyvault);
+        }
+
+        // 2. Chain 0 (Base) - starts at 0x8000
+        let mut curr_off = 0x8000;
+        let mut bl_stages = Vec::new();
+        if let Some(cb) = &self.bootloaders.cb_a { bl_stages.push(("CB_A", cb.serialize())); }
+        else if let Some(cb) = &self.bootloaders.cb { bl_stages.push(("CB", cb.serialize())); }
+        
+        if let Some(cbb) = &self.bootloaders.cb_b { bl_stages.push(("CB_B", cbb.serialize())); }
+        if let Some(cd) = &self.bootloaders.cd { bl_stages.push(("CD", cd.serialize())); }
+
+        for (name, mut data) in bl_stages {
+            let declared_size = if data.len() >= 16 {
+                let h = BootloaderHeader::read_from_prefix(&data).map(|(h,_)| h.size.get()).unwrap_or(0);
+                h as usize
+            } else { 0 };
+            let aligned = (declared_size + 0xF) & !0xF;
+            if aligned > 0 && data.len() != aligned { data.resize(aligned, 0); }
+            
+            if curr_off + data.len() > logical_image.len() {
+                return Err(format!("Chain 0 {} overflow at 0x{:X}", name, curr_off));
+            }
+            info!("[builder] JTAG Chain 0: Serializing {} at 0x{:08X}", name, curr_off);
+            logical_image[curr_off..curr_off+data.len()].copy_from_slice(&data);
+            curr_off += data.len();
+        }
+
+        // 3. Chain 1 (Update) - starts at 0x20000
+        let rebooter = self.rebooter.as_ref().ok_or("Rebooter chain (Chain 1) is missing for JTAG build")?;
+        curr_off = 0x20000;
+        let mut update_stages = Vec::new();
+        if let Some(cb) = &rebooter.cb { update_stages.push(("CB", cb.serialize())); }
+        if let Some(cd) = &rebooter.cd { update_stages.push(("CD", cd.serialize())); }
+        if let Some(ce) = &rebooter.ce { update_stages.push(("CE", ce.serialize())); }
+
+        for (name, mut data) in update_stages {
+            let declared_size = if data.len() >= 16 {
+                let h = BootloaderHeader::read_from_prefix(&data).map(|(h,_)| h.size.get()).unwrap_or(0);
+                h as usize
+            } else { 0 };
+            let aligned = (declared_size + 0xF) & !0xF;
+            if aligned > 0 && data.len() != aligned { data.resize(aligned, 0); }
+            
+            if curr_off + data.len() > logical_image.len() {
+                return Err(format!("Chain 1 {} overflow at 0x{:X}", name, curr_off));
+            }
+            info!("[builder] JTAG Chain 1: Serializing {} at 0x{:08X}", name, curr_off);
+            logical_image[curr_off..curr_off+data.len()].copy_from_slice(&data);
+            curr_off += data.len();
+        }
+
+        // 3a. Update metadata synchronization (Chain 1 CB -> CF/CG)
+        let mut pairing_data = [0u8; 3];
+        let mut ldv = 0u8;
+        if let Some(meta) = rebooter.cb.as_ref().and_then(|b| b.metadata.as_ref()) {
+            pairing_data = meta.pairing_data;
+            ldv = meta.ldv;
+            info!("[builder] Syncing JTAG update metadata: Pairing {:02X?}, LDV {}", pairing_data, ldv);
+        }
+
+        let target_cf_offset = (curr_off + 0xFFFF) & !0xFFFF; // Align to 64KB for JTAG CF/CG
+        header.cf_offset.set(target_cf_offset as u32);
+
+        // Populate CF/CG slots relative to Chain 1 end
+        let mut curr_update = target_cf_offset;
+        
+        let cf0 = self.update.cf_0.as_ref();
+        let cg0 = self.update.cg_0.as_ref();
+        
+        if let Some(mut cf) = cf0.cloned() {
+            if let Some(meta) = cf.metadata.as_mut() {
+                meta.pairing_data = pairing_data;
+                meta.lockdown_value = ldv;
+                cf.sync_metadata();
+            }
+            let data = cf.serialize();
+            logical_image[curr_update..curr_update+data.len()].copy_from_slice(&data);
+            curr_update += data.len();
+            
+            if let Some(mut cg) = cg0.cloned() {
+                let cg_off = (curr_update + 0xF) & !0xF;
+                let data = cg.serialize();
+                logical_image[cg_off..cg_off+data.len()].copy_from_slice(&data);
+            }
+        }
+
+        // 4. FlashFS
+        let (fs_addr, smc_config_offset, _phys_fs_block) = LayoutCalculator::calculate(
+            SouthbridgeType::from(self.options.motherboard),
+            self.options.image_type,
+            *layout
+        );
+        header.fs_addr.set(fs_addr);
+        header.smc_config_offset.set(smc_config_offset);
+
+        if !self.flashfs.root.entries.is_empty() && fs_addr > 0 {
+            let mut root = self.flashfs.root.clone();
+            let logical_block_size = layout.logical_pages_per_block() * 0x200;
+            root.block_number = (fs_addr as usize / logical_block_size) as i32;
+            
+            root.write_logical(&mut logical_image, layout);
+            let fs_root_block = root.serialize_logical(*layout);
+            logical_image[fs_addr as usize..fs_addr as usize + fs_root_block.len()].copy_from_slice(&fs_root_block);
+        }
+
+        header.smc_boot_offset.set(target_smc_offset as u32);
+        header.smc_boot_size.set(smc_len as u32);
+        header.kv_addr.set(kv_offset as u32);
+        header.kv_size.set(self.extra.keyvault.len() as u32);
+
+        // Update prefix entrypoint to CB_A in Chain 0
+        header.prefix.entrypoint.set(0x8000);
+        
+        logical_image[0..0x10].copy_from_slice(&zerocopy::IntoBytes::as_bytes(&header.prefix));
+        logical_image[0x40..0xA0].copy_from_slice(&header.copyright);
+        logical_image[0xA0..0xB0].copy_from_slice(&header.unused);
+        logical_image[0xB0..0xB4].copy_from_slice(&zerocopy::IntoBytes::as_bytes(&header.kv_size));
+        logical_image[0xB4..0xB8].copy_from_slice(&zerocopy::IntoBytes::as_bytes(&header.cf_offset));
+        logical_image[0xB8..0xBA].copy_from_slice(&zerocopy::IntoBytes::as_bytes(&header.patch_slots));
+        logical_image[0xBA..0xBC].copy_from_slice(&zerocopy::IntoBytes::as_bytes(&header.kv_version));
+        logical_image[0xBC..0xC0].copy_from_slice(&zerocopy::IntoBytes::as_bytes(&header.fs_addr));
+        logical_image[0xC0..0xC4].copy_from_slice(&zerocopy::IntoBytes::as_bytes(&header.smc_config_offset));
+        logical_image[0xC4..0xC8].copy_from_slice(&zerocopy::IntoBytes::as_bytes(&header.smc_boot_offset));
+        logical_image[0xC8..0xCC].copy_from_slice(&zerocopy::IntoBytes::as_bytes(&header.smc_boot_size));
+
+        Ok(logical_image)
+    }
+
     pub fn assemble_logical(&self) -> Result<Vec<u8>, String> {
         let layout = &self.options.layout;
         let expected_size = self.total_blocks * layout.logical_pages_per_block() * 0x200;
@@ -782,6 +938,43 @@ impl NandSkeleton {
             logical_image[kv_offset..kv_offset + self.extra.keyvault.len()].copy_from_slice(&self.extra.keyvault);
         }
 
+        // 3a. Update metadata synchronization (Pairing Data & LDV propagation)
+        let mut pairing_data = [0u8; 3];
+        let mut ldv = 0u8;
+        let mut metadata_found = false;
+
+        // Extract metadata from the active CB stage (latest in the chain)
+        if let Some(meta) = self.bootloaders.cb_b.as_ref().and_then(|b| b.metadata.as_ref()) {
+            pairing_data = meta.pairing_data;
+            ldv = meta.ldv;
+            metadata_found = true;
+        } else if let Some(meta) = self.bootloaders.cb.as_ref().and_then(|b| b.metadata.as_ref()) {
+            pairing_data = meta.pairing_data;
+            ldv = meta.ldv;
+            metadata_found = true;
+        }
+
+        if metadata_found {
+            info!("[builder] Syncing update metadata: Pairing {:02X?}, LDV {}", pairing_data, ldv);
+            
+            // Apply to CF0
+            if let Some(cf0) = self.update.cf_0.as_mut() {
+                if let Some(meta) = cf0.metadata.as_mut() {
+                    meta.pairing_data = pairing_data;
+                    meta.lockdown_value = ldv;
+                    cf0.sync_metadata();
+                }
+            }
+            // Apply to CF1
+            if let Some(cf1) = self.update.cf_1.as_mut() {
+                if let Some(meta) = cf1.metadata.as_mut() {
+                    meta.pairing_data = pairing_data;
+                    meta.lockdown_value = ldv;
+                    cf1.sync_metadata();
+                }
+            }
+        }
+
         let cf0 = self.update.cf_0.as_ref().map(|b| b.serialize());
         let cg0 = self.update.cg_0.as_ref().map(|b| b.serialize());
         let cf1 = self.update.cf_1.as_ref().map(|b| b.serialize()).or_else(|| cf0.clone());
@@ -823,7 +1016,7 @@ impl NandSkeleton {
 
         // 3b. XeLL Placement
         if let Some(xell) = &self.bootloaders.xell {
-            if self.options.build_type != crate::builder::builder::BuildType::Retail {
+            if self.options.build_type == BuildType::Glitch {
                 let xell_offset = crate::builder::chain::xell::Xell::get_target_offset(self.options.build_type, self.options.image_type) as usize;
                 if xell_offset + xell.data.len() > logical_image.len() {
                     return Err(format!("XeLL overflow at 0x{:X}: need 0x{:X} bytes", xell_offset, xell.data.len()));
@@ -893,7 +1086,8 @@ impl NandSkeleton {
                 
                 info!("[builder] Injecting KHV patches at calculated offset: 0x{:08X}", patch_target);
                 
-                let mut patch_binary = vec![0u8; 0x60]; // 0x60 byte Virtual Fuse header (padding)
+                let header_size = self.options.khv_header_size;
+                let mut patch_binary = vec![0u8; header_size as usize]; 
                 patch_binary.extend(crate::core::data::gxp::serialize_records(records));
                 
                 if patch_target + patch_binary.len() > logical_image.len() {
@@ -1000,7 +1194,8 @@ impl NandSkeleton {
 
     pub fn build(&self, cpukey: [u8; 16]) -> Result<Vec<u8>, String> {
         let mut skel = self.clone();
-        info!("[builder] Starting final image build...");
+        info!("[builder] Starting final image build (Type: {:?})...", skel.options.build_type);
+        
         let mut kv = crate::builder::chain::kv::Keyvault::parse(&skel.extra.keyvault)?;
         info!("[builder] Encrypting Keyvault...");
         let hashed = skel.header.kv_version.get() >= 2;
@@ -1008,24 +1203,44 @@ impl NandSkeleton {
         skel.extra.keyvault = kv.data;
 
         let mut smc = crate::builder::chain::smc::RawSmc::new(skel.extra.smc.clone());
-        info!("[builder] Re-encrypting bootloader chain...");
-        encrypt_chain(
-            skel.bootloaders.cb_a.as_mut().or(skel.bootloaders.cb.as_mut()).ok_or("Missing primary CB (CB or CB_A) for encryption")?,
-            skel.bootloaders.cb_x.as_mut(),
-            skel.bootloaders.cb_b.as_mut(),
-            skel.bootloaders.sc.as_mut(),
-            skel.bootloaders.cd.as_mut().ok_or("Missing CD for encryption")?,
-            skel.bootloaders.ce.as_mut().ok_or("Missing CE for encryption")?,
-            skel.update.cf_0.as_mut(),
-            skel.update.cg_0.as_mut(),
-            skel.update.cf_1.as_mut(),
-            skel.update.cg_1.as_mut(),
-            &mut smc, &cpukey,
-        )?;
+        
+        if skel.options.build_type == BuildType::Jtag {
+            let rebooter = skel.rebooter.as_mut().ok_or("Rebooter chain missing for JTAG build")?;
+            encrypt_rebooter_chain(
+                skel.bootloaders.cb_a.as_mut().or(skel.bootloaders.cb.as_mut()).ok_or("Missing Chain 0 CB")?,
+                skel.bootloaders.cd.as_mut().ok_or("Missing Chain 0 CD")?,
+                rebooter.cb.as_mut().ok_or("Missing Chain 1 CB")?,
+                rebooter.cd.as_mut().ok_or("Missing Chain 1 CD")?,
+                rebooter.ce.as_mut().ok_or("Missing Chain 1 CE")?,
+                &mut (skel.update.cf_0.as_mut(), skel.update.cg_0.as_mut(),
+                      skel.update.cf_1.as_mut(), skel.update.cg_1.as_mut()),
+                &mut smc, &cpukey
+            )?;
+        } else {
+            info!("[builder] Re-encrypting bootloader chain...");
+            encrypt_chain(
+                skel.bootloaders.cb_a.as_mut().or(skel.bootloaders.cb.as_mut()).ok_or("Missing primary CB (CB or CB_A) for encryption")?,
+                skel.bootloaders.cb_x.as_mut(),
+                skel.bootloaders.cb_b.as_mut(),
+                skel.bootloaders.sc.as_mut(),
+                skel.bootloaders.cd.as_mut().ok_or("Missing CD for encryption")?,
+                skel.bootloaders.ce.as_mut().ok_or("Missing CE for encryption")?,
+                skel.update.cf_0.as_mut(),
+                skel.update.cg_0.as_mut(),
+                skel.update.cf_1.as_mut(),
+                skel.update.cg_1.as_mut(),
+                &mut smc, &cpukey,
+            )?;
+        }
+
         info!("[builder] Re-encrypting SMC...");
         smc.encrypt();
         skel.extra.smc = smc.data;
-        skel.assemble_logical()
+
+        match skel.options.build_type {
+            BuildType::Jtag => skel.assemble_rebooter(),
+            _ => skel.assemble_logical(),
+        }
     }
 
     /// Appplies a GXP or legacy patchset to the relevant sections of this NAND skeleton.

@@ -311,15 +311,19 @@ impl Session {
             // We can re-parse the KV to get the latest info
             if let Ok(mut kv) = crate::builder::chain::kv::Keyvault::parse(&nand.extra.keyvault) {
                 // If it was decrypted in the skeleton, we can read it
-                let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
-                if let Ok(_) = kv.decrypt(&cpukey, nand.header.kv_version.get() >= 2) {
-                    if let Some(meta) = kv.metadata {
-                        if self.options.avregion.is_none() {
-                            self.options.avregion = Some(format!("0x{:04X}", meta.region));
-                        }
-                        if self.options.dvdkey.is_none() {
-                            self.options.dvdkey = Some(meta.dvd_key.iter().map(|b| format!("{:02x}", b)).collect());
-                        }
+                if !kv.is_decrypted {
+                    let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
+                    if let Err(e) = kv.decrypt(&cpukey, nand.header.kv_version.get() >= 2) {
+                        warn!("[session] Failed to decrypt Keyvault for metadata extraction: {}", e);
+                    }
+                }
+
+                if let Some(meta) = kv.metadata {
+                    if self.options.avregion.is_none() {
+                        self.options.avregion = Some(format!("0x{:04X}", meta.region));
+                    }
+                    if self.options.dvdkey.is_none() {
+                        self.options.dvdkey = Some(meta.dvd_key.iter().map(|b| format!("{:02x}", b)).collect());
                     }
                 }
             }
@@ -384,9 +388,13 @@ impl Session {
             let mut kv = crate::builder::chain::kv::Keyvault::parse(&nand.extra.keyvault)?;
             
             // Decrypt with current session key if possible
-            if let Err(e) = kv.decrypt(&cpukey, nand.header.kv_version.get() >= 2) {
-                warn!("[session] Failed to decrypt Keyvault for option patching: {}", e);
-            } else {
+            if !kv.is_decrypted {
+                if let Err(e) = kv.decrypt(&cpukey, nand.header.kv_version.get() >= 2) {
+                    warn!("[session] Failed to decrypt Keyvault for option patching: {}", e);
+                }
+            }
+
+            if kv.is_decrypted {
                 if let Some(dvdkey_str) = &self.options.dvdkey {
                     if let Ok(key_bytes) = crate::builder::builder::hex_to_bytes(dvdkey_str) {
                         if key_bytes.len() == 16 {

@@ -48,14 +48,10 @@ impl Xell {
         self.xell_type
     }
 
-    /// Returns the logical NAND offset for this XeLL payload based on the build and image configuration.
-    /// This uses hardcoded safe offsets (e.g., 0x74000 for Glitch) to avoid conflicts with the devkit filesystem.
-    pub fn get_target_offset(build_type: crate::builder::builder::BuildType, _image_type: crate::builder::builder::ImageType) -> u32 {
-        use crate::builder::builder::BuildType;
-        match build_type {
-            BuildType::Glitch => 0x74000,
-            BuildType::Jtag => 0x98000, // Audclamp standard for GGX
-            _ => 0x74000, // Default to the safest known gap
-        }
+    /// Returns the logical NAND offset for this XeLL payload.
+    /// Standardizes on 0x74000 (Logical) which maps to 0x77A00 (Physical) on ECC-enabled NANDs.
+    pub fn get_target_offset(_build_type: crate::builder::builder::BuildType, _image_type: crate::builder::builder::ImageType) -> u32 {
+        // We only support Glitch/RGH placement for now; JTAG requires a different layout logic.
+        0x74000
     }
 }
