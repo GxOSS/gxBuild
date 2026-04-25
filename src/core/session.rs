@@ -639,6 +639,13 @@ impl Session {
                         let sb_type = SouthbridgeType::from(nand.options.motherboard);
                         let _ = LayoutCalculator::calculate(sb_type, &nand.options.image_profile, layout);
 
+                        let meta_type = match nand.options.motherboard {
+                            crate::builder::builder::MotherboardType::Xenon |
+                            crate::builder::builder::MotherboardType::Zephyr |
+                            crate::builder::builder::MotherboardType::Falcon => crate::core::data::blocks::SpareMetaType::MetaType0,
+                            _ => crate::core::data::blocks::SpareMetaType::MetaType1,
+                        };
+
                         match nand.build(cpukey) {
                             Ok(clean_bytes) => {
                                 let mut fs_meta = std::collections::HashMap::new();
@@ -684,7 +691,7 @@ impl Session {
                                 }
                                 
                                 let jtag_syscall = self.active_nand.as_ref().and_then(|n| n.options.jtag_syscall);
-                                let finalized_bytes = crate::core::data::blocks::NandProcessor::finalize_nand(&clean_bytes, layout, Some(&fs_meta), jtag_syscall);
+                                let finalized_bytes = crate::core::data::blocks::NandProcessor::finalize_nand(&clean_bytes, layout, meta_type, Some(&fs_meta), jtag_syscall);
                                 let final_size = finalized_bytes.len();
                                 if let Err(e) = std::fs::write(&output, finalized_bytes) {
                                     error!("[session] Failed to write build output to '{}': {}", output.display(), e);

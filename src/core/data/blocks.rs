@@ -69,7 +69,17 @@ impl NandLayout {
     }
 
     pub fn total_blocks(&self, image_len: usize) -> usize {
-        image_len / self.block_size()
+        let logical_block_size = self.logical_pages_per_block() * 0x200;
+        let physical_block_size = self.block_size();
+
+        if physical_block_size > 0 && image_len % physical_block_size == 0 {
+            image_len / physical_block_size
+        } else if logical_block_size > 0 && image_len % logical_block_size == 0 {
+            image_len / logical_block_size
+        } else {
+            // Default fallback if it's neither perfectly logical nor perfectly physical
+            image_len / physical_block_size
+        }
     }
 
     pub fn page_size(&self) -> usize {
@@ -288,6 +298,7 @@ pub struct FsSpareInfo {
 pub fn add_spare(
     image: &[u8],
     layout: NandLayout,
+    meta_type: SpareMetaType,
     blockstart: usize,
     fs_meta: Option<&std::collections::HashMap<usize, FsSpareInfo>>,
     jtag_syscall: Option<u16>
@@ -400,42 +411,37 @@ pub fn add_spare(
                 }
 
                 if let Some(fs) = fs_meta.and_then(|m| m.get(&val)) {
-                    match layout {
-                        NandLayout::Xsb => {
-                            spare[5] = 0xFF;
+                    spare[5] = 0xFF;
+                    spare[7] = (fs.size & 0xFF) as u8;
+                    spare[8] = ((fs.size >> 8) & 0xFF) as u8;
+                    spare[9] = fs.page_count;
+                    spare[12] = fs.block_type;
+
+                    match meta_type {
+                        SpareMetaType::MetaType0 => {
                             spare[0] = (val & 0xFF) as u8;
                             spare[1] = ((val / 0x100) & 0xFF) as u8;
                             spare[2] = (fs.sequence & 0xFF) as u8;
                             spare[3] = ((fs.sequence >> 8) & 0xFF) as u8;
                             spare[4] = ((fs.sequence >> 16) & 0xFF) as u8;
-                            spare[7] = (fs.size & 0xFF) as u8;
-                            spare[8] = ((fs.size >> 8) & 0xFF) as u8;
-                            spare[9] = fs.page_count;
-                            spare[12] = fs.block_type;
                         }
-                        NandLayout::Sb => {
-                            spare[5] = 0xFF;
+                        SpareMetaType::MetaType1 => {
                             spare[1] = (val & 0xFF) as u8;
                             spare[2] = ((val / 0x100) & 0xFF) as u8;
                             spare[0] = (fs.sequence & 0xFF) as u8;
                             spare[3] = ((fs.sequence >> 8) & 0xFF) as u8;
                             spare[4] = ((fs.sequence >> 16) & 0xFF) as u8;
-                            spare[7] = (fs.size & 0xFF) as u8;
-                            spare[8] = ((fs.size >> 8) & 0xFF) as u8;
-                            spare[9] = fs.page_count;
-                            spare[12] = fs.block_type;
                         }
                         _ => {}
                     }
                 } else {
-                    match layout {
-                        NandLayout::Xsb => {
-                            spare[5] = 0xFF;
+                    spare[5] = 0xFF;
+                    match meta_type {
+                        SpareMetaType::MetaType0 => {
                             spare[0] = (val & 0xFF) as u8;
                             spare[1] = ((val / 0x100) & 0xFF) as u8;
                         }
-                        NandLayout::Sb => {
-                            spare[5] = 0xFF;
+                        SpareMetaType::MetaType1 => {
                             spare[1] = (val & 0xFF) as u8;
                             spare[2] = ((val / 0x100) & 0xFF) as u8;
                         }
@@ -931,8 +937,8 @@ impl NandProcessor {
 
     /// Finalizes a clean NAND image by adding ECC/spare data for physical output.
     /// If an LbaMap is provided, it uses the metadata format for correct spare layout.
-    pub fn finalize_nand(clean_data: &[u8], layout: NandLayout, fs_meta: Option<&std::collections::HashMap<usize, FsSpareInfo>>, jtag_syscall: Option<u16>) -> Vec<u8> {
+    pub fn finalize_nand(clean_data: &[u8], layout: NandLayout, meta_type: SpareMetaType, fs_meta: Option<&std::collections::HashMap<usize, FsSpareInfo>>, jtag_syscall: Option<u16>) -> Vec<u8> {
         if layout == NandLayout::Emmc { return clean_data.to_vec(); }
-        add_spare(clean_data, layout, 0, fs_meta, jtag_syscall)
+        add_spare(clean_data, layout, meta_type, 0, fs_meta, jtag_syscall)
     }
 }

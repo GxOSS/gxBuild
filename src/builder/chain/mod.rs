@@ -156,9 +156,9 @@ pub fn fix_per_box_digest(
     
     // 2. Build the 0x30-byte digest
     digest[0x0..0x10].copy_from_slice(cb_key);
-    digest[0x10..0x13].copy_from_slice(&cb_payload[0..3]); // Pairing Data
-    digest[0x13] = cb_payload[3]; // LDV
-    digest[0x14..0x20].copy_from_slice(&cb_payload[4..16]); // Reserved (12 bytes)
+    digest[0x10..0x13].copy_from_slice(&cb_payload[0x10..0x13]); // Pairing Data
+    digest[0x13] = cb_payload[0x13]; // LDV
+    digest[0x14..0x20].copy_from_slice(&cb_payload[0x14..0x20]); // Reserved (12 bytes)
     digest[0x20..0x30].copy_from_slice(&smc_hash);           // SMC Hash (16 bytes)
     
     // 3. HMAC-SHA1(CPUKey, Digest)
