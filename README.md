@@ -1,26 +1,35 @@
 # gxBuild
 
+>[!CAUTION]
+> gxBuild is in **BETA**!
+> The app is still **UNTESTED** against real consoles!
+> There is a **99.99%** chance you will brick your console!
+
 ![gxBuild Colour Transparent Banner](assets/gx_banner_colour_trans.png)
 
-gxBuild is a Xbox 360 image builder and patcher. Features full nand, xell and shadowboot parsing, patching and building.
+gxBuild is a Xbox 360 image builder and patcher. Features full nand, xell and shadowboot parsing, patching and building. Stays as close to xeBuild as possible, with a few changes. 
 
-Aims for near-complete compatibility with xeBuild where possible, with only a few minor changes to syntax. Includes full xeBuild and RGBuild patching, the xeBuild folder structure and inis, crc32 hashing, and expands on xeBuild with Glitch3, native RGBuild, shadowboots, xell images, and CE patching.
+## Features
 
-## Get Started
+| Feature | gxBuild | xeBuild | RGBuild |
+| ------- | ------- | ------- | ------- |
+| Retail | ✅ | ❌ | ❌ |
+| Devkit | ✅ | - | ❌ |
+| DevGL | ✅ | - | ❌ |
+| RGLoader | ✅ | ❌ | ✅ |
+| XDKBuild | ✅ | ❌ | ❌ |
+| Glitch3 | ✅ | ❌ | ❌ |
+| SMC Patcher | ✅ | ❌ | ❌ |
+| KV Patcher | ✅ | ❌ | ❌ |
+| CE Patcher | ✅ | ❌ | ❌ |
+| RGLP | ✅ | ❌ | ✅ |
+| API | ✅ | ❌ | ❌ |
+| Wireless | - | ✅ | - |
+| UI Editor | ✅ | ❌ | ✅ |
 
-Compatible with any x86 and aarch64 platform.
-
-Officially supported:
-- [Windows x32]()
-- [Windows x64]()
-- [Linux AMD64]()
-- [MacOS aarch64]()
-
-Prebuilt binaries can be downloaded [here]()
 
 ## Documentation
 
-Documentation is hosted on the [GGX Project](https://ggx-project.github.io/gxBuild/home/) site:
 - [Usage](https://exposuremg.github.io/gxBuild/usage/)  - General Usage
 - [Patches](https://exposuremg.github.io/gxBuild/patches/) - Patch format
 - [Scripting](https://exposuremg.github.io/gxBuild/scripting/) - Python Scripting
