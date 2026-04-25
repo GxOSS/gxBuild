@@ -230,7 +230,6 @@ impl IniSearch {
                 // Tier 1: NAND Image
                 if let Some(n) = nand {
                     let nand_data = match lower_name.as_str() {
-                        "smc.bin" => Some(n.extra.smc.clone()),
                         "keyvault.bin" | "kv.bin" => Some(n.extra.keyvault.clone()),
                         "fcrt.bin" => n.extra.fcrt.clone(),
                         _ => None,
@@ -322,6 +321,54 @@ impl IniSearch {
                 }
             }
             result.security = Some(sec_paths);
+        }
+
+        // --- SMC and Payloads Discovery (Data Folder Only) ---
+        let section_base = ini.name.split('_').next().unwrap_or(&ini.name);
+        let platform_clean = if section_base.ends_with("bl") {
+            &section_base[..section_base.len() - 2]
+        } else {
+            section_base
+        }.to_uppercase();
+        
+        let smc_filename = format!("{}_CLEAN.bin", platform_clean);
+        let smc_path = data.join(&smc_filename);
+        
+        if smc_path.exists() {
+            if let Ok(c) = std::fs::read(&smc_path) {
+                info!("[ini] Discovered Clean SMC for platform {}: {}", platform_clean, smc_path.display());
+                result.security_assets.insert("smc.bin".to_string(), c);
+            }
+        } else {
+            warn!("[ini] SMC discovery failed: {} not found in data folder", smc_filename);
+        }
+
+        for entry in &ini.payloads {
+            let filename = &entry.filename;
+            let lower_name = filename.to_lowercase();
+            let cand = data.join(filename);
+            if cand.exists() {
+                if let Ok(c) = std::fs::read(&cand) {
+                    let mut verified = true;
+                    if let Some(expected) = &entry.hash {
+                        let actual = get_xebuild_crc32(&c, filename);
+                        if actual.to_lowercase() != expected.to_lowercase() {
+                            if unsafe_mode {
+                                warn!("[ini] Unsafe Bypass: payload {} CRC32 mismatch (Expected: {}, Found: {}). Continuing...", filename, expected, actual);
+                            } else {
+                                info!("[ini] Hash mismatch for payload {} in Data Folder", filename);
+                                verified = false;
+                            }
+                        }
+                    }
+                    if verified {
+                        info!("[ini] Discovered payload in data folder: {}", cand.display());
+                        result.bootloader_assets.insert(lower_name, c);
+                    }
+                }
+            } else {
+                 warn!("[ini] Payload discovery failed: {} not found in data folder", filename);
+            }
         }
 
         // --- Bootloaders and Update Discovery ---

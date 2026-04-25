@@ -1,28 +1,39 @@
 # gxBuild
 
+>[!CAUTION]
+> gxBuild is in **BETA**!
+> The app is still **UNTESTED** against real consoles!
+> There is a **99.99%** chance you will brick your console!
+
 ![gxBuild Colour Transparent Banner](assets/gx_banner_colour_trans.png)
 
-gxBuild is a Xbox 360 image builder and patcher. Features full nand, xell and shadowboot parsing, patching and building.
+gxBuild is a Xbox 360 image builder and patcher. Features full nand, xell and shadowboot parsing, patching and building. Stays as close to xeBuild as possible, with a few changes. 
 
-Aims for near-complete compatibility with xeBuild where possible, with only a few minor changes to syntax. Includes full xeBuild and RGBuild patching, the xeBuild folder structure and inis, crc32 hashing, and expands on xeBuild with Glitch3, native RGBuild, shadowboots, xell images, and CE patching.
+## Features
 
-## Get Started
+| Feature | gxBuild | xeBuild | RGBuild |
+| ------- | ------- | ------- | ------- |
+| Retail | ✅ | ❌ | ❌ |
+| Devkit | ✅ | - | ❌ |
+| DevGL | ✅ | - | ❌ |
+| RGLoader | ✅ | ❌ | ✅ |
+| XDKBuild | ✅ | ❌ | ❌ |
+| Glitch3 | ✅ | ❌ | ❌ |
+| SMC Patcher | ✅ | ❌ | ❌ |
+| KV Patcher | ✅ | ❌ | ❌ |
+| CE Patcher | ✅ | ❌ | ❌ |
+| RGLP | ✅ | ❌ | ✅ |
+| API | ✅ | ❌ | ❌ |
+| Wireless | - | ✅ | - |
+| UI Editor | ✅ | ❌ | ✅ |
 
-Compatible with any x86 and aarch64 platform.
-
-Officially supported:
-- [Windows x32]()
-- [Windows x64]()
-- [Linux AMD64]()
-- [MacOS aarch64]()
 
 ## Documentation
 
-Documentation is hosted on the [GGX Project](https://ggx-project.github.io/gxBuild/home/) site:
-- [Usage](https://ggx-project.github.io/gxBuild/usage/)  - General Usage
-- [Patches](https://ggx-project.github.io/gxBuild/patches/) - Patch format
-- [Scripting](https://ggx-project.github.io/gxBuild/scripting/) - Python Scripting
-- [Developer](https://ggx-project.github.io/gxBuild/developer/) - FFI Interface
+- [Usage](https://exposuremg.github.io/gxBuild/usage/)  - General Usage
+- [Patches](https://exposuremg.github.io/gxBuild/patches/) - Patch format
+- [Scripting](https://exposuremg.github.io/gxBuild/scripting/) - Python Scripting
+- [Developer](https://exposuremg.github.io/gxBuild/developer/) - FFI Interface
 
 ## Info
 
@@ -35,6 +46,11 @@ Documentation is hosted on the [GGX Project](https://ggx-project.github.io/gxBui
 ## Testing
 
 Any testing is greatly appreciated, as I don't have the funds for every platform.
+
+✓ = Tested Working
+- = Builds correctly
+× = Does not built correctly
+
 
 | Platform | Retail Single | Retail Split | ArgonData | AudClamp | RJTAG | Glitch1 | Glitch2 | Glitch3 | Glitch2.3 | XDKBuild | RGBuild |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | 

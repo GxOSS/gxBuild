@@ -87,9 +87,6 @@ pub struct GgxArgs {
     #[arg(short = 'e', long = "preset")]
     pub preset: Option<String>,
 
-    /// Run python script
-    #[arg(short = 'w', long = "script")]
-    pub script: Option<PathBuf>,
 
     /// Direct session access
     #[arg(short = 'n', long = "cmd")]
