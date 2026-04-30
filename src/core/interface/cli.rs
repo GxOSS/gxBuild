@@ -670,18 +670,6 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
 }
 
 impl Session {
-    // Helper to set session state from CLI
-    pub fn set_cpukey(&mut self, key: String) {
-        if let Ok(bytes) = crate::builder::builder::hex_to_bytes(&key) {
-            if let Ok(arr) = bytes.try_into() {
-                self.parse_key(arr);
-            } else {
-                error!("[cli] CPU Key must be 32 hex characters (16 bytes).");
-            }
-        } else {
-            error!("[cli] Invalid hex format for CPU Key.");
-        }
-    }
     pub fn set_verbose(&mut self, _v: bool) {
         // session verbosity logic
     }

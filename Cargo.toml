@@ -3,6 +3,9 @@ name = "gxbuild"
 version = "1.0.1"
 edition = "2021"
 
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
 libloading = { version = "0.8.6", optional = true }
@@ -21,6 +24,7 @@ default = ["cli", "ffi", "tui"]
 cli = ["dep:clap"]
 ffi = ["dep:libloading"]
 tui = ["dep:rustyline"]
+pygg = []
 
 [build-dependencies]
 cc = "1.0"

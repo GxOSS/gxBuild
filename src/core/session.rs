@@ -157,6 +157,19 @@ pub struct Session {
     pub options: crate::core::data::xeini::OptionsIni,
     /// CPU Key buffer if provided before NAND is loaded
     pub pending_key: Option<[u8; 16]>,
+    /// Last error message for FFI reporting
+    pub last_error: Option<String>,
+
+    // ── Build configuration (set via FFI setters, consumed by prepare_build) ──
+    pub build_type: Option<String>,
+    pub console_type: Option<String>,
+    pub ini_dir: Option<std::path::PathBuf>,
+    pub common_dir: Option<std::path::PathBuf>,
+    pub data_dir: Option<std::path::PathBuf>,
+    pub output_path: Option<std::path::PathBuf>,
+    pub ini_ext: Option<String>,
+    pub bl_ext: Option<String>,
+    pub addons: Vec<String>,
 }
 
 impl Session {
@@ -171,6 +184,16 @@ impl Session {
             active_nand: None,
             options: crate::core::data::xeini::OptionsIni::new(),
             pending_key: None,
+            last_error: None,
+            build_type: None,
+            console_type: None,
+            ini_dir: None,
+            common_dir: None,
+            data_dir: None,
+            output_path: None,
+            ini_ext: None,
+            bl_ext: None,
+            addons: Vec::new(),
         }
     }
 
@@ -275,6 +298,307 @@ impl Session {
 
     pub fn session_run(&mut self) {
         self.enqueue(InternalCommand::SessionRun);
+    }
+
+    // ── Build configuration setters ─────────────────────────────────────────
+
+    pub fn set_build_type(&mut self, build_type: String) {
+        self.build_type = Some(build_type);
+    }
+
+    pub fn set_console(&mut self, console: String) {
+        self.console_type = Some(console.clone());
+        self.options.ctype = Some(console);
+    }
+
+    pub fn set_ini_dir(&mut self, path: PathBuf) {
+        self.ini_dir = Some(path);
+    }
+
+    pub fn set_common_dir(&mut self, path: PathBuf) {
+        self.common_dir = Some(path);
+    }
+
+    pub fn set_data_dir(&mut self, path: PathBuf) {
+        self.data_dir = Some(path);
+    }
+
+    pub fn set_output(&mut self, path: PathBuf) {
+        self.output_path = Some(path);
+    }
+
+    pub fn set_ini_ext(&mut self, ext: String) {
+        self.ini_ext = Some(ext);
+    }
+
+    pub fn set_bl_ext(&mut self, ext: String) {
+        self.bl_ext = Some(ext);
+    }
+
+    pub fn add_addon(&mut self, addon: String) {
+        self.addons.push(addon);
+    }
+
+    pub fn clear_addons(&mut self) {
+        self.addons.clear();
+    }
+
+    /// Parses a 32-character hex CPU key string and enqueues a ParseKey command.
+    pub fn set_cpukey(&mut self, key: String) {
+        if let Ok(bytes) = crate::builder::builder::hex_to_bytes(&key) {
+            if let Ok(arr) = bytes.try_into() {
+                self.parse_key(arr);
+            } else {
+                error!("[session] CPU Key must be 32 hex characters (16 bytes).");
+            }
+        } else {
+            error!("[session] Invalid hex format for CPU Key: {}", key);
+        }
+    }
+
+    pub fn set_option(&mut self, key: &str, value: &str) {
+        let mut o = crate::core::data::xeini::OptionsIni::new();
+        let v = value;
+        let is_true = v.eq_ignore_ascii_case("true");
+        match key.to_lowercase().as_str() {
+            "region" | "avregion" => o.avregion = Some(v.to_string()),
+            "gameregion"          => o.gameregion = Some(v.to_string()),
+            "dvdregion"           => o.dvdregion = Some(v.to_string()),
+            "unsafe"              => o.gxunsafe = Some(is_true),
+            "nomobile"            => o.nomobile = Some(is_true),
+            "noremap"             => o.noremap = Some(is_true),
+            "nandmu"              => o.nandmu = Some(is_true),
+            "cputemp"             => o.cputemp = Some(v.to_string()),
+            "gputemp"             => o.gputemp = Some(v.to_string()),
+            "edramtemp"           => o.edramtemp = Some(v.to_string()),
+            "overcputemp"         => o.overcputemp = Some(v.to_string()),
+            "overgputemp"         => o.overgputemp = Some(v.to_string()),
+            "overedramtemp"       => o.overedramtemp = Some(v.to_string()),
+            "cpufan"              => o.cpufan = Some(v.to_string()),
+            "gpufan"              => o.gpufan = Some(v.to_string()),
+            "macid" | "mac"       => o.macid = Some(v.to_string()),
+            "dvdkey"              => o.dvdkey = Some(v.to_string()),
+            "cfldv"               => o.cfldv = Some(v.to_string()),
+            "xellbutton"          => o.xellbutton = Some(v.to_string()),
+            "xellbutton2"         => o.xellbutton2 = Some(v.to_string()),
+            "cygnos"              => o.cygnos = Some(is_true),
+            "demon"               => o.demon = Some(is_true),
+            "smcnoeject"          => o.smcnoeject = Some(is_true),
+            "smcnoblink"          => o.smcnoblink = Some(is_true),
+            "patchsmc"            => o.patchsmc = Some(is_true),
+            "olddvd"              => o.olddvd = Some(is_true),
+            "nodvd"               => o.nodvd = Some(is_true),
+            "dualboot"            => o.dualboot = Some(is_true),
+            "nolog"               => o.nolog = Some(is_true),
+            "noinfo"              => o.noinfo = Some(is_true),
+            "noenter"             => o.noenter = Some(is_true),
+            _ => warn!("[session] set_option: unknown key '{}'", key),
+        }
+        self.options.merge(o);
+    }
+
+    /// Resets the command queue and build config for a fresh build,
+    /// while keeping the active NAND and CPU key in place.
+    pub fn reset_build(&mut self) {
+        self.queue.clear();
+        self.next_seq_id = 0;
+        self.pending_assets.clear();
+        self.bootloader_assets.clear();
+        self.security_assets.clear();
+        self.flashfs_assets.clear();
+        self.addons.clear();
+        self.last_error = None;
+    }
+
+    /// Resolves all build configuration set via the setter methods, discovers
+    /// assets, and enqueues everything ready for `run()`. This is the FFI-facing
+    /// equivalent of `handle_build()` in `cli.rs`.
+    pub fn prepare_build(&mut self) -> Result<(), String> {
+        use std::collections::HashSet;
+
+        let build_type = self.build_type.clone()
+            .ok_or("prepare_build: build_type not set")?;
+        let console = self.console_type.clone()
+            .ok_or("prepare_build: console_type not set")?;
+
+        let ini_dir = self.ini_dir.clone()
+            .unwrap_or_else(|| PathBuf::from("."));
+        let data_dir = self.data_dir.clone()
+            .unwrap_or_else(|| PathBuf::from("data"));
+        let common_dir = self.common_dir.clone()
+            .unwrap_or_else(|| ini_dir.join("../common"));
+        let output_path = self.output_path.clone()
+            .unwrap_or_else(|| PathBuf::from("updflash.bin"));
+
+        // Load options.ini from the data dir
+        let options_path = data_dir.join("options.ini");
+        if options_path.exists() {
+            if let Ok(content) = fs::read_to_string(&options_path) {
+                match crate::core::data::xeini::parse_options_ini(&content) {
+                    Ok(opts) => { self.options.merge(opts); }
+                    Err(e)   => warn!("[session] prepare_build: failed to parse options.ini: {}", e),
+                }
+            }
+        }
+
+        // Resolve INI filename: _<type>[_<ext>].ini
+        let ini_suffix = self.ini_ext.as_ref()
+            .map(|e| format!("_{}", e)).unwrap_or_default();
+        let ini_filename = format!("_{}{}.ini", build_type, ini_suffix);
+        let ini_path = ini_dir.join(&ini_filename);
+
+        // Console section, e.g. "trinity" or "trinity_ext"
+        let console_section = match &self.bl_ext {
+            Some(ext) => format!("{}_{}", console, ext),
+            None      => console.clone(),
+        };
+
+        // Pre-parse INI to know which asset filenames we need
+        let mut target_filenames: HashSet<String> = HashSet::new();
+        match crate::core::data::xeini::parse_xe_ini(&ini_path, &console_section) {
+            Ok(ini) => {
+                for e in ini.main    { target_filenames.insert(e.filename.to_lowercase()); }
+                for e in ini.security { target_filenames.insert(e.filename.to_lowercase()); }
+                for e in ini.flashfs  { target_filenames.insert(e.filename.to_lowercase()); }
+            }
+            Err(_) => return Err(format!("prepare_build: cannot read INI at {:?}", ini_path)),
+        }
+
+        info!("[session] prepare_build | type={} console={} section={}", build_type, console, console_section);
+        info!("[session] prepare_build | ini_dir={:?}  data_dir={:?}  common={:?}", ini_dir, data_dir, common_dir);
+
+        // Enqueue FinalizeFlashfs early (priority ordering handles sequencing)
+        self.enqueue(InternalCommand::FinalizeFlashfs);
+
+        // Build the search path list: ini → ini/flashfs → ini/data → common
+        let ini_flashfs = ini_dir.join("flashfs");
+        let ini_data    = ini_dir.join("data");
+        let mut search_dirs: Vec<PathBuf> = vec![ini_dir.clone()];
+        if ini_flashfs.is_dir() { search_dirs.push(ini_flashfs); }
+        if ini_data.is_dir()    { search_dirs.push(ini_data); }
+        if common_dir.is_dir()  { search_dirs.push(common_dir.clone()); }
+
+        // Discover INI assets
+        let mut cf_found = false;
+        let mut cg_found = false;
+        for filename in &target_filenames {
+            for dir in &search_dirs {
+                let candidate = dir.join(filename);
+                if candidate.exists() {
+                    self.enqueue(InternalCommand::Update { path: candidate });
+                    if filename.starts_with("cf_") { cf_found = true; }
+                    if filename.starts_with("cg_") { cg_found = true; }
+                    break;
+                }
+            }
+        }
+
+        // CF/CG fallback: xboxupd.bin or su*** containers
+        if !cf_found || !cg_found {
+            let xboxupd = ini_dir.join("xboxupd.bin");
+            if xboxupd.exists() {
+                self.enqueue(InternalCommand::Update { path: xboxupd });
+            } else if let Ok(entries) = fs::read_dir(&ini_dir) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_file() {
+                        let name = p.file_name().unwrap_or_default()
+                            .to_string_lossy().to_lowercase();
+                        if name.starts_with("su") {
+                            self.enqueue(InternalCommand::Update { path: p });
+                        }
+                    }
+                }
+            }
+        }
+
+        // NAND image (data dir)
+        let nand_candidates = [
+            data_dir.join("nanddump.bin"),
+            data_dir.join("nanddump1.bin"),
+            data_dir.join("nanddump2.bin"),
+            data_dir.join("updflash.bin"),
+        ];
+        let mut nand_found = false;
+        for p in &nand_candidates {
+            if p.exists() {
+                self.enqueue(InternalCommand::ParseImage { path: p.clone(), key: None });
+                nand_found = true;
+                break;
+            }
+        }
+        if !nand_found {
+            // No source NAND: create a blank image based on console layout
+            let layout = match console.as_str() {
+                "xenon"                        => crate::core::data::blocks::NandLayout::Xsb,
+                "jasper256" | "jasper512" |
+                "jasperbb"  | "jasperbigffs" |
+                "trinitybigffs"                => crate::core::data::blocks::NandLayout::Bb,
+                "corona4g"  | "winchester"     => crate::core::data::blocks::NandLayout::Emmc,
+                _                              => crate::core::data::blocks::NandLayout::Sb,
+            };
+            self.enqueue(InternalCommand::CreateImage { layout });
+        }
+
+        // CPU key (cpukey.txt / cpukey.bin in data dir)
+        if self.pending_key.is_none() && self.options.cpukey.is_none() {
+            let key_txt = data_dir.join("cpukey.txt");
+            let key_bin = data_dir.join("cpukey.bin");
+            if key_bin.exists() {
+                if let Ok(bytes) = fs::read(&key_bin) {
+                    if bytes.len() >= 16 {
+                        let mut k = [0u8; 16];
+                        k.copy_from_slice(&bytes[..16]);
+                        self.parse_keybin(Some(k));
+                    }
+                }
+            } else if key_txt.exists() {
+                if let Ok(text) = fs::read_to_string(&key_txt) {
+                    let clean = text.trim();
+                    if clean.len() >= 32 {
+                        self.set_cpukey(clean.to_string());
+                    }
+                }
+            }
+        }
+
+        // Security assets from data dir
+        for name in &["smc.bin", "smc_config.bin", "fcrt.bin", "kv.bin", "keyvault.bin"] {
+            let p = data_dir.join(name);
+            if p.exists() {
+                if let Ok(data) = fs::read(&p) {
+                    self.pending_assets.insert(name.to_string(), data);
+                }
+            }
+        }
+
+        // Enqueue INI parsing
+        self.parse_ini(&ini_path, console_section, &ini_dir, &common_dir, &data_dir);
+
+        // Addon patches
+        let addons = self.addons.clone();
+        for addon in &addons {
+            let addon_path = if PathBuf::from(addon).is_absolute() {
+                PathBuf::from(addon)
+            } else {
+                let p = ini_dir.join(addon);
+                if p.exists() { p } else { data_dir.join(addon) }
+            };
+            if addon_path.exists() {
+                self.enqueue(InternalCommand::ApplyPatch {
+                    path: addon_path,
+                    ptype: 2,
+                    target: None,
+                });
+            } else {
+                warn!("[session] prepare_build: addon not found: {}", addon);
+            }
+        }
+
+        // Final build command
+        self.build(output_path, 0);
+
+        Ok(())
     }
 
     /// Pulls hardware/image defaults from the active NAND into the session options.

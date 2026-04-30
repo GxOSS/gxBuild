@@ -5,12 +5,9 @@
     Licensed under GPLv2 (inherited from xenon-bltool).
 */
 
-pub mod builder;
-pub mod core;
-
 #[cfg(feature = "cli")]
 fn main() {
-    crate::core::interface::cli::ggx_cli();
+    gxbuild::core::interface::cli::ggx_cli();
 }
 
 #[cfg(not(feature = "cli"))]
