@@ -1,13 +1,15 @@
 # gxBuild
 
 >[!CAUTION]
-> gxBuild is in **BETA**!
-> The app is still **UNTESTED** against real consoles!
-> There is a **99.99%** chance you will brick your console!
+> * gxBuild is in **BETA**!
+> * The app is still **UNTESTED** against real consoles!
+> * There is a **99.99%** chance you will brick your console!
 
 ![gxBuild Colour Transparent Banner](assets/gx_banner_colour_trans.png)
 
 gxBuild is a Xbox 360 image builder and patcher. Features full nand, xell and shadowboot parsing, patching and building. Stays as close to xeBuild as possible, with a few changes. 
+
+Based on [RGBuild](), [xenon-bltool]() and [J-Runner with Extras]()
 
 ## Features
 
@@ -48,7 +50,9 @@ gxBuild is a Xbox 360 image builder and patcher. Features full nand, xell and sh
 Any testing is greatly appreciated, as I don't have the funds for every platform.
 
 ✓ = Tested Working
+
 - = Builds correctly
+
 × = Does not built correctly
 
 

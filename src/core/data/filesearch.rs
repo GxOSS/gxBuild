@@ -14,6 +14,20 @@ use log::{info, warn, error};
 
 // Search for files listed in INI
 
+fn resolve_robust(base: &Path, cand: &str) -> PathBuf {
+    let mut p = base.to_path_buf();
+    for component in cand.split(['/', '\\']) {
+        if component == ".." {
+            p.pop();
+        } else if component == "." || component.is_empty() {
+            continue;
+        } else {
+            p.push(component);
+        }
+    }
+    p
+}
+
 pub struct DiscoveredBootloaders {
     pub cb: Option<PathBuf>,
     pub cb_a: Option<PathBuf>,
@@ -60,20 +74,28 @@ fn get_xebuild_crc32(data: &[u8], filename: &str) -> String {
     let mut working = data[..xe_len].to_vec();
 
     // Zero out sensitive/nonce fields per xeBuild rules:
-    // - CB / CB_A / CB_B / SB: Zero 0x30 bytes starting at 0x10 (0x10..0x40)
-    // - CD / SD / CG / SG / CF / SF: Zero 0x10 bytes starting at 0x10 (0x10..0x20)
-    // - Others (CE, etc): Truncated but not zeroed.
     if lower_name.starts_with("cb") || lower_name.starts_with("sb") {
+        // CB/CB_A/CB_B/CB_X: Zero 0x30 bytes starting at 0x10 (0x10..0x40)
+        let start = 0x10;
         let end = std::cmp::min(0x40, working.len());
-        if working.len() > 0x10 {
-            for i in 0x10..end { working[i] = 0; }
+        if working.len() > start {
+            for i in start..end { working[i] = 0; }
+        }
+    } else if lower_name.starts_with("cf") || lower_name.starts_with("sf") {
+        // CF: Zero 0x210 bytes starting at 0x20 (0x20..0x230)
+        let start = 0x20;
+        let end = std::cmp::min(0x230, working.len());
+        if working.len() > start {
+            for i in start..end { working[i] = 0; }
         }
     } else if lower_name.starts_with("cd") || lower_name.starts_with("sd") ||
-              lower_name.starts_with("cf") || lower_name.starts_with("sf") ||
+              lower_name.starts_with("ce") || lower_name.starts_with("se") ||
               lower_name.starts_with("cg") || lower_name.starts_with("sg") {
+        // CD, CE, CG: Zero 0x10 bytes starting at 0x10 (0x10..0x20)
+        let start = 0x10;
         let end = std::cmp::min(0x20, working.len());
-        if working.len() > 0x10 {
-            for i in 0x10..end { working[i] = 0; }
+        if working.len() > start {
+            for i in start..end { working[i] = 0; }
         }
     }
 
@@ -124,9 +146,7 @@ impl IniSearch {
         let build = build.as_ref().to_path_buf();
         let common = common.as_ref().to_path_buf();
         let data = data.as_ref().to_path_buf();
-        
         let flashfs_folder = build.join("flashfs");
-        
         // Auto Patcher
         // Patches Priority: 1. Build/bin Folder, 2. Build/../bin Folder
         let platform = ini.name.split('_').next().unwrap_or(&ini.name).to_lowercase();
@@ -258,7 +278,7 @@ impl IniSearch {
 
                 // Tier 2: Data Folder
                 if found_content.is_none() {
-                    let cand = data.join(filename);
+                    let cand = resolve_robust(&data, filename);
                     if cand.exists() {
                         let c = std::fs::read(&cand)?;
                         if let Some(expected) = &entry.hash {
@@ -284,7 +304,7 @@ impl IniSearch {
 
                 // Tier 3: Common Folder (Security only)
                 if found_content.is_none() {
-                    let cand = common.join(filename);
+                    let cand = resolve_robust(&common, filename);
                     if cand.exists() {
                         let c = std::fs::read(&cand)?;
                         if let Some(expected) = &entry.hash {
@@ -461,21 +481,9 @@ impl IniSearch {
                     }
                 }
 
-                // Tier 2: Build ini Folder / Data
-                if found_content.is_none() {
-                    let cand = build.join("data").join(filename);
-                    if cand.exists() {
-                        let c = std::fs::read(&cand)?;
-                        if check_hash!(c, filename, "Data Folder") {
-                            found_content = Some(c);
-                            found_path = Some(cand);
-                        }
-                    }
-                }
-
                 // Tier 3: Build ini Folder (direct)
                 if found_content.is_none() {
-                    let cand = build.join(filename);
+                    let cand = resolve_robust(&build, filename);
                     if cand.exists() {
                         let c = std::fs::read(&cand)?;
                         if check_hash!(c, filename, "Build Folder") {
@@ -622,10 +630,10 @@ impl IniSearch {
                 // Tier 2 & 3: Local Folder (orig, orig1, orig2)
                 if found_content.is_none() {
                     let candidates = [filename.clone(), format!("{}1", filename), format!("{}2", filename)];
-                    let paths = [flashfs_folder.clone(), build.clone()];
+                    let paths = [flashfs_folder.clone(), build.clone(), data.clone()];
                     for p_base in &paths {
                         for cand in &candidates {
-                            let p = p_base.join(cand);
+                            let p = resolve_robust(p_base, cand);
                             if p.exists() {
                                 let c = std::fs::read(&p)?;
                                 if let Some(expected) = &entry.hash {

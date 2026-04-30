@@ -302,6 +302,9 @@ pub struct BuildOptions {
     pub jtag_syscall: Option<u16>,
     pub jtag_pairing_2bl: Option<[u8; 3]>,
     pub gxunsafe: bool,
+    pub verbose: bool,
+    pub cba: Option<String>,
+    pub cbb: Option<String>,
 }
 
 impl Default for BuildOptions {
@@ -322,6 +325,9 @@ impl Default for BuildOptions {
             jtag_syscall: None,
             jtag_pairing_2bl: None,
             gxunsafe: false,
+            verbose: false,
+            cba: None,
+            cbb: None,
         }
     }
 }
@@ -566,13 +572,14 @@ impl NandSkeleton {
             block_map: None,
             layout,
             total_blocks,
-            options: BuildOptions {
+                options: BuildOptions {
                 layout,
                 block_map: BlockMap { blocks: Vec::new(), layout },
                 image_profile: (if bl_mut.cb_b.is_some() { "split" } else { "single" }).to_string(),
                 build_mode: BuildMode::Normal,
                 motherboard,
                 gxunsafe: false,
+                verbose: false,
                 ..Default::default()
             },
             header,

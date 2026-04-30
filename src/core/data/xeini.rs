@@ -118,6 +118,9 @@ pub struct OptionsIni {
     pub nolog: Option<bool>,
     pub noinfo: Option<bool>,
     pub gxunsafe: Option<bool>,
+    pub verbose: Option<bool>,
+    pub cba: Option<String>,
+    pub cbb: Option<String>,
 }
 
 impl OptionsIni {
@@ -149,6 +152,9 @@ impl OptionsIni {
             nolog: None,
             noinfo: None,
             gxunsafe: None,
+            verbose: None,
+            cba: None,
+            cbb: None,
             cputemp: None,
             gputemp: None,
             edramtemp: None,
@@ -192,6 +198,9 @@ impl OptionsIni {
         if let Some(v) = other.nolog { self.nolog = Some(v); }
         if let Some(v) = other.noinfo { self.noinfo = Some(v); }
         if let Some(v) = other.gxunsafe { self.gxunsafe = Some(v); }
+        if let Some(v) = other.verbose { self.verbose = Some(v); }
+        if let Some(v) = other.cba { self.cba = Some(v); }
+        if let Some(v) = other.cbb { self.cbb = Some(v); }
         if let Some(v) = other.cputemp { self.cputemp = Some(v); }
         if let Some(v) = other.gputemp { self.gputemp = Some(v); }
         if let Some(v) = other.edramtemp { self.edramtemp = Some(v); }
@@ -266,7 +275,10 @@ pub fn parse_options_ini(
                         "noenter" => options.noenter = Some(value.eq_ignore_ascii_case("true")),
                         "nolog" => options.nolog = Some(value.eq_ignore_ascii_case("true")),
                         "noinfo" => options.noinfo = Some(value.eq_ignore_ascii_case("true")),
-                        "gxunsafe" => options.gxunsafe = Some(value.eq_ignore_ascii_case("true")),
+                        "gxunsafe" | "unsafe" => options.gxunsafe = Some(value.eq_ignore_ascii_case("true")),
+                        "verbose" => options.verbose = Some(value.eq_ignore_ascii_case("true")),
+                        "cba" => options.cba = Some(value.clone()),
+                        "cbb" => options.cbb = Some(value.clone()),
                         "cputemp" => options.cputemp = Some(value.clone()),
                         "gputemp" => options.gputemp = Some(value.clone()),
                         "edramtemp" => options.edramtemp = Some(value.clone()),
@@ -650,6 +662,20 @@ pub fn apply_xe_ini(
         let total_blocks = nand.flashfs.root.block_map.len();
         nand.flashfs = crate::builder::chain::flashfs::FlashFS::new();
         nand.flashfs.root.block_map = vec![0; total_blocks];
+    }
+
+    // Apply Overrides
+    if let Some(cba_file) = &nand.options.cba {
+        if let Some(data) = pending.bootloaders.get(&cba_file.to_lowercase()) {
+            nand.bootloaders.cb_a = Some(crate::builder::chain::cb::BootloaderCb::parse(data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] OVERRIDE: Assigned CB_A from '{}'", cba_file);
+        }
+    }
+    if let Some(cbb_file) = &nand.options.cbb {
+        if let Some(data) = pending.bootloaders.get(&cbb_file.to_lowercase()) {
+            nand.bootloaders.cb_b = Some(crate::builder::chain::cb::BootloaderCb::parse(data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] OVERRIDE: Assigned CB_B from '{}'", cbb_file);
+        }
     }
 
     Ok(nand)

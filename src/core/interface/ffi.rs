@@ -313,10 +313,10 @@ pub extern "C" fn gx_session_run_once(session: *mut GxSession, command_id: i32, 
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
     
-    let arg1_str = if !arg1.is_null() {
-        unsafe { CStr::from_ptr(arg1) }.to_string_lossy().into_owned()
+    let _arg1_str = if !arg1.is_null() {
+        Some(unsafe { CStr::from_ptr(arg1).to_string_lossy().into_owned() })
     } else {
-        String::new()
+        None
     };
     
     let command = match command_id {

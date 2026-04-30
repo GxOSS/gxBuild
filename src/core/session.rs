@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 use crate::builder::builder::NandSkeleton;
 use std::fs;
 use crate::builder::builder::{SouthbridgeType, LayoutCalculator};
-use crate::builder::chain::flashfs::FlashFS;
 use crate::core::data::gxp::parse_patch_binary;
 use crate::core::data::filesearch::IniSearch;
 use log::{info, error, warn};
@@ -364,7 +363,14 @@ impl Session {
             "region" | "avregion" => o.avregion = Some(v.to_string()),
             "gameregion"          => o.gameregion = Some(v.to_string()),
             "dvdregion"           => o.dvdregion = Some(v.to_string()),
-            "unsafe"              => o.gxunsafe = Some(is_true),
+            "unsafe" | "gxunsafe" => o.gxunsafe = Some(is_true),
+            "verbose"             => {
+                o.verbose = Some(is_true);
+                // Update logger level immediately if verbose is toggled
+                let _ = crate::core::logger::init_logger("build", is_true);
+            },
+            "cba"                 => o.cba = Some(v.to_string()),
+            "cbb"                 => o.cbb = Some(v.to_string()),
             "nomobile"            => o.nomobile = Some(is_true),
             "noremap"             => o.noremap = Some(is_true),
             "nandmu"              => o.nandmu = Some(is_true),
@@ -416,11 +422,6 @@ impl Session {
     pub fn prepare_build(&mut self) -> Result<(), String> {
         use std::collections::HashSet;
 
-        let build_type = self.build_type.clone()
-            .ok_or("prepare_build: build_type not set")?;
-        let console = self.console_type.clone()
-            .ok_or("prepare_build: console_type not set")?;
-
         let ini_dir = self.ini_dir.clone()
             .unwrap_or_else(|| PathBuf::from("."));
         let data_dir = self.data_dir.clone()
@@ -430,16 +431,34 @@ impl Session {
         let output_path = self.output_path.clone()
             .unwrap_or_else(|| PathBuf::from("updflash.bin"));
 
-        // Load options.ini from the data dir
+        // 1. Load options.ini from the data dir FIRST, then merge user overrides
         let options_path = data_dir.join("options.ini");
         if options_path.exists() {
             if let Ok(content) = fs::read_to_string(&options_path) {
                 match crate::core::data::xeini::parse_options_ini(&content) {
-                    Ok(opts) => { self.options.merge(opts); }
-                    Err(e)   => warn!("[session] prepare_build: failed to parse options.ini: {}", e),
+                    Ok(disk_opts) => {
+                        let user_opts = self.options.clone();
+                        self.options = disk_opts;
+                        self.options.merge(user_opts);
+                    }
+                    Err(e) => warn!("[session] prepare_build: failed to parse options.ini: {}", e),
                 }
             }
         }
+
+        // 2. Initialize or update logger level based on FINAL merged options
+        let is_verbose = self.options.verbose.unwrap_or(false);
+        let _ = crate::core::logger::init_logger("build", is_verbose);
+
+        if let Some(nand) = &mut self.active_nand {
+            nand.options.gxunsafe = self.options.gxunsafe.unwrap_or(false);
+            nand.options.verbose = self.options.verbose.unwrap_or(false);
+        }
+
+        let build_type = self.build_type.clone()
+            .ok_or("prepare_build: build_type not set")?;
+        let console = self.console_type.clone()
+            .ok_or("prepare_build: console_type not set")?;
 
         // Resolve INI filename: _<type>[_<ext>].ini
         let ini_suffix = self.ini_ext.as_ref()
@@ -651,6 +670,15 @@ impl Session {
             if let Some(noremap) = self.options.noremap {
                 nand.options.noremap = noremap;
             }
+            if let Some(cba) = &self.options.cba {
+                nand.options.cba = Some(cba.clone());
+            }
+            if let Some(cbb) = &self.options.cbb {
+                nand.options.cbb = Some(cbb.clone());
+            }
+
+            nand.options.gxunsafe = self.options.gxunsafe.unwrap_or(false);
+            nand.options.verbose = self.options.verbose.unwrap_or(false);
 
             // --- 1. CPU Key ---
             if let Some(key_str) = &self.options.cpukey {
@@ -875,9 +903,8 @@ impl Session {
         self.enqueue(InternalCommand::FinalizeFlashfs);
     }
 
-    // ------------------------------------
-    // Execution core
-    // ------------------------------------
+
+
     pub fn run(&mut self) -> Result<(), String> {
         info!("[session] Running {} queued commands...", self.queue.len());
         
