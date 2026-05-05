@@ -121,6 +121,8 @@ pub struct OptionsIni {
     pub verbose: Option<bool>,
     pub cba: Option<String>,
     pub cbb: Option<String>,
+    pub full_image: Option<bool>,
+    pub xsb: Option<bool>,
 }
 
 impl OptionsIni {
@@ -167,6 +169,8 @@ impl OptionsIni {
             gameregion: None,
             dvdregion: None,
             macid: None,
+            full_image: None,
+            xsb: None,
         }
     }
 
@@ -213,6 +217,8 @@ impl OptionsIni {
         if let Some(v) = other.gameregion { self.gameregion = Some(v); }
         if let Some(v) = other.dvdregion { self.dvdregion = Some(v); }
         if let Some(v) = other.macid { self.macid = Some(v); }
+        if let Some(v) = other.full_image { self.full_image = Some(v); }
+        if let Some(v) = other.xsb { self.xsb = Some(v); }
     }
 }
 

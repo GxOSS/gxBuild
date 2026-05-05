@@ -9,7 +9,9 @@
 
 use clap::{Parser, Subcommand, ValueEnum, CommandFactory};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use crate::core::session::{Session, InternalCommand};
+use crate::core::interface::gxscript::GxScriptEngine;
 use crate::core::logger;
 use log::{info, error, warn};
 
@@ -102,6 +104,22 @@ pub struct GgxArgs {
 
     /// Optional output image name
     pub output: Option<PathBuf>,
+
+    /// Force XSB layout
+    #[arg(short = 'x', long = "xsb")]
+    pub xsb: bool,
+
+    /// Build full NAND image (not just system portion)
+    #[arg(long = "fullimage")]
+    pub full_image: bool,
+
+    /// Run a Rhai script file
+    #[arg(long = "script")]
+    pub script: Option<PathBuf>,
+
+    /// Launch interactive Rhai shell
+    #[arg(long = "shell")]
+    pub shell: bool,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -214,7 +232,9 @@ pub fn ggx_cli() {
 
     info!("{}", LICENSE_TEXT);
     
-    let mut session = Session::new();
+    let session = Session::new();
+
+    let mut session = session;
 
     let mut session_prepared = true;
     match args.mode.clone() {
@@ -236,6 +256,21 @@ pub fn ggx_cli() {
     }
 
     if session_prepared {
+        // --- Scripting & Shell Handlers ---
+        if args.shell || args.script.is_some() {
+            let session_ptr = Arc::new(Mutex::new(session));
+            let mut script_engine = GxScriptEngine::new(session_ptr);
+            
+            if args.shell {
+                script_engine.repl();
+            } else if let Some(path) = &args.script {
+                if let Err(e) = script_engine.run_file(&path.to_string_lossy()) {
+                    error!("[cli] Script error: {}", e);
+                }
+            }
+            return;
+        }
+
         if let Err(e) = session.run() {
             error!("[cli] Session failed: {}", e);
         } else if let Some(GgxMode::Build { .. }) | None = args.mode {
@@ -303,6 +338,12 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     let mut cli_overrides = crate::core::data::xeini::OptionsIni::new();
     if let Some(key) = &args.cpu_key {
         cli_overrides.cpukey = Some(key.clone());
+    }
+    if args.full_image {
+        cli_overrides.full_image = Some(true);
+    }
+    if args.xsb {
+        cli_overrides.xsb = Some(true);
     }
     session.options.merge(cli_overrides);
 

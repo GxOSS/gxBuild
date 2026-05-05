@@ -8,18 +8,20 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use crate::core::interface::gxscript::GxScriptEngine;
 use crate::core::session::{Session, InternalCommand};
 
 /// Opaque wrapper for the Session struct
 pub struct GxSession {
-    pub inner: Session,
+    pub inner: Arc<Mutex<Session>>,
     pub last_error: Option<CString>,
 }
 
 #[no_mangle]
 pub extern "C" fn gx_session_new() -> *mut GxSession {
     let session = GxSession {
-        inner: Session::new(),
+        inner: Arc::new(Mutex::new(Session::new())),
         last_error: None,
     };
     Box::into_raw(Box::new(session))
@@ -71,7 +73,7 @@ pub extern "C" fn gx_session_push_parse_ini(
     let common = unsafe { CStr::from_ptr(common) }.to_string_lossy().into_owned();
     let data = unsafe { CStr::from_ptr(data) }.to_string_lossy().into_owned();
     
-    session.inner.enqueue(InternalCommand::ParseIni {
+    session.inner.lock().unwrap().enqueue(InternalCommand::ParseIni {
         path: PathBuf::from(path),
         target,
         ini_base: PathBuf::from(ini_base),
@@ -100,7 +102,7 @@ pub extern "C" fn gx_session_push_parse_image(
         None
     };
     
-    session.inner.enqueue(InternalCommand::ParseImage {
+    session.inner.lock().unwrap().enqueue(InternalCommand::ParseImage {
         path: PathBuf::from(path),
         key,
     });
@@ -119,7 +121,7 @@ pub extern "C" fn gx_session_push_parse_key(
     let mut key = [0u8; 16];
     unsafe { std::ptr::copy_nonoverlapping(key_ptr, key.as_mut_ptr(), 16) };
     
-    session.inner.enqueue(InternalCommand::ParseKey { key });
+    session.inner.lock().unwrap().enqueue(InternalCommand::ParseKey { key });
     0
 }
 
@@ -133,7 +135,7 @@ pub extern "C" fn gx_session_push_build(
     let session = unsafe { &mut *session };
     
     let output = unsafe { CStr::from_ptr(output) }.to_string_lossy().into_owned();
-    session.inner.enqueue(InternalCommand::Build {
+    session.inner.lock().unwrap().enqueue(InternalCommand::Build {
         output: PathBuf::from(output),
         target,
     });
@@ -157,7 +159,7 @@ pub extern "C" fn gx_session_push_parse_keybin(
         None
     };
     
-    session.inner.enqueue(InternalCommand::ParseKeybin { key });
+    session.inner.lock().unwrap().enqueue(InternalCommand::ParseKeybin { key });
     0
 }
 
@@ -180,7 +182,7 @@ pub extern "C" fn gx_session_push_create_image(
         }
     };
     
-    session.inner.enqueue(InternalCommand::CreateImage { layout });
+    session.inner.lock().unwrap().enqueue(InternalCommand::CreateImage { layout });
     0
 }
 
@@ -189,7 +191,7 @@ pub extern "C" fn gx_session_push_parse_flashfs(session: *mut GxSession, path: *
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
     let path = unsafe { CStr::from_ptr(path) }.to_string_lossy().into_owned();
-    session.inner.enqueue(InternalCommand::ParseFlashfs { path: PathBuf::from(path) });
+    session.inner.lock().unwrap().enqueue(InternalCommand::ParseFlashfs { path: PathBuf::from(path) });
     0
 }
 
@@ -198,7 +200,7 @@ pub extern "C" fn gx_session_push_parse_patch(session: *mut GxSession, path: *co
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
     let path = unsafe { CStr::from_ptr(path) }.to_string_lossy().into_owned();
-    session.inner.enqueue(InternalCommand::ParsePatch { path: PathBuf::from(path) });
+    session.inner.lock().unwrap().enqueue(InternalCommand::ParsePatch { path: PathBuf::from(path) });
     0
 }
 
@@ -208,7 +210,7 @@ pub extern "C" fn gx_session_push_apply_patch(session: *mut GxSession, path: *co
     let session = unsafe { &mut *session };
     let path = unsafe { CStr::from_ptr(path) }.to_string_lossy().into_owned();
     let target = if target == 0xFF { None } else { Some(target) };
-    session.inner.enqueue(InternalCommand::ApplyPatch { path: PathBuf::from(path), ptype, target });
+    session.inner.lock().unwrap().enqueue(InternalCommand::ApplyPatch { path: PathBuf::from(path), ptype, target });
     0
 }
 
@@ -217,7 +219,7 @@ pub extern "C" fn gx_session_push_extract(session: *mut GxSession, id: *const c_
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
     let id = unsafe { CStr::from_ptr(id) }.to_string_lossy().into_owned();
-    session.inner.enqueue(InternalCommand::Extract { id });
+    session.inner.lock().unwrap().enqueue(InternalCommand::Extract { id });
     0
 }
 
@@ -225,7 +227,7 @@ pub extern "C" fn gx_session_push_extract(session: *mut GxSession, id: *const c_
 pub extern "C" fn gx_session_push_extract_all(session: *mut GxSession) -> i32 {
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
-    session.inner.enqueue(InternalCommand::ExtractAll);
+    session.inner.lock().unwrap().enqueue(InternalCommand::ExtractAll);
     0
 }
 
@@ -234,7 +236,7 @@ pub extern "C" fn gx_session_push_replace(session: *mut GxSession, id: u8, path:
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
     let path = unsafe { CStr::from_ptr(path) }.to_string_lossy().into_owned();
-    session.inner.enqueue(InternalCommand::Replace { id, path: PathBuf::from(path) });
+    session.inner.lock().unwrap().enqueue(InternalCommand::Replace { id, path: PathBuf::from(path) });
     0
 }
 
@@ -242,7 +244,7 @@ pub extern "C" fn gx_session_push_replace(session: *mut GxSession, id: u8, path:
 pub extern "C" fn gx_session_push_list(session: *mut GxSession) -> i32 {
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
-    session.inner.enqueue(InternalCommand::List);
+    session.inner.lock().unwrap().enqueue(InternalCommand::List);
     0
 }
 
@@ -250,7 +252,7 @@ pub extern "C" fn gx_session_push_list(session: *mut GxSession) -> i32 {
 pub extern "C" fn gx_session_push_delete(session: *mut GxSession, id: u8) -> i32 {
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
-    session.inner.enqueue(InternalCommand::Delete { id });
+    session.inner.lock().unwrap().enqueue(InternalCommand::Delete { id });
     0
 }
 
@@ -258,7 +260,7 @@ pub extern "C" fn gx_session_push_delete(session: *mut GxSession, id: u8) -> i32
 pub extern "C" fn gx_session_push_clear(session: *mut GxSession) -> i32 {
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
-    session.inner.enqueue(InternalCommand::Clear);
+    session.inner.lock().unwrap().enqueue(InternalCommand::Clear);
     0
 }
 
@@ -266,7 +268,7 @@ pub extern "C" fn gx_session_push_clear(session: *mut GxSession) -> i32 {
 pub extern "C" fn gx_session_push_compress(session: *mut GxSession) -> i32 {
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
-    session.inner.enqueue(InternalCommand::Compress);
+    session.inner.lock().unwrap().enqueue(InternalCommand::Compress);
     0
 }
 
@@ -274,7 +276,7 @@ pub extern "C" fn gx_session_push_compress(session: *mut GxSession) -> i32 {
 pub extern "C" fn gx_session_push_decompress(session: *mut GxSession) -> i32 {
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
-    session.inner.enqueue(InternalCommand::Decompress);
+    session.inner.lock().unwrap().enqueue(InternalCommand::Decompress);
     0
 }
 
@@ -283,7 +285,7 @@ pub extern "C" fn gx_session_push_update(session: *mut GxSession, path: *const c
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
     let path = unsafe { CStr::from_ptr(path) }.to_string_lossy().into_owned();
-    session.inner.enqueue(InternalCommand::Update { path: PathBuf::from(path) });
+    session.inner.lock().unwrap().enqueue(InternalCommand::Update { path: PathBuf::from(path) });
     0
 }
 
@@ -291,7 +293,7 @@ pub extern "C" fn gx_session_push_update(session: *mut GxSession, path: *const c
 pub extern "C" fn gx_session_push_finalize_flashfs(session: *mut GxSession) -> i32 {
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
-    session.inner.enqueue(InternalCommand::FinalizeFlashfs);
+    session.inner.lock().unwrap().enqueue(InternalCommand::FinalizeFlashfs);
     0
 }
 
@@ -301,7 +303,7 @@ pub extern "C" fn gx_session_push_extract_stfs(session: *mut GxSession, path: *c
     let session = unsafe { &mut *session };
     let path = unsafe { CStr::from_ptr(path) }.to_string_lossy().into_owned();
     let target_dir = unsafe { CStr::from_ptr(target_dir) }.to_string_lossy().into_owned();
-    session.inner.enqueue(InternalCommand::ExtractStfs { 
+    session.inner.lock().unwrap().enqueue(InternalCommand::ExtractStfs { 
         path: PathBuf::from(path), 
         target_dir: PathBuf::from(target_dir) 
     });
@@ -332,7 +334,7 @@ pub extern "C" fn gx_session_run_once(session: *mut GxSession, command_id: i32, 
         }
     };
     
-    if let Err(e) = session.inner.run_once(command) {
+    if let Err(e) = session.inner.lock().unwrap().run_once(command) {
         set_error(session, &e);
         return 1;
     }
@@ -345,7 +347,7 @@ pub extern "C" fn gx_session_run(session: *mut GxSession) -> i32 {
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
     
-    if let Err(e) = session.inner.run() {
+    if let Err(e) = session.inner.lock().unwrap().run() {
         set_error(session, &e);
         return 1;
     }
@@ -360,7 +362,7 @@ pub extern "C" fn gx_session_set_build_type(session: *mut GxSession, build_type:
     if session.is_null() || build_type.is_null() { return -1; }
     let session = unsafe { &mut *session };
     let s = unsafe { CStr::from_ptr(build_type) }.to_string_lossy().into_owned();
-    session.inner.set_build_type(s);
+    session.inner.lock().unwrap().set_build_type(s);
     0
 }
 
@@ -369,7 +371,7 @@ pub extern "C" fn gx_session_set_console(session: *mut GxSession, console: *cons
     if session.is_null() || console.is_null() { return -1; }
     let session = unsafe { &mut *session };
     let s = unsafe { CStr::from_ptr(console) }.to_string_lossy().into_owned();
-    session.inner.set_console(s);
+    session.inner.lock().unwrap().set_console(s);
     0
 }
 
@@ -378,7 +380,7 @@ pub extern "C" fn gx_session_set_ini_dir(session: *mut GxSession, path: *const c
     if session.is_null() || path.is_null() { return -1; }
     let session = unsafe { &mut *session };
     let s = unsafe { CStr::from_ptr(path) }.to_string_lossy().into_owned();
-    session.inner.set_ini_dir(PathBuf::from(s));
+    session.inner.lock().unwrap().set_ini_dir(PathBuf::from(s));
     0
 }
 
@@ -387,7 +389,7 @@ pub extern "C" fn gx_session_set_common_dir(session: *mut GxSession, path: *cons
     if session.is_null() || path.is_null() { return -1; }
     let session = unsafe { &mut *session };
     let s = unsafe { CStr::from_ptr(path) }.to_string_lossy().into_owned();
-    session.inner.set_common_dir(PathBuf::from(s));
+    session.inner.lock().unwrap().set_common_dir(PathBuf::from(s));
     0
 }
 
@@ -396,7 +398,7 @@ pub extern "C" fn gx_session_set_data_dir(session: *mut GxSession, path: *const 
     if session.is_null() || path.is_null() { return -1; }
     let session = unsafe { &mut *session };
     let s = unsafe { CStr::from_ptr(path) }.to_string_lossy().into_owned();
-    session.inner.set_data_dir(PathBuf::from(s));
+    session.inner.lock().unwrap().set_data_dir(PathBuf::from(s));
     0
 }
 
@@ -405,7 +407,7 @@ pub extern "C" fn gx_session_set_output(session: *mut GxSession, path: *const c_
     if session.is_null() || path.is_null() { return -1; }
     let session = unsafe { &mut *session };
     let s = unsafe { CStr::from_ptr(path) }.to_string_lossy().into_owned();
-    session.inner.set_output(PathBuf::from(s));
+    session.inner.lock().unwrap().set_output(PathBuf::from(s));
     0
 }
 
@@ -414,7 +416,7 @@ pub extern "C" fn gx_session_set_cpukey(session: *mut GxSession, hex_key: *const
     if session.is_null() || hex_key.is_null() { return -1; }
     let session = unsafe { &mut *session };
     let s = unsafe { CStr::from_ptr(hex_key) }.to_string_lossy().into_owned();
-    session.inner.set_cpukey(s);
+    session.inner.lock().unwrap().set_cpukey(s);
     0
 }
 
@@ -428,7 +430,39 @@ pub extern "C" fn gx_session_set_option(
     let session = unsafe { &mut *session };
     let k = unsafe { CStr::from_ptr(key) }.to_string_lossy();
     let v = unsafe { CStr::from_ptr(value) }.to_string_lossy();
-    session.inner.set_option(&k, &v);
+    session.inner.lock().unwrap().set_option(&k, &v);
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn gx_session_load_options_ini(
+    session: *mut GxSession,
+    content: *const c_char,
+) -> i32 {
+    if session.is_null() || content.is_null() { return -1; }
+    let session = unsafe { &mut *session };
+    let s = unsafe { CStr::from_ptr(content) }.to_string_lossy();
+    
+    if let Err(e) = session.inner.lock().unwrap().load_options_ini(&s) {
+        set_error(session, &e);
+        return 1;
+    }
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn gx_session_load_options_ini_file(
+    session: *mut GxSession,
+    path: *const c_char,
+) -> i32 {
+    if session.is_null() || path.is_null() { return -1; }
+    let session = unsafe { &mut *session };
+    let p = unsafe { CStr::from_ptr(path) }.to_string_lossy();
+    
+    if let Err(e) = session.inner.lock().unwrap().load_options_ini_file(p.as_ref()) {
+        set_error(session, &e);
+        return 1;
+    }
     0
 }
 
@@ -437,7 +471,22 @@ pub extern "C" fn gx_session_add_addon(session: *mut GxSession, addon: *const c_
     if session.is_null() || addon.is_null() { return -1; }
     let session = unsafe { &mut *session };
     let s = unsafe { CStr::from_ptr(addon) }.to_string_lossy().into_owned();
-    session.inner.add_addon(s);
+    session.inner.lock().unwrap().add_addon(s);
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn gx_session_swap_bootloader(
+    session: *mut GxSession,
+    bl_type: *const c_char,
+    path: *const c_char,
+    is_rebooter: i32,
+) -> i32 {
+    if session.is_null() || bl_type.is_null() || path.is_null() { return -1; }
+    let session = unsafe { &mut *session };
+    let t = unsafe { CStr::from_ptr(bl_type) }.to_string_lossy().into_owned();
+    let p = unsafe { CStr::from_ptr(path) }.to_string_lossy().into_owned();
+    session.inner.lock().unwrap().swap_bootloader(t, PathBuf::from(p), is_rebooter != 0);
     0
 }
 
@@ -445,7 +494,7 @@ pub extern "C" fn gx_session_add_addon(session: *mut GxSession, addon: *const c_
 pub extern "C" fn gx_session_clear_addons(session: *mut GxSession) -> i32 {
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
-    session.inner.clear_addons();
+    session.inner.lock().unwrap().clear_addons();
     0
 }
 
@@ -454,7 +503,7 @@ pub extern "C" fn gx_session_set_ini_ext(session: *mut GxSession, ext: *const c_
     if session.is_null() || ext.is_null() { return -1; }
     let session = unsafe { &mut *session };
     let s = unsafe { CStr::from_ptr(ext) }.to_string_lossy().into_owned();
-    session.inner.set_ini_ext(s);
+    session.inner.lock().unwrap().set_ini_ext(s);
     0
 }
 
@@ -463,7 +512,7 @@ pub extern "C" fn gx_session_set_bl_ext(session: *mut GxSession, ext: *const c_c
     if session.is_null() || ext.is_null() { return -1; }
     let session = unsafe { &mut *session };
     let s = unsafe { CStr::from_ptr(ext) }.to_string_lossy().into_owned();
-    session.inner.set_bl_ext(s);
+    session.inner.lock().unwrap().set_bl_ext(s);
     0
 }
 
@@ -473,7 +522,7 @@ pub extern "C" fn gx_session_set_bl_ext(session: *mut GxSession, ext: *const c_c
 pub extern "C" fn gx_session_prepare_build(session: *mut GxSession) -> i32 {
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
-    if let Err(e) = session.inner.prepare_build() {
+    if let Err(e) = session.inner.lock().unwrap().prepare_build() {
         set_error(session, &e);
         return 1;
     }
@@ -486,6 +535,30 @@ pub extern "C" fn gx_session_prepare_build(session: *mut GxSession) -> i32 {
 pub extern "C" fn gx_session_reset_build(session: *mut GxSession) -> i32 {
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
-    session.inner.reset_build();
+    session.inner.lock().unwrap().reset_build();
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn gx_session_run_script(session: *mut GxSession, path: *const c_char) -> i32 {
+    if session.is_null() || path.is_null() { return -1; }
+    let session = unsafe { &mut *session };
+    let path_str = unsafe { CStr::from_ptr(path) }.to_string_lossy();
+    
+    let mut script = GxScriptEngine::new(session.inner.clone());
+    if let Err(e) = script.run_file(&path_str) {
+        set_error(session, &e);
+        return 1;
+    }
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn gx_session_shell(session: *mut GxSession) -> i32 {
+    if session.is_null() { return -1; }
+    let session = unsafe { &mut *session };
+    
+    let mut script = GxScriptEngine::new(session.inner.clone());
+    script.repl();
     0
 }

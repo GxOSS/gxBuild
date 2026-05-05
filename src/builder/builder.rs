@@ -148,6 +148,10 @@ pub struct NandBootloaders {
 }
 
 impl NandBootloaders {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     pub fn clear(&mut self) {
         self.cb = None;
         self.cb_a = None;
@@ -158,6 +162,22 @@ impl NandBootloaders {
         self.ce = None;
         self.khvpatch = None;
         self.xell = None;
+    }
+}
+
+impl Default for NandBootloaders {
+    fn default() -> Self {
+        NandBootloaders {
+            cb: None,
+            cb_a: None,
+            cb_x: None,
+            cb_b: None,
+            sc: None,
+            cd: None,
+            ce: None,
+            khvpatch: None,
+            xell: None,
+        }
     }
 }
 
@@ -305,6 +325,8 @@ pub struct BuildOptions {
     pub verbose: bool,
     pub cba: Option<String>,
     pub cbb: Option<String>,
+    pub full_image: bool,
+    pub xsb: bool,
 }
 
 impl Default for BuildOptions {
@@ -318,6 +340,8 @@ impl Default for BuildOptions {
             bigonsmall: false,
             shadowboot: false,
             mfg: false,
+            full_image: false,
+            xsb: false,
             noremap: false,
             khv_apply: false,
             khv_header_size: 0x4000,

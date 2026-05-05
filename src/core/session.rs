@@ -41,6 +41,7 @@ pub enum InternalCommand {
     SessionRun,
     CreateImage { layout: crate::core::data::blocks::NandLayout },
     ExtractStfs { path: PathBuf, target_dir: PathBuf },
+    SwapBootloader { bl_type: String, path: PathBuf, is_rebooter: bool },
 }
 
 impl InternalCommand {
@@ -101,6 +102,7 @@ impl InternalCommand {
             Self::SessionRun          => 50,
             // ── Build: always last ────────────────────────────────────────
             Self::Build { .. }        => 0,
+            Self::SwapBootloader { .. } => 140,
         }
     }
 }
@@ -401,6 +403,24 @@ impl Session {
             _ => warn!("[session] set_option: unknown key '{}'", key),
         }
         self.options.merge(o);
+    }
+
+    /// Parses an options.ini content string and merges it into the session options.
+    pub fn load_options_ini(&mut self, content: &str) -> Result<(), String> {
+        match crate::core::data::xeini::parse_options_ini(content) {
+            Ok(new_opts) => {
+                self.options.merge(new_opts);
+                info!("[session] Merged options from INI content string.");
+                Ok(())
+            }
+            Err(e) => Err(format!("Failed to parse options INI: {}", e)),
+        }
+    }
+
+    /// Loads an options.ini file from the specified path and merges it into the session options.
+    pub fn load_options_ini_file(&mut self, path: impl AsRef<Path>) -> Result<(), String> {
+        let content = fs::read_to_string(path).map_err(|e| format!("Failed to read options INI file: {}", e))?;
+        self.load_options_ini(&content)
     }
 
     /// Resets the command queue and build config for a fresh build,
@@ -928,6 +948,10 @@ impl Session {
     }
 
     /// Execute a command immediately, bypassing the priority queue entirely.
+    pub fn swap_bootloader(&mut self, bl_type: String, path: PathBuf, is_rebooter: bool) {
+        self.enqueue(InternalCommand::SwapBootloader { bl_type, path, is_rebooter });
+    }
+
     pub fn run_once(&mut self, command: InternalCommand) -> Result<(), String> {
         info!("[session] Executing command directly (queue bypassed): {:?}", command);
         self.execute_command(command)
@@ -1217,6 +1241,66 @@ impl Session {
                         }
                     } else {
                         error!("[session] No active NAND loaded to patch.");
+                    }
+                }
+                InternalCommand::SwapBootloader { bl_type, path, is_rebooter } => {
+                    info!("[session] Swapping bootloader {} with {:?} (Rebooter: {})...", bl_type, path, is_rebooter);
+                    if let Some(nand) = &mut self.active_nand {
+                        let target = if is_rebooter {
+                            if nand.rebooter.is_none() {
+                                nand.rebooter = Some(crate::builder::builder::NandBootloaders::new());
+                            }
+                            nand.rebooter.as_mut().unwrap()
+                        } else {
+                            &mut nand.bootloaders
+                        };
+
+                        let data = fs::read(&path).map_err(|e| format!("Failed to read swap bootloader: {}", e))?;
+                        match bl_type.to_lowercase().as_str() {
+                            "cb" | "cba" | "cbb" | "cbx" => {
+                                let bl = crate::builder::chain::cb::BootloaderCb::parse(&data)?;
+                                match bl_type.to_lowercase().as_str() {
+                                    "cb"  => target.cb = Some(bl),
+                                    "cba" => target.cb_a = Some(bl),
+                                    "cbb" => target.cb_b = Some(bl),
+                                    "cbx" => target.cb_x = Some(bl),
+                                    _ => unreachable!(),
+                                }
+                            }
+                            "cd" => {
+                                let bl = crate::builder::chain::cd::BootloaderCd::parse(&data)?;
+                                target.cd = Some(bl);
+                            }
+                            "ce" => {
+                                let bl = crate::builder::chain::ce::BootloaderCe::parse(&data)?;
+                                target.ce = Some(bl);
+                            }
+                            "cf" => {
+                                let bl = crate::builder::chain::cf::BootloaderCf::parse(&data)?;
+                                if is_rebooter {
+                                    if nand.rebooter_update.is_none() { nand.rebooter_update = Some(Default::default()); }
+                                    nand.rebooter_update.as_mut().unwrap().cf_0 = Some(bl);
+                                } else {
+                                    nand.update.cf_0 = Some(bl);
+                                }
+                            }
+                            "cg" => {
+                                let bl = crate::builder::chain::cg::BootloaderCg::parse(&data)?;
+                                if is_rebooter {
+                                    if nand.rebooter_update.is_none() { nand.rebooter_update = Some(Default::default()); }
+                                    nand.rebooter_update.as_mut().unwrap().cg_0 = Some(bl);
+                                } else {
+                                    nand.update.cg_0 = Some(bl);
+                                }
+                            }
+                            "smc" => {
+                                nand.extra.smc = data;
+                            }
+                            _ => return Err(format!("Unknown bootloader type: {}", bl_type)),
+                        }
+                        info!("[session] Bootloader {} swapped successfully.", bl_type);
+                    } else {
+                        return Err("No active NAND loaded. Cannot swap bootloader.".to_string());
                     }
                 }
                 InternalCommand::Replace { id, path } => {
