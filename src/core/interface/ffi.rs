@@ -334,7 +334,8 @@ pub extern "C" fn gx_session_run_once(session: *mut GxSession, command_id: i32, 
         }
     };
     
-    if let Err(e) = session.inner.lock().unwrap().run_once(command) {
+    let res = session.inner.lock().unwrap().run_once(command);
+    if let Err(e) = res {
         set_error(session, &e);
         return 1;
     }
@@ -347,7 +348,8 @@ pub extern "C" fn gx_session_run(session: *mut GxSession) -> i32 {
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
     
-    if let Err(e) = session.inner.lock().unwrap().run() {
+    let res = session.inner.lock().unwrap().run();
+    if let Err(e) = res {
         set_error(session, &e);
         return 1;
     }
@@ -443,7 +445,8 @@ pub extern "C" fn gx_session_load_options_ini(
     let session = unsafe { &mut *session };
     let s = unsafe { CStr::from_ptr(content) }.to_string_lossy();
     
-    if let Err(e) = session.inner.lock().unwrap().load_options_ini(&s) {
+    let res = session.inner.lock().unwrap().load_options_ini(&s);
+    if let Err(e) = res {
         set_error(session, &e);
         return 1;
     }
@@ -459,7 +462,8 @@ pub extern "C" fn gx_session_load_options_ini_file(
     let session = unsafe { &mut *session };
     let p = unsafe { CStr::from_ptr(path) }.to_string_lossy();
     
-    if let Err(e) = session.inner.lock().unwrap().load_options_ini_file(p.as_ref()) {
+    let res = session.inner.lock().unwrap().load_options_ini_file(p.as_ref());
+    if let Err(e) = res {
         set_error(session, &e);
         return 1;
     }
@@ -522,7 +526,8 @@ pub extern "C" fn gx_session_set_bl_ext(session: *mut GxSession, ext: *const c_c
 pub extern "C" fn gx_session_prepare_build(session: *mut GxSession) -> i32 {
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
-    if let Err(e) = session.inner.lock().unwrap().prepare_build() {
+    let res = session.inner.lock().unwrap().prepare_build();
+    if let Err(e) = res {
         set_error(session, &e);
         return 1;
     }

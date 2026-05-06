@@ -5,7 +5,7 @@
     Licensed under GPLv2 (inherited from xenon-bltool).
 */
 
-use rhai::{Engine, Scope, AST};
+use rhai::{Engine, Scope};
 use rustyline::DefaultEditor;
 use std::sync::{Arc, Mutex};
 use crate::core::session::Session;
@@ -14,7 +14,6 @@ use log::{info, error};
 pub struct GxScriptEngine {
     engine: Engine,
     scope: Scope<'static>,
-    session: Arc<Mutex<Session>>,
 }
 
 impl GxScriptEngine {
@@ -32,11 +31,7 @@ impl GxScriptEngine {
         let s_clone = session.clone();
         engine.register_fn("prepare", move || {
             let mut s = s_clone.lock().unwrap();
-            // Default paths if not set
-            let ini = std::path::PathBuf::from(".");
-            let data = std::path::PathBuf::from("data");
-            let common = std::path::PathBuf::from("../common");
-            if let Err(e) = s.prepare_build(ini, data, common, "updflash.bin") {
+            if let Err(e) = s.prepare_build() {
                 error!("[script] Prepare failed: {}", e);
             }
         });
@@ -58,7 +53,6 @@ impl GxScriptEngine {
         GxScriptEngine {
             engine,
             scope,
-            session,
         }
     }
 

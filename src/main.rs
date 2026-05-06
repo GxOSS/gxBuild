@@ -7,7 +7,7 @@
 
 #[cfg(feature = "cli")]
 fn main() {
-    gxbuild::core::interface::cli::ggx_cli();
+    libgxbuild::core::interface::cli::ggx_cli();
 }
 
 #[cfg(not(feature = "cli"))]
