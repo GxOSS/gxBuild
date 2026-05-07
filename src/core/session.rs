@@ -42,6 +42,7 @@ pub enum InternalCommand {
     CreateImage { layout: crate::core::data::blocks::NandLayout },
     ExtractStfs { path: PathBuf, target_dir: PathBuf },
     SwapBootloader { bl_type: String, path: PathBuf, is_rebooter: bool },
+    ApplyOptions,
 }
 
 impl InternalCommand {
@@ -103,6 +104,7 @@ impl InternalCommand {
             // ── Build: always last ────────────────────────────────────────
             Self::Build { .. }        => 0,
             Self::SwapBootloader { .. } => 140,
+            Self::ApplyOptions        => 80,
         }
     }
 }
@@ -387,6 +389,11 @@ impl Session {
             "macid" | "mac"       => o.macid = Some(v.to_string()),
             "dvdkey"              => o.dvdkey = Some(v.to_string()),
             "cfldv"               => o.cfldv = Some(v.to_string()),
+            "serial"              => o.serial = Some(v.to_string()),
+            "consoleid"           => o.consoleid = Some(v.to_string()),
+            "osig"                => o.osig = Some(v.to_string()),
+            "mfdate"              => o.mfdate = Some(v.to_string()),
+            "fcrt"                => o.fcrt = Some(is_true),
             "xellbutton"          => o.xellbutton = Some(v.to_string()),
             "xellbutton2"         => o.xellbutton2 = Some(v.to_string()),
             "cygnos"              => o.cygnos = Some(is_true),
@@ -763,10 +770,35 @@ impl Session {
                         }
                     }
 
-                    // AV Region sync to KV
                     if let Some(region_str) = &self.options.avregion {
                         let region = Self::parse_u16_hex_or_dec(region_str)?;
                         kv.set_region(region)?;
+                    }
+
+                    if let Some(serial) = &self.options.serial {
+                        kv.set_serial(serial)?;
+                    }
+
+                    if let Some(osig) = &self.options.osig {
+                        kv.set_osig(osig)?;
+                    }
+
+                    if let Some(mfdate) = &self.options.mfdate {
+                        kv.set_mf_date(mfdate)?;
+                    }
+
+                    if let Some(fcrt) = self.options.fcrt {
+                        kv.apply_fcrt_patch(fcrt)?;
+                    }
+
+                    if let Some(cid_str) = &self.options.consoleid {
+                        if let Ok(bytes) = crate::builder::builder::hex_to_bytes(cid_str) {
+                            if bytes.len() == 5 {
+                                let mut arr = [0u8; 5];
+                                arr.copy_from_slice(&bytes);
+                                kv.set_console_id(&arr)?;
+                            }
+                        }
                     }
                     
                     // Re-encrypt and store Keyvault
@@ -1369,6 +1401,10 @@ impl Session {
                     } else {
                         error!("[session] No active NAND loaded. Cannot run Decompress.");
                     }
+                }
+                InternalCommand::ApplyOptions => {
+                    info!("[session] Applying session options to active NAND...");
+                    self.sync_options_to_nand()?;
                 }
                 InternalCommand::SessionInit { base, common } => {
                     info!("[session] Initializing session with base {:?} and common {:?}", base, common);

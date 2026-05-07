@@ -859,6 +859,15 @@ impl LbaMap {
         }
     }
 
+    pub fn from_layout(layout: NandLayout, total_blocks: usize) -> Self {
+        let mut map = Self::new(total_blocks);
+        map.meta_type = match layout {
+            NandLayout::Bb => SpareMetaType::MetaType2,
+            _ => SpareMetaType::MetaType1,
+        };
+        map
+    }
+
     /// Updates the mapping after bad block healing.
     /// Called when a bad block at `bad_block` is replaced with content from `replacement_block`.
     pub fn record_remap(&mut self, bad_block: usize, replacement_block: usize) {
@@ -883,6 +892,53 @@ impl LbaMap {
     /// Returns true if a physical block is known to be bad.
     pub fn is_bad(&self, physical: usize) -> bool {
         self.bad_blocks.contains(&physical)
+    }
+
+    /// Finds the next available reserve block, starting from the end of the NAND.
+    pub fn find_available_reserve_block(&self, layout: &NandLayout, image_len: usize) -> Option<usize> {
+        let res_start = layout.reserve_start(image_len);
+        let max_blocks = layout.max_blocks();
+        
+        // Scan backwards from the very last block (e.g., 0x3FF or 0x1FF)
+        for block_idx in (0..0x20).rev() {
+            let physical_block = res_start + block_idx;
+            if physical_block >= max_blocks { continue; }
+
+            // Is this block already used as a bad block OR as a target for another remap?
+            if !self.bad_blocks.contains(&physical_block) && 
+               !self.logical_to_physical.contains(&physical_block) {
+                return Some(physical_block);
+            }
+        }
+        None
+    }
+
+    /// Handles a live write-time remapping request.
+    /// If a block fails during a write, this finds a reserve target and records the remap.
+    pub fn get_live_remap_target(&mut self, bad_block: usize, layout: &NandLayout, image_len: usize) -> Option<usize> {
+        // 1. Don't remap if it's already in the reserve area
+        if bad_block >= layout.reserve_start(image_len) {
+            return None;
+        }
+
+        // 2. Find a target
+        let target = self.find_available_reserve_block(layout, image_len)?;
+
+        // 3. Record it
+        if !self.bad_blocks.contains(&bad_block) {
+            self.bad_blocks.push(bad_block);
+        }
+        
+        // Update the mapping: any logical block that used to point to 'bad_block' 
+        // now points to 'target'.
+        for physical in self.logical_to_physical.iter_mut() {
+            if *physical == bad_block {
+                *physical = target;
+            }
+        }
+
+        info!("[blocks] Live Remap: failed block {:#X} -> redirected to {:#X}", bad_block, target);
+        Some(target)
     }
 }
 

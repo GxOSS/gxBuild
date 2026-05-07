@@ -308,7 +308,7 @@ pub enum BuildMode {
 #[derive(Clone)]
 pub struct BuildOptions {
     pub layout: NandLayout,
-    pub block_map: BlockMap,
+    pub lba_map: LbaMap,
     pub image_profile: String, // e.g. "glitch2", "jtag", "devkit"
     pub build_mode: BuildMode,
     pub motherboard: MotherboardType,
@@ -333,7 +333,7 @@ impl Default for BuildOptions {
     fn default() -> Self {
         BuildOptions {
             layout: NandLayout::Sb,
-            block_map: BlockMap { blocks: Vec::new(), layout: NandLayout::Sb },
+            lba_map: LbaMap::new(0x400),
             image_profile: "retail".to_string(),
             build_mode: BuildMode::Normal,
             motherboard: MotherboardType::Unknown,
@@ -361,7 +361,7 @@ impl Default for BuildOptions {
 pub struct NandSkeleton {
     pub cpukey: Option<[u8; 16]>,
     pub image: Vec<u8>,
-    pub block_map: Option<BlockMap>,
+    pub lba_map: Option<LbaMap>,
     pub options: BuildOptions,
     pub header: NandHeader,
     pub extra: NandExtra,
@@ -391,7 +391,7 @@ impl NandSkeleton {
         Self {
             cpukey: None,
             image,
-            block_map: Some(BlockMap { blocks: Vec::new(), layout }),
+            lba_map: Some(LbaMap::new(total_blocks)),
             options: BuildOptions {
                 layout,
                 image_profile: "retail".to_string(),
@@ -589,16 +589,17 @@ impl NandSkeleton {
         }
 
         let total_blocks = layout.total_blocks(image.len());
+        let lba_map = LbaMap::from_layout(layout, total_blocks);
 
         Ok(NandSkeleton {
             cpukey: Some(cpukey),
             image,
-            block_map: None,
+            lba_map: Some(lba_map),
             layout,
             total_blocks,
-                options: BuildOptions {
+            options: BuildOptions {
                 layout,
-                block_map: BlockMap { blocks: Vec::new(), layout },
+                lba_map: LbaMap::from_layout(layout, total_blocks),
                 image_profile: (if bl_mut.cb_b.is_some() { "split" } else { "single" }).to_string(),
                 build_mode: BuildMode::Normal,
                 motherboard,

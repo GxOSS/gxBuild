@@ -123,6 +123,11 @@ pub struct OptionsIni {
     pub cbb: Option<String>,
     pub full_image: Option<bool>,
     pub xsb: Option<bool>,
+    pub serial: Option<String>,
+    pub consoleid: Option<String>,
+    pub osig: Option<String>,
+    pub mfdate: Option<String>,
+    pub fcrt: Option<bool>,
 }
 
 impl OptionsIni {
@@ -171,6 +176,11 @@ impl OptionsIni {
             macid: None,
             full_image: None,
             xsb: None,
+            serial: None,
+            consoleid: None,
+            osig: None,
+            mfdate: None,
+            fcrt: None,
         }
     }
 
@@ -219,6 +229,11 @@ impl OptionsIni {
         if let Some(v) = other.macid { self.macid = Some(v); }
         if let Some(v) = other.full_image { self.full_image = Some(v); }
         if let Some(v) = other.xsb { self.xsb = Some(v); }
+        if let Some(v) = other.serial { self.serial = Some(v); }
+        if let Some(v) = other.consoleid { self.consoleid = Some(v); }
+        if let Some(v) = other.osig { self.osig = Some(v); }
+        if let Some(v) = other.mfdate { self.mfdate = Some(v); }
+        if let Some(v) = other.fcrt { self.fcrt = Some(v); }
     }
 }
 
@@ -297,6 +312,11 @@ pub fn parse_options_ini(
                         "gameregion" => options.gameregion = Some(value.clone()),
                         "dvdregion" => options.dvdregion = Some(value.clone()),
                         "macid" => options.macid = Some(value.clone()),
+                        "serial" => options.serial = Some(value.clone()),
+                        "consoleid" => options.consoleid = Some(value.clone()),
+                        "osig" => options.osig = Some(value.clone()),
+                        "mfdate" => options.mfdate = Some(value.clone()),
+                        "fcrt" => options.fcrt = Some(value.eq_ignore_ascii_case("true")),
                         _ => warn!("[ini] Unknown option: {}", key),
                     }
                 }

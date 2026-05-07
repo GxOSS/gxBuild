@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use crate::core::interface::gxscript::GxScriptEngine;
 use crate::core::session::{Session, InternalCommand};
+use serde::Serialize;
+
 
 /// Opaque wrapper for the Session struct
 pub struct GxSession {
@@ -211,6 +213,14 @@ pub extern "C" fn gx_session_push_apply_patch(session: *mut GxSession, path: *co
     let path = unsafe { CStr::from_ptr(path) }.to_string_lossy().into_owned();
     let target = if target == 0xFF { None } else { Some(target) };
     session.inner.lock().unwrap().enqueue(InternalCommand::ApplyPatch { path: PathBuf::from(path), ptype, target });
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn gx_session_push_apply_options(session: *mut GxSession) -> i32 {
+    if session.is_null() { return -1; }
+    let session = unsafe { &mut *session };
+    session.inner.lock().unwrap().enqueue(InternalCommand::ApplyOptions);
     0
 }
 
@@ -566,4 +576,116 @@ pub extern "C" fn gx_session_shell(session: *mut GxSession) -> i32 {
     let mut script = GxScriptEngine::new(session.inner.clone());
     script.repl();
     0
+}
+
+#[derive(Serialize)]
+struct NandMetadata {
+    flash_type: String,
+    motherboard: String,
+    cb: u16,
+    cba: u16,
+    cbb: u16,
+    cbx: u16,
+    cd: u16,
+    ce: u16,
+    cf_0: u16,
+    cg_0: u16,
+    cf_1: u16,
+    cg_1: u16,
+    smc_ver: String,
+    smc_type: String,
+    smc_ldv: u8,
+    smc_pd: u8,
+    dvd_key: String,
+    serial: String,
+    console_id: String,
+    osig: String,
+    region: String,
+    mfdate: String,
+    kv_type: String,
+    fcrt: bool,
+    bad_blocks: Vec<BadBlockInfo>,
+}
+
+#[derive(Serialize)]
+struct BadBlockInfo {
+    block: usize,
+    target: usize,
+}
+
+#[no_mangle]
+pub extern "C" fn gx_session_get_info(session: *mut GxSession) -> *const c_char {
+    if session.is_null() { return std::ptr::null(); }
+    let session = unsafe { &mut *session };
+    let inner = session.inner.lock().unwrap();
+    
+    let meta = if let Some(nand) = &inner.active_nand {
+        NandMetadata {
+            flash_type: format!("{:?}", nand.layout),
+            motherboard: format!("{:?}", nand.options.motherboard),
+            cb: nand.bootloaders.cb.as_ref().map(|bl| bl.version).unwrap_or(0),
+            cba: nand.bootloaders.cb_a.as_ref().map(|bl| bl.version).unwrap_or(0),
+            cbb: nand.bootloaders.cb_b.as_ref().map(|bl| bl.version).unwrap_or(0),
+            cbx: nand.bootloaders.cb_x.as_ref().map(|bl| bl.version).unwrap_or(0),
+            cd: nand.bootloaders.cd.as_ref().map(|bl| bl.version).unwrap_or(0),
+            ce: nand.bootloaders.ce.as_ref().map(|bl| bl.version).unwrap_or(0),
+            cf_0: nand.update.cf_0.as_ref().map(|bl| bl.version).unwrap_or(0),
+            cg_0: nand.update.cg_0.as_ref().map(|bl| bl.version).unwrap_or(0),
+            cf_1: nand.update.cf_1.as_ref().map(|bl| bl.version).unwrap_or(0),
+            cg_1: nand.update.cg_1.as_ref().map(|bl| bl.version).unwrap_or(0),
+            smc_ver: if !nand.extra.smc.is_empty() { format!("{}.{}", nand.extra.smc[0x101], nand.extra.smc[0x102]) } else { "0.0".to_string() },
+            smc_type: if !nand.extra.smc.is_empty() { format!("{:X}", (nand.extra.smc[0x100] >> 4) & 0xF) } else { "0".to_string() },
+            smc_ldv: if !nand.extra.smc.is_empty() { nand.extra.smc[0x103] } else { 0 },
+            smc_pd: if !nand.extra.smc.is_empty() { nand.extra.smc[0x104] } else { 0 },
+            dvd_key: nand.kv.as_ref().and_then(|kv| kv.metadata.as_ref()).map(|m| hex::encode(m.dvd_key)).unwrap_or_default(),
+            serial: nand.kv.as_ref().and_then(|kv| kv.metadata.as_ref()).map(|m| m.serial.clone()).unwrap_or_default(),
+            console_id: nand.kv.as_ref().and_then(|kv| kv.metadata.as_ref()).map(|m| hex::encode(m.console_id)).unwrap_or_default(),
+            osig: nand.kv.as_ref().and_then(|kv| kv.metadata.as_ref()).map(|m| m.osig.clone()).unwrap_or_default(),
+            region: nand.kv.as_ref().and_then(|kv| kv.metadata.as_ref()).map(|m| format!("0x{:04X}", m.region)).unwrap_or_default(),
+            mfdate: nand.kv.as_ref().and_then(|kv| kv.metadata.as_ref()).map(|m| m.mf_date.clone()).unwrap_or_default(),
+            kv_type: nand.kv.as_ref().and_then(|kv| kv.metadata.as_ref()).map(|m| m.kv_type.to_string()).unwrap_or_default(),
+            fcrt: nand.kv.as_ref().and_then(|kv| kv.metadata.as_ref()).map(|m| m.fcrt).unwrap_or(false),
+            bad_blocks: nand.lba_map.as_ref().map(|lba| {
+                lba.bad_blocks.iter().map(|&b| {
+                    BadBlockInfo { 
+                        block: b, 
+                        target: lba.logical_to_physical.get(b).copied().unwrap_or(b) 
+                    }
+                }).collect()
+            }).unwrap_or_default(),
+        }
+    } else {
+        return std::ptr::null();
+    };
+
+    let json = serde_json::to_string(&meta).unwrap_or_default();
+    let c_str = CString::new(json).unwrap_or_default();
+    c_str.into_raw()
+}
+
+#[no_mangle]
+pub extern "C" fn gx_session_free_string(s: *mut c_char) {
+    if !s.is_null() {
+        unsafe {
+            let _ = CString::from_raw(s);
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn gx_session_remap_block(session: *mut GxSession, bad_block: u32) -> u32 {
+    if session.is_null() { return 0xFFFFFFFF; }
+    let session = unsafe { &mut *session };
+    let mut inner = session.inner.lock().unwrap();
+    
+    if let Some(ref mut nand) = inner.active_nand {
+        if let Some(ref mut lba) = nand.lba_map {
+            let image_len = nand.image.len();
+            if let Some(target) = lba.get_live_remap_target(bad_block as usize, &nand.layout, image_len) {
+                return target as u32;
+            }
+        }
+    }
+    
+    0xFFFFFFFF
 }
