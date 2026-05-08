@@ -24,8 +24,8 @@ pub enum InternalCommand {
     ParseFlashfs { path: PathBuf },
     ParsePatch { path: PathBuf },
     ApplyPatch { path: PathBuf, ptype: u8, target: Option<u8> },
-    Extract { id: String },
-    ExtractAll,
+    Extract { id: String, output_dir: PathBuf },
+    ExtractAll { output_dir: PathBuf },
     Replace { id: u8, path: PathBuf },
     List,
     Delete { id: u8 },
@@ -43,6 +43,7 @@ pub enum InternalCommand {
     ExtractStfs { path: PathBuf, target_dir: PathBuf },
     SwapBootloader { bl_type: String, path: PathBuf, is_rebooter: bool },
     ApplyOptions,
+    ApplySmcSignature { json: String },
 }
 
 impl InternalCommand {
@@ -91,13 +92,14 @@ impl InternalCommand {
             Self::FinalizeFlashfs     => 90,
             // ── Extraction ────────────────────────────────────────────────
             Self::Extract { .. }      => 89,
-            Self::ExtractAll          => 88,
-            // ── Modification ──────────────────────────────────────────────
+            Self::ExtractAll { .. }   => 88,
+            //  Modification 
             Self::Replace { .. }      => 87,
             Self::List                => 86,
             Self::Delete { .. }       => 85,
             Self::Clear               => 84,
             Self::ApplyPatch { .. }   => 79,
+            Self::ApplySmcSignature { .. } => 79,
             Self::Compress            => 78,
             // ── SessionRun: drains queue; must follow all real work ───────
             Self::SessionRun          => 50,
@@ -212,12 +214,12 @@ impl Session {
     // Fixed public methods (Interface API)
     // ------------------------------------
 
-    pub fn extract(&mut self, id: String) {
-        self.enqueue(InternalCommand::Extract { id });
+    pub fn extract(&mut self, id: String, output_dir: PathBuf) {
+        self.enqueue(InternalCommand::Extract { id, output_dir });
     }
 
-    pub fn extract_all(&mut self) {
-        self.enqueue(InternalCommand::ExtractAll);
+    pub fn extract_all(&mut self, output_dir: PathBuf) {
+        self.enqueue(InternalCommand::ExtractAll { output_dir });
     }
     
     pub fn build(&mut self, output: PathBuf, target: u8) {
@@ -440,6 +442,7 @@ impl Session {
         self.security_assets.clear();
         self.flashfs_assets.clear();
         self.addons.clear();
+        self.options = crate::core::data::xeini::OptionsIni::new();
         self.last_error = None;
     }
 
@@ -991,15 +994,15 @@ impl Session {
 
     pub fn execute_command(&mut self, command: InternalCommand) -> Result<(), String> {
         match command {
-                InternalCommand::ExtractAll => {
-                    info!("[session] Extracting all components...");
+                InternalCommand::ExtractAll { output_dir } => {
+                    info!("[session] Extracting all components to '{}'...", output_dir.display());
                     let ids = vec!["smc", "smcc", "kv", "fcrt", "cb", "cba", "cbb", "sc", "cd", "ce", "cf0", "cg0", "cf1", "cg1", "header"];
                     for id in ids {
-                        let _ = self.execute_command(InternalCommand::Extract { id: id.to_string() });
+                        let _ = self.execute_command(InternalCommand::Extract { id: id.to_string(), output_dir: output_dir.clone() });
                     }
                     info!("[session] Extraction complete.");
                 }
-                InternalCommand::Extract { id } => {
+                InternalCommand::Extract { id, output_dir } => {
                     if let Some(nand) = &self.active_nand {
                         let (filename, data) = match id.to_lowercase().as_str() {
                             "smc" => ("SMC.bin", Some(nand.extra.smc.clone())),
@@ -1024,10 +1027,17 @@ impl Session {
                         };
 
                         if let Some(bytes) = data {
-                            if let Err(e) = fs::write(filename, bytes) {
+                            let mut full_path = output_dir.clone();
+                            full_path.push(filename);
+                            
+                            if let Some(parent) = full_path.parent() {
+                                let _ = fs::create_dir_all(parent);
+                            }
+
+                            if let Err(e) = fs::write(&full_path, bytes) {
                                 error!("[session] Failed to extract {}: {}", id, e);
                             } else {
-                                info!("[session] Extracted {} to {}", id, filename);
+                                info!("[session] Extracted {} to {}", id, full_path.display());
                             }
                         }
                     } else {
@@ -1273,6 +1283,11 @@ impl Session {
                         }
                     } else {
                         error!("[session] No active NAND loaded to patch.");
+                    }
+                }
+                InternalCommand::ApplySmcSignature { json } => {
+                    if let Err(e) = self.apply_smc_signature_batch(&json) {
+                        return Err(format!("Failed to apply SMC signature patch: {}", e));
                     }
                 }
                 InternalCommand::SwapBootloader { bl_type, path, is_rebooter } => {

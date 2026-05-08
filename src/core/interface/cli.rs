@@ -245,7 +245,7 @@ pub fn ggx_cli() {
             }
         }
         Some(GgxMode::Extract) => {
-            session.extract_all();
+            session.extract_all(args.output_dir.clone().unwrap_or_else(|| std::path::PathBuf::from(".")));
         }
         Some(GgxMode::Client) => {
             info!("[cli] Client mode selected.");

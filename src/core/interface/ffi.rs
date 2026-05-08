@@ -217,6 +217,15 @@ pub extern "C" fn gx_session_push_apply_patch(session: *mut GxSession, path: *co
 }
 
 #[no_mangle]
+pub extern "C" fn gx_session_push_apply_smc_signature_patch(session: *mut GxSession, json: *const c_char) -> i32 {
+    if session.is_null() || json.is_null() { return -1; }
+    let session = unsafe { &mut *session };
+    let json = unsafe { CStr::from_ptr(json) }.to_string_lossy().into_owned();
+    session.inner.lock().unwrap().enqueue(InternalCommand::ApplySmcSignature { json });
+    0
+}
+
+#[no_mangle]
 pub extern "C" fn gx_session_push_apply_options(session: *mut GxSession) -> i32 {
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
@@ -225,19 +234,21 @@ pub extern "C" fn gx_session_push_apply_options(session: *mut GxSession) -> i32 
 }
 
 #[no_mangle]
-pub extern "C" fn gx_session_push_extract(session: *mut GxSession, id: *const c_char) -> i32 {
+pub extern "C" fn gx_session_push_extract(session: *mut GxSession, id: *const c_char, output_dir: *const c_char) -> i32 {
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
     let id = unsafe { CStr::from_ptr(id) }.to_string_lossy().into_owned();
-    session.inner.lock().unwrap().enqueue(InternalCommand::Extract { id });
+    let output_dir = unsafe { CStr::from_ptr(output_dir) }.to_string_lossy().into_owned();
+    session.inner.lock().unwrap().enqueue(InternalCommand::Extract { id, output_dir: PathBuf::from(output_dir) });
     0
 }
 
 #[no_mangle]
-pub extern "C" fn gx_session_push_extract_all(session: *mut GxSession) -> i32 {
+pub extern "C" fn gx_session_push_extract_all(session: *mut GxSession, output_dir: *const c_char) -> i32 {
     if session.is_null() { return -1; }
     let session = unsafe { &mut *session };
-    session.inner.lock().unwrap().enqueue(InternalCommand::ExtractAll);
+    let output_dir = unsafe { CStr::from_ptr(output_dir) }.to_string_lossy().into_owned();
+    session.inner.lock().unwrap().enqueue(InternalCommand::ExtractAll { output_dir: PathBuf::from(output_dir) });
     0
 }
 
@@ -623,16 +634,16 @@ pub extern "C" fn gx_session_get_info(session: *mut GxSession) -> *const c_char 
         NandMetadata {
             flash_type: format!("{:?}", nand.layout),
             motherboard: format!("{:?}", nand.options.motherboard),
-            cb: nand.bootloaders.cb.as_ref().map(|bl| bl.version).unwrap_or(0),
-            cba: nand.bootloaders.cb_a.as_ref().map(|bl| bl.version).unwrap_or(0),
-            cbb: nand.bootloaders.cb_b.as_ref().map(|bl| bl.version).unwrap_or(0),
-            cbx: nand.bootloaders.cb_x.as_ref().map(|bl| bl.version).unwrap_or(0),
-            cd: nand.bootloaders.cd.as_ref().map(|bl| bl.version).unwrap_or(0),
-            ce: nand.bootloaders.ce.as_ref().map(|bl| bl.version).unwrap_or(0),
-            cf_0: nand.update.cf_0.as_ref().map(|bl| bl.version).unwrap_or(0),
-            cg_0: nand.update.cg_0.as_ref().map(|bl| bl.version).unwrap_or(0),
-            cf_1: nand.update.cf_1.as_ref().map(|bl| bl.version).unwrap_or(0),
-            cg_1: nand.update.cg_1.as_ref().map(|bl| bl.version).unwrap_or(0),
+            cb: nand.bootloaders.cb.as_ref().map(|bl| bl.header.version.get()).unwrap_or(0),
+            cba: nand.bootloaders.cb_a.as_ref().map(|bl| bl.header.version.get()).unwrap_or(0),
+            cbb: nand.bootloaders.cb_b.as_ref().map(|bl| bl.header.version.get()).unwrap_or(0),
+            cbx: nand.bootloaders.cb_x.as_ref().map(|bl| bl.header.version.get()).unwrap_or(0),
+            cd: nand.bootloaders.cd.as_ref().map(|bl| bl.header.version.get()).unwrap_or(0),
+            ce: nand.bootloaders.ce.as_ref().map(|bl| bl.header.version.get()).unwrap_or(0),
+            cf_0: nand.update.cf_0.as_ref().map(|bl| bl.header.version.get()).unwrap_or(0),
+            cg_0: nand.update.cg_0.as_ref().map(|bl| bl.header.version.get()).unwrap_or(0),
+            cf_1: nand.update.cf_1.as_ref().map(|bl| bl.header.version.get()).unwrap_or(0),
+            cg_1: nand.update.cg_1.as_ref().map(|bl| bl.header.version.get()).unwrap_or(0),
             smc_ver: if !nand.extra.smc.is_empty() { format!("{}.{}", nand.extra.smc[0x101], nand.extra.smc[0x102]) } else { "0.0".to_string() },
             smc_type: if !nand.extra.smc.is_empty() { format!("{:X}", (nand.extra.smc[0x100] >> 4) & 0xF) } else { "0".to_string() },
             smc_ldv: if !nand.extra.smc.is_empty() { nand.extra.smc[0x103] } else { 0 },
