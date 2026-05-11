@@ -2,6 +2,7 @@
     session.rs - Session management and command queue
 
     Created in 2026 by Exposure / Zach for gxBuild.
+    Modified/Contributed by erorn (2026)
     Licensed under GPLv2 (inherited from xenon-bltool).
 */
 
@@ -15,6 +16,7 @@ use crate::builder::builder::{SouthbridgeType, LayoutCalculator};
 use crate::core::data::gxp::parse_patch_binary;
 use crate::core::data::filesearch::IniSearch;
 use log::{info, error, warn};
+use crate::core::data::blocks::NandLayout;
 #[derive(Debug)]
 pub enum InternalCommand { 
     ParseIni { path: PathBuf, target: String, ini_base: PathBuf, common: PathBuf, data: PathBuf },
@@ -44,6 +46,97 @@ pub enum InternalCommand {
     SwapBootloader { bl_type: String, path: PathBuf, is_rebooter: bool },
     ApplyOptions,
     ApplySmcSignature { json: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::builder::chain::cb::{BootloaderCb, CbMetadata};
+    use crate::builder::chain::cf::{BootloaderCf, CfMetadata};
+    use crate::builder::chain::BootloaderHeader;
+    use zerocopy::byteorder::{U16, U32};
+
+    fn test_header(magic: u16, size: u32) -> BootloaderHeader {
+        BootloaderHeader {
+            magic: U16::new(magic),
+            version: U16::new(0),
+            pairing: U16::new(0),
+            flags: U16::new(0),
+            entrypoint: U32::new(0),
+            size: U32::new(size),
+        }
+    }
+
+    fn test_cb(pairing: [u8; 3], ldv: u8) -> BootloaderCb {
+        BootloaderCb {
+            header: test_header(0x4342, 0x3C0),
+            data: vec![0; 0x3B0],
+            metadata: Some(CbMetadata {
+                ldv,
+                b_flags: 0,
+                pairing_data: pairing,
+                lockdown_value: ldv,
+                reserved_per_box: [0; 0xC],
+                per_box_digest: [0; 0x10],
+                signature: [0; 0x100],
+                rsa_pub_key: [0; 0x110],
+                nonce_3bl: [0; 0x10],
+                salt_3bl: [0; 0xA],
+                salt_4bl: [0; 0xA],
+                digest_4bl: [0; 0x14],
+                post_output_addr: 0,
+                sb_flash_addr: 0,
+                soc_mmio_addr: 0,
+                console_allow: [0; 4],
+            }),
+        }
+    }
+
+    fn test_cf(pairing: [u8; 3], ldv: u8) -> BootloaderCf {
+        BootloaderCf {
+            header: test_header(0x4346, 0x354),
+            data: vec![0; 0x344],
+            metadata: Some(CfMetadata {
+                source_version: 0,
+                target_version: 0,
+                reserved_prefix: 0,
+                cg_size: 0,
+                hmac_salt: [0; 16],
+                cg_blocks_used: 0,
+                cg_block_numbers: vec![0; 223],
+                reserved_per_box: [0; 0x2B],
+                update_slot: 0,
+                pairing_data: pairing,
+                lockdown_value: ldv,
+                per_box_digest: [0; 0x10],
+                signature: [0; 0x100],
+                cg_nonce: [0; 0x10],
+                cg_digest: [0; 0x14],
+            }),
+        }
+    }
+
+    #[test]
+    fn sync_per_box_settings_keeps_cb_and_cf_values_in_sync() {
+        let session = Session::new();
+        let mut nand = NandSkeleton::new_blank(NandLayout::Sb);
+
+        // start with mismatched values to mirror the original bug
+        nand.bootloaders.cb_a = Some(test_cb([0x12, 0x34, 0x56], 7));
+        nand.update.cf_0 = Some(test_cf([0xAA, 0xBB, 0xCC], 2));
+
+        let (pairing, ldv) = Session::resolve_per_box_settings(&session.options, &nand).unwrap();
+        Session::sync_per_box_settings(&mut nand, pairing, ldv);
+
+        let cb_meta = nand.bootloaders.cb_a.as_ref().unwrap().metadata.as_ref().unwrap();
+        let cf_meta = nand.update.cf_0.as_ref().unwrap().metadata.as_ref().unwrap();
+
+        assert_eq!(cb_meta.pairing_data, [0x12, 0x34, 0x56]);
+        assert_eq!(cb_meta.lockdown_value, 7);
+        assert_eq!(cb_meta.ldv, 7);
+        assert_eq!(cf_meta.pairing_data, [0x12, 0x34, 0x56]);
+        assert_eq!(cf_meta.lockdown_value, 7);
+    }
 }
 
 impl InternalCommand {
@@ -178,6 +271,123 @@ pub struct Session {
 }
 
 impl Session {
+    // fallback pairing if nothing usable comes from the nand
+    fn fallback_pairing_data() -> [u8; 3] {
+        [0, 0, 1]
+    }
+
+    // fallback ldv if the nand and options do not provide one
+    fn fallback_lockdown_value() -> u8 {
+        1
+    }
+
+    fn resolve_per_box_settings(
+        options: &crate::core::data::xeini::OptionsIni,
+        nand: &NandSkeleton,
+    ) -> Result<([u8; 3], u8), String> {
+        let fallback_pairing = Self::fallback_pairing_data();
+        let fallback_ldv = Self::fallback_lockdown_value();
+
+        let pairing_from_nand = nand
+            .bootloaders
+            .cb_a
+            .as_ref()
+            .or(nand.bootloaders.cb.as_ref())
+            .and_then(|cb| cb.metadata.as_ref().map(|meta| meta.pairing_data))
+            .or_else(|| {
+                nand.update
+                    .cf_0
+                    .as_ref()
+                    .and_then(|cf| cf.metadata.as_ref().map(|meta| meta.pairing_data))
+            })
+            .filter(|pairing| *pairing != [0, 0, 0]);
+
+        let ldv_from_nand = nand
+            .bootloaders
+            .cb_a
+            .as_ref()
+            .or(nand.bootloaders.cb.as_ref())
+            .and_then(|cb| cb.metadata.as_ref().map(|meta| meta.lockdown_value))
+            .or_else(|| {
+                nand.update
+                    .cf_0
+                    .as_ref()
+                    .and_then(|cf| cf.metadata.as_ref().map(|meta| meta.lockdown_value))
+            })
+            .filter(|ldv| *ldv != 0);
+
+        // prefer values already on the nand, then fall back
+        let pairing = pairing_from_nand.unwrap_or(fallback_pairing);
+        let ldv = if let Some(cfldv_option) = &options.cfldv {
+            Self::parse_u8_hex_or_dec(cfldv_option)?
+        } else {
+            ldv_from_nand.unwrap_or(fallback_ldv)
+        };
+
+        Ok((pairing, ldv))
+    }
+
+    fn sync_per_box_settings(nand: &mut NandSkeleton, pairing: [u8; 3], ldv: u8) {
+        // keep the cb side in sync
+        if let Some(ref mut cb) = nand.bootloaders.cb {
+            if let Some(ref mut meta) = cb.metadata {
+                meta.pairing_data = pairing;
+                meta.lockdown_value = ldv;
+                meta.ldv = ldv;
+                cb.sync_metadata();
+            }
+        }
+
+        if let Some(ref mut cb) = nand.bootloaders.cb_a {
+            if let Some(ref mut meta) = cb.metadata {
+                meta.pairing_data = pairing;
+                meta.lockdown_value = ldv;
+                meta.ldv = ldv;
+                cb.sync_metadata();
+            }
+        }
+
+        if let Some(ref mut cb) = nand.bootloaders.cb_b {
+            if let Some(ref mut meta) = cb.metadata {
+                meta.pairing_data = pairing;
+                meta.lockdown_value = ldv;
+                meta.ldv = ldv;
+                cb.sync_metadata();
+            }
+        }
+
+        // keep the cf side in sync too
+        if let Some(ref mut cf) = nand.update.cf_0 {
+            if let Some(ref mut meta) = cf.metadata {
+                meta.pairing_data = pairing;
+                meta.lockdown_value = ldv;
+                cf.sync_metadata();
+            } else {
+                if cf.data.len() > 0x20E {
+                    cf.data[0x20C..0x20F].copy_from_slice(&pairing);
+                }
+                if cf.data.len() > 0x20F {
+                    cf.data[0x20F] = ldv;
+                }
+            }
+        }
+
+        if let Some(ref mut cf) = nand.update.cf_1 {
+            if let Some(ref mut meta) = cf.metadata {
+                meta.pairing_data = pairing;
+                meta.lockdown_value = ldv;
+                cf.sync_metadata();
+            } else {
+                if cf.data.len() > 0x20E {
+                    cf.data[0x20C..0x20F].copy_from_slice(&pairing);
+                }
+                if cf.data.len() > 0x20F {
+                    cf.data[0x20F] = ldv;
+                }
+            }
+        }
+    }
+
     pub fn new() -> Self {
         Self {
             queue: BinaryHeap::new(),
@@ -668,6 +878,12 @@ impl Session {
                 self.options.ctype = Some(format!("{:?}", nand.options.motherboard).to_lowercase());
             }
 
+            if self.options.cfldv.is_none() {
+                if let Ok((_, ldv)) = Self::resolve_per_box_settings(&self.options, nand) {
+                    self.options.cfldv = Some(ldv.to_string());
+                }
+            }
+
             // Keyvault Metadata (Region, DVD Key, etc.)
             if let Some(ref mut kv) = nand.kv {
                 // If it was decrypted in the skeleton, we can read it
@@ -723,35 +939,9 @@ impl Session {
 
             let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
 
-            // --- 2. CF/CG LDV Overrides ---
-            if let Some(cfldv_str) = &self.options.cfldv {
-                let ldv = Self::parse_u8_hex_or_dec(cfldv_str)?;
-                
-                // Update primary CF (slot 0) if it exists
-                if let Some(ref mut cf) = nand.update.cf_0 {
-                    if let Some(ref mut meta) = cf.metadata {
-                        meta.lockdown_value = ldv;
-                        cf.sync_metadata();
-                    } else {
-                        // Patch direct offset if metadata wasn't parsed (plain/encrypted fallback)
-                        if cf.data.len() > 0x20F {
-                            cf.data[0x20F] = ldv;
-                        }
-                    }
-                }
-                
-                // Update secondary CF (slot 1) if it exists
-                if let Some(ref mut cf) = nand.update.cf_1 {
-                    if let Some(ref mut meta) = cf.metadata {
-                        meta.lockdown_value = ldv;
-                        cf.sync_metadata();
-                    } else {
-                        if cf.data.len() > 0x20F {
-                            cf.data[0x20F] = ldv;
-                        }
-                    }
-                }
-            }
+            // --- 2. Per-box LDV / Pairing Sync for CB + CF ---
+            let (pairing, ldv) = Self::resolve_per_box_settings(&self.options, nand)?;
+            Self::sync_per_box_settings(nand, pairing, ldv);
 
             // --- 3. Keyvault Overrides (Region, DVD Key) ---
             if let Some(ref mut kv) = nand.kv {
