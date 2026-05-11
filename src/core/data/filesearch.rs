@@ -440,10 +440,6 @@ impl IniSearch {
                                 if unsafe_mode {
                                     warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in {} Tier). Continuing...", $name, expected, actual, $tier);
                                     true
-                                } else if $name.to_lowercase().starts_with("cf") || $name.to_lowercase().starts_with("sf") ||
-                                   $name.to_lowercase().starts_with("cg") || $name.to_lowercase().starts_with("sg") {
-                                    warn!("[ini] CF/SF/CG/SG CRC32 mismatch bypass (Expected: {}, Found: {} in {} Tier). Continuing...", expected, actual, $tier);
-                                    true
                                 } else {
                                     info!("[ini] Hash mismatch for {} in {} Tier", $name, $tier);
                                     false
@@ -771,5 +767,34 @@ impl PatchSearch {
             data,
             result: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Verifies that get_xebuild_crc32 produces a hash matching a real xeBuild INI entry for CF.
+    //
+    // Requires a CF binary and its expected hash from a matching xeBuild INI.
+    // Set GXBUILD_TEST_CF to the path of your CF binary, and GXBUILD_TEST_CF_HASH to
+    // the expected hash from the INI (e.g. "f19cf13f").
+    //
+    // Example:
+    //   GXBUILD_TEST_CF=/path/to/xeBuild/9199/cf_9199.bin GXBUILD_TEST_CF_HASH=f19cf13f cargo test -- --ignored
+    #[test]
+    #[ignore = "requires GXBUILD_TEST_CF env var pointing to a CF binary"]
+    fn test_cf_crc32_matches_xebuild() {
+        let cf_path = std::path::PathBuf::from(
+            std::env::var("GXBUILD_TEST_CF").expect("GXBUILD_TEST_CF must be set")
+        );
+
+        let expected = std::env::var("GXBUILD_TEST_CF_HASH")
+            .expect("GXBUILD_TEST_CF_HASH must be set to the CRC32 from the xeBuild INI")
+            .to_lowercase();
+
+        let data = std::fs::read(&cf_path).expect("Failed to read CF binary");
+        let actual = get_xebuild_crc32(&data, &cf_path.file_name().unwrap().to_string_lossy());
+        assert_eq!(actual, expected, "CF CRC32 mismatch: got {}, expected {}", actual, expected);
     }
 }
