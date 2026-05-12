@@ -24,11 +24,9 @@ All projects used for gxBuild, directly or indirectly.
 
 ### NAND Building
 
-- [RGH3](https://github.com/15432/RGH3) by [15432](https://github.com/15432)
 - [xenon-bltool](https://github.com/InvoxiPlayGames/xenon-bltool) by [InxoviPlayGames](https://github.com/InvoxiPlayGames)
 - [x360utils](https://github.com/Swizzy/x360Utils) by [Swizzy](https://github.com/Swizzy)
 - [RGBuild](https://github.com/RGLoader/RGBuild) by [emoose](https://github.com/emoose) and [tydye81](https://github.com/tydye81)
-- [J-Runner with Extras](https://github.com/J-Runner-with-Extras/J-Runner-with-Extras) by J-Runner Contributors
 
 ### Crypto
 
@@ -37,7 +35,6 @@ All projects used for gxBuild, directly or indirectly.
 
 ### SMC Patching
 
-- [badjasper]() by [wurthless-elektroniks](https://github.com/wurthless-elektroniks)
 - [smc360]() by [wurthless-elektroniks](https://github.com/wurthless-elektroniks)
 - [x360utils](https://github.com/Swizzy/x360Utils) by [Swizzy](https://github.com/Swizzy)
 

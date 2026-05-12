@@ -5,11 +5,18 @@
 > * The app is still **UNTESTED** against real consoles!
 > * There is a **99.99%** chance you will brick your console!
 
+>[!CAUTION]
+> * Currently stuck in Licensing Hell.
+> * As of right now, I cannot legally distribute a binary.
+> * To exit licensing hell, either:
+> * FlashFS **Building** needs to be rewritten without RGBuild.
+> * Permission from the RGBuild developers needs to be obtained.
+
 ![gxBuild Colour Transparent Banner](assets/gx_banner_colour_trans.png)
 
 gxBuild is a Xbox 360 image builder and patcher. Features full nand, xell and shadowboot parsing, patching and building. Stays as close to xeBuild as possible, with a few changes. 
 
-Based on [x360utils](), [xenon-bltool](), and [J-Runner with Extras]()
+Based on [x360utils](https://github.com/Swizzy/x360Utils), [xenon-bltool](), and ~~J-Runner with Extras~~ (Replaced with legally valid permissive code). Releases are licensed under the GPL v2 (inherited from xenon-bltool).
 
 ## Features
 
@@ -68,11 +75,23 @@ Any testing is greatly appreciated, as I don't have the funds for every platform
 | Corona |  |  |  |  |  |  |  |  |  |  |  |
 | Corona 4G |  |  |  |  |  |  |  |  |  |  |  |
 
+## Developer
+
+In every folder ive included a README explaining the files and submodules.
+
+The project is fully setup with [Interoptopus](https://github.com/ralfbiedert/interoptopus) for ffi bindings with C# and C.
+
+Documentation is available on [ExposureMG's GitHub Pages](https://exposuremg.github.io/gxBuild/home/)
+
 ## License
 
+gxBuild is multi-licensed, distributed under the GPL v2.
+
 Original code by ExposureMG is for the public domain.
-x360utils is unlicense (Permissive)
-J-Runner is MIT (Permissive)
-xenon-bltool is GPL v2
+x360utils is licensed under the unlicense (Permissive).
+xenon-bltool is licensed under the GPL v2.
+libmspack is relicensed as GPL v2.
+ExCrypt is licensed under the BSD 3-Clause License.
+Xenia is licensed under a custom permissive license.
 
 All code taken from other projects has been properly attributed in the header.
