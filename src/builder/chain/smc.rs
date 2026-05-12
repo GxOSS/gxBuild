@@ -11,7 +11,7 @@
 use zerocopy::{FromBytes, IntoBytes};
 use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, ExCryptRsa};
-use crate::core::data::blocks::NandLayout;
+use crate::core::images::blocks::NandLayout;
 use log::info;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

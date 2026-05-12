@@ -13,10 +13,10 @@ use std::path::{Path, PathBuf};
 use crate::builder::builder::NandSkeleton;
 use std::fs;
 use crate::builder::builder::{SouthbridgeType, LayoutCalculator};
-use crate::core::data::gxp::parse_patch_binary;
+use crate::core::images::gxp::parse_patch_binary;
 use crate::core::data::filesearch::IniSearch;
 use log::{info, error, warn};
-use crate::core::data::blocks::NandLayout;
+use crate::core::images::blocks::NandLayout;
 #[derive(Debug)]
 pub enum InternalCommand { 
     ParseIni { path: PathBuf, target: String, ini_base: PathBuf, common: PathBuf, data: PathBuf },
@@ -41,7 +41,7 @@ pub enum InternalCommand {
     SessionList,
     SessionDelete { id: u8 },
     SessionRun,
-    CreateImage { layout: crate::core::data::blocks::NandLayout },
+    CreateImage { layout: crate::core::images::blocks::NandLayout },
     ExtractStfs { path: PathBuf, target_dir: PathBuf },
     SwapBootloader { bl_type: String, path: PathBuf, is_rebooter: bool },
     ApplyOptions,
@@ -258,7 +258,7 @@ pub struct Session {
     /// Dummy state object for passing over to extract commands
     pub active_nand: Option<NandSkeleton>,
     /// Global xeBuild options / preferences
-    pub options: crate::core::data::xeini::OptionsIni,
+    pub options: crate::core::data::optini::OptionsIni,
     /// CPU Key buffer if provided before NAND is loaded
     pub pending_key: Option<[u8; 16]>,
     /// Last error message for FFI reporting
@@ -290,7 +290,7 @@ impl Session {
 
     /// Resolves the pairing data: CB-priority, CF fallback, then [0,0,1].
     fn resolve_pairing(
-        _options: &crate::core::data::xeini::OptionsIni,
+        _options: &crate::core::data::optini::OptionsIni,
         nand: &NandSkeleton,
     ) -> [u8; 3] {
         nand.bootloaders
@@ -311,7 +311,7 @@ impl Session {
     /// Resolves the CB LDV independently: reads from cb_a/cb only, fallback to 1.
     /// The `cfldv` option does NOT affect CB.
     fn resolve_cb_ldv(
-        _options: &crate::core::data::xeini::OptionsIni,
+        _options: &crate::core::data::optini::OptionsIni,
         nand: &NandSkeleton,
     ) -> Result<u8, String> {
         let from_nand = nand
@@ -328,7 +328,7 @@ impl Session {
     /// Resolves the CF LDV independently: reads from cf_0 only, fallback to 1.
     /// The `cfldv` option applies here (CF only).
     fn resolve_cf_ldv(
-        options: &crate::core::data::xeini::OptionsIni,
+        options: &crate::core::data::optini::OptionsIni,
         nand: &NandSkeleton,
     ) -> Result<u8, String> {
         if let Some(cfldv_option) = &options.cfldv {
@@ -415,7 +415,7 @@ impl Session {
             security_assets: HashMap::new(),
             flashfs_assets: HashMap::new(),
             active_nand: None,
-            options: crate::core::data::xeini::OptionsIni::new(),
+            options: crate::core::data::optini::OptionsIni::new(),
             pending_key: None,
             last_error: None,
             build_type: None,
@@ -591,7 +591,7 @@ impl Session {
     }
 
     pub fn set_option(&mut self, key: &str, value: &str) {
-        let mut o = crate::core::data::xeini::OptionsIni::new();
+        let mut o = crate::core::data::optini::OptionsIni::new();
         let v = value;
         let is_true = v.eq_ignore_ascii_case("true");
         match key.to_lowercase().as_str() {
@@ -681,8 +681,8 @@ impl Session {
                         let nand = self.active_nand.take().unwrap_or_else(|| {
                             let console = self.console_type.clone().unwrap_or("Jasper".to_string());
                             let layout = match console.to_lowercase().as_str() {
-                                "trinity" | "corona" | "winchester" => crate::core::data::blocks::NandLayout::Sb,
-                                _ => crate::core::data::blocks::NandLayout::Sb,
+                                "trinity" | "corona" | "winchester" => crate::core::images::blocks::NandLayout::Sb,
+                                _ => crate::core::images::blocks::NandLayout::Sb,
                             };
                             crate::builder::builder::NandSkeleton::new_blank(layout)
                         });
@@ -724,7 +724,7 @@ impl Session {
         self.security_assets.clear();
         self.flashfs_assets.clear();
         self.addons.clear();
-        self.options = crate::core::data::xeini::OptionsIni::new();
+        self.options = crate::core::data::optini::OptionsIni::new();
         self.last_error = None;
         self.build_ini_loaded = false;
     }
@@ -867,12 +867,12 @@ impl Session {
             if !nand_found {
                 // No source NAND: create a blank image based on console layout
                 let layout = match console.as_str() {
-                    "xenon"                        => crate::core::data::blocks::NandLayout::Xsb,
+                    "xenon"                        => crate::core::images::blocks::NandLayout::Xsb,
                     "jasper256" | "jasper512" |
                     "jasperbb"  | "jasperbigffs" |
-                    "trinitybigffs"                => crate::core::data::blocks::NandLayout::Bb,
-                    "corona4g"  | "winchester"     => crate::core::data::blocks::NandLayout::Emmc,
-                    _                              => crate::core::data::blocks::NandLayout::Sb,
+                    "trinitybigffs"                => crate::core::images::blocks::NandLayout::Bb,
+                    "corona4g"  | "winchester"     => crate::core::images::blocks::NandLayout::Emmc,
+                    _                              => crate::core::images::blocks::NandLayout::Sb,
                 };
                 self.enqueue(InternalCommand::CreateImage { layout });
             }
@@ -1162,7 +1162,7 @@ impl Session {
             let mut smc = crate::builder::chain::smc::RawSmc::new(nand.extra.smc.clone());
             smc.decrypt();
             
-            let count = crate::core::data::signature::Signature::apply_batch(&mut smc.data, json_str)?;
+            let count = crate::core::images::signature::Signature::apply_batch(&mut smc.data, json_str)?;
             
             smc.encrypt();
             nand.extra.smc = smc.data;
@@ -1223,7 +1223,7 @@ impl Session {
         self.enqueue(InternalCommand::ExtractStfs { path, target_dir });
     }
 
-    pub fn create_image(&mut self, layout: crate::core::data::blocks::NandLayout) {
+    pub fn create_image(&mut self, layout: crate::core::images::blocks::NandLayout) {
         self.enqueue(InternalCommand::CreateImage { layout });
     }
 
@@ -1332,8 +1332,8 @@ impl Session {
                         let meta_type = match nand.options.motherboard {
                             crate::builder::builder::MotherboardType::Xenon |
                             crate::builder::builder::MotherboardType::Zephyr |
-                            crate::builder::builder::MotherboardType::Falcon => crate::core::data::blocks::SpareMetaType::MetaType0,
-                            _ => crate::core::data::blocks::SpareMetaType::MetaType1,
+                            crate::builder::builder::MotherboardType::Falcon => crate::core::images::blocks::SpareMetaType::MetaType0,
+                            _ => crate::core::images::blocks::SpareMetaType::MetaType1,
                         };
 
                         if let Some(parent) = output.parent() {
@@ -1343,9 +1343,9 @@ impl Session {
                         match nand.build(cpukey) {
                             Ok(clean_bytes) => {
                                 let mut fs_meta = std::collections::HashMap::new();
-                                let page_count_encoded = if layout == crate::core::data::blocks::NandLayout::Bb {
+                                let page_count_encoded = if layout == crate::core::images::blocks::NandLayout::Bb {
                                     match nand.layout {
-                                        crate::core::data::blocks::NandLayout::Bb => 0x00,
+                                        crate::core::images::blocks::NandLayout::Bb => 0x00,
                                         _ => 0x01,
                                     }
                                 } else { 0x01 };
@@ -1374,7 +1374,7 @@ impl Session {
                                             // RGBuild and others advanced by partition type scanning.
                                             let block_type = if is_root { btype } else { 0x01 };
                                             
-                                            fs_meta.insert(absolute_block, crate::core::data::blocks::FsSpareInfo {
+                                            fs_meta.insert(absolute_block, crate::core::images::blocks::FsSpareInfo {
                                                 sequence: root.version as u32,
                                                 size: 0x4000, // Standard 16KB block size (physical)
                                                 page_count: page_count_encoded,
@@ -1385,7 +1385,7 @@ impl Session {
                                 }
                                 
                                 let jtag_syscall = self.active_nand.as_ref().and_then(|n| n.options.jtag_syscall);
-                                let finalized_bytes = crate::core::data::blocks::NandProcessor::finalize_nand(&clean_bytes, layout, meta_type, Some(&fs_meta), jtag_syscall);
+                                let finalized_bytes = crate::core::images::blocks::NandProcessor::finalize_nand(&clean_bytes, layout, meta_type, Some(&fs_meta), jtag_syscall);
                                 let final_size = finalized_bytes.len();
                                 if let Err(e) = std::fs::write(&output, finalized_bytes) {
                                     error!("[session] Failed to write build output to '{}': {}", output.display(), e);
@@ -1449,7 +1449,7 @@ impl Session {
                     match fs::read(&path) {
                         Ok(raw_data) => {
                             // Use preprocess_nand_with_lba to track bad block remapping
-                            match crate::core::data::blocks::NandProcessor::preprocess_nand_with_lba(&raw_data) {
+                            match crate::core::images::blocks::NandProcessor::preprocess_nand_with_lba(&raw_data) {
                                 Ok((clean_data, layout, lba_map)) => {
                                     info!("[session] Detected {} bad block(s) during preprocessing", lba_map.bad_blocks.len());
                                     // Use provided key or buffered pending key
@@ -1517,12 +1517,12 @@ impl Session {
                 InternalCommand::ParseFlashfs { path } => {
                     info!("[session] Preparing to build flashfs from folder {:?}...", path);
                     if let Some(nand) = &mut self.active_nand {
-                        if matches!(nand.layout, crate::core::data::blocks::NandLayout::Emmc) {
+                        if matches!(nand.layout, crate::core::images::blocks::NandLayout::Emmc) {
                             return Err("eMMC FlashFS building/injection is not yet implemented (different metadata structure).".to_string());
                         }
                         // Use layout-specific defaults for FlashFS start block, not the parsed NAND's root block.
                         let fs_start: u16 = match nand.layout {
-                            crate::core::data::blocks::NandLayout::Bb => 0x1E0,
+                            crate::core::images::blocks::NandLayout::Bb => 0x1E0,
                             _ => 0x4E,  // Small block default: block 78
                         };
                         match crate::builder::chain::flashfs::FileSystemRoot::build_from_folder(&mut nand.image, &nand.layout, &path, fs_start, 0x30) {
@@ -1776,7 +1776,7 @@ impl Session {
                             // on its own file content and growth pattern. A new build should start
                             // fresh at the standard location.
                             let fs_start: u16 = match nand.layout {
-                                crate::core::data::blocks::NandLayout::Bb => 0x1E0,
+                                crate::core::images::blocks::NandLayout::Bb => 0x1E0,
                                 _ => 0x4E,  // Small block default: block 78
                             };
                             info!("[session] FlashFS start block: 0x{:X} ({})", fs_start, fs_start);
@@ -1794,7 +1794,7 @@ impl Session {
                     info!("[session] Extracting STFS container from {:?} to {:?}...", path, target_dir);
                     match fs::read(&path) {
                         Ok(data) => {
-                            match crate::core::data::stfs::StfsContainer::new(&data) {
+                            match crate::core::images::stfs::StfsContainer::new(&data) {
                                 Ok(container) => {
                                     if let Err(e) = container.extract_all(&target_dir) {
                                         return Err(format!("STFS Extraction Error: {}", e));

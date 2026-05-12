@@ -9,10 +9,10 @@ use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
 use zerocopy::byteorder::{U16, U32, I16, BigEndian};
 use log::{info, error, warn};
 
-use crate::core::data::blocks::*;
+use crate::core::images::blocks::*;
 use crate::builder::chain::*;
 use crate::builder::chain::flashfs::FlashFS;
-use crate::core::data::gxp::{GxpBinary, GxpPatchType, apply_records, PatchRecord};
+use crate::core::images::gxp::{GxpBinary, GxpPatchType, apply_records, PatchRecord};
 
 pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
     if hex.len() % 2 != 0 {
@@ -215,7 +215,7 @@ pub struct NandExtra {
     pub power_on_cause_b: u8,
 }
 
-// Legacy local PatchRecord removed in favor of crate::core::data::gxp::PatchRecord
+// Legacy local PatchRecord removed in favor of crate::core::images::gxp::PatchRecord
 
 #[derive(Clone)]
 pub struct NandPatches {
@@ -1095,7 +1095,7 @@ impl NandSkeleton {
             if !self.options.khv_apply && self.options.build_mode != BuildMode::Normal {
                 let header_size = self.options.khv_header_size;
                 let mut patch_binary = vec![0u8; header_size as usize]; 
-                patch_binary.extend(crate::core::data::gxp::serialize_records(records));
+                patch_binary.extend(crate::core::images::gxp::serialize_records(records));
                 
                 final_payloads.insert(0, PayloadEntry {
                     address: 0, // Will be calculated
@@ -1386,7 +1386,7 @@ impl NandSkeleton {
             if !self.options.khv_apply && self.options.build_mode != BuildMode::Normal {
                 let header_size = self.options.khv_header_size;
                 let mut patch_binary = vec![0u8; header_size as usize]; 
-                patch_binary.extend(crate::core::data::gxp::serialize_records(records));
+                patch_binary.extend(crate::core::images::gxp::serialize_records(records));
                 
                 final_payloads.insert(0, PayloadEntry {
                     address: 0, // Will be calculated

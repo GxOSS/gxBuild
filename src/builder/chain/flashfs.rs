@@ -7,7 +7,7 @@
 
 use std::io::{Read, Write, Cursor};
 use std::collections::HashMap;
-use crate::core::data::blocks::*;
+use crate::core::images::blocks::*;
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use log::{info, error};
 
@@ -92,14 +92,14 @@ impl FsSpareData {
 
         // Determine MetaType from layout
         let meta_type = match layout {
-            NandLayout::Xsb => crate::core::data::blocks::SpareMetaType::MetaType0,
-            NandLayout::Sb  => crate::core::data::blocks::SpareMetaType::MetaType1,
-            NandLayout::Bb  => crate::core::data::blocks::SpareMetaType::MetaType2,
-            NandLayout::Emmc => crate::core::data::blocks::SpareMetaType::MetaTypeNone,
+            NandLayout::Xsb => crate::core::images::blocks::SpareMetaType::MetaType0,
+            NandLayout::Sb  => crate::core::images::blocks::SpareMetaType::MetaType1,
+            NandLayout::Bb  => crate::core::images::blocks::SpareMetaType::MetaType2,
+            NandLayout::Emmc => crate::core::images::blocks::SpareMetaType::MetaTypeNone,
         };
 
         match meta_type {
-            crate::core::data::blocks::SpareMetaType::MetaType0 => {
+            crate::core::images::blocks::SpareMetaType::MetaType0 => {
                 // Pre-Jasper: BlockID at [0..1], FsSequence at [2..4], BadBlock at [5]
                 let block_id = u16::from_le_bytes([data[0], data[1] & 0xF]);
                 let fs_sequence = (data[2] as u32)
@@ -111,7 +111,7 @@ impl FsSpareData {
                 let fs_block_type = data[12] & 0x3F;
                 FsSpareData { block_id, fs_sequence, fs_size, fs_page_count, fs_block_type, bad_block }
             }
-            crate::core::data::blocks::SpareMetaType::MetaType1 => {
+            crate::core::images::blocks::SpareMetaType::MetaType1 => {
                 // Jasper/Trinity/Corona: BlockID at [1..2], FsSequence at [0,3..4], BadBlock at [5]
                 let block_id = u16::from_le_bytes([data[1], data[2] & 0xF]);
                 let fs_sequence = (data[0] as u32)
@@ -123,7 +123,7 @@ impl FsSpareData {
                 let fs_block_type = data[12] & 0x3F;
                 FsSpareData { block_id, fs_sequence, fs_size, fs_page_count, fs_block_type, bad_block }
             }
-            crate::core::data::blocks::SpareMetaType::MetaType2 => {
+            crate::core::images::blocks::SpareMetaType::MetaType2 => {
                 // Big-Block: BlockID at [1..2], FsSequence at [3..5], BadBlock at [0]
                 let block_id = u16::from_le_bytes([data[1], data[2] & 0xF]);
                 let fs_sequence = (data[5] as u32)
@@ -135,7 +135,7 @@ impl FsSpareData {
                 let fs_block_type = data[12] & 0x3F;
                 FsSpareData { block_id, fs_sequence, fs_size, fs_page_count, fs_block_type, bad_block }
             }
-            crate::core::data::blocks::SpareMetaType::MetaTypeNone => {
+            crate::core::images::blocks::SpareMetaType::MetaTypeNone => {
                 FsSpareData { block_id: 0, fs_sequence: 0, fs_size: 0, fs_page_count: 0, fs_block_type: 0, bad_block: false }
             }
         }
@@ -420,8 +420,8 @@ impl FileSystemRoot {
             let adjusted_cluster = cluster.wrapping_add(base_block_offset);
             let logical_block_offset = (adjusted_cluster + self.block_offset) as usize * pages_per_block * page_size;
             
-            if crate::core::data::blocks::has_spare(image) {
-                if let Some(blk_data) = crate::core::data::blocks::read_logical_from_physical(image, logical_block_offset / page_size, pages_per_block * page_size, *layout) {
+            if crate::core::images::blocks::has_spare(image) {
+                if let Some(blk_data) = crate::core::images::blocks::read_logical_from_physical(image, logical_block_offset / page_size, pages_per_block * page_size, *layout) {
                      data.extend_from_slice(&blk_data);
                 }
             } else {
@@ -657,8 +657,8 @@ impl FileSystemRoot {
     }
 
     fn write_data_hybrid(image: &mut [u8], logical_offset: usize, data: &[u8], layout: &NandLayout) {
-        if crate::core::data::blocks::has_spare(image) {
-            crate::core::data::blocks::write_logical_data(image, logical_offset, data, *layout);
+        if crate::core::images::blocks::has_spare(image) {
+            crate::core::images::blocks::write_logical_data(image, logical_offset, data, *layout);
         } else {
             if logical_offset + data.len() <= image.len() {
                 image[logical_offset..logical_offset + data.len()].copy_from_slice(data);
@@ -743,7 +743,7 @@ impl FlashFS {
         }
 
         // Phase 2: strip spare so root.read() uses correct 0x200-byte page stride.
-        let logical = crate::core::data::blocks::remove_spare(image);
+        let logical = crate::core::images::blocks::remove_spare(image);
 
         for (btype, (block, seq)) in best {
             let mut root = FileSystemRoot::new(block as i32, seq as i32, btype);
@@ -757,7 +757,7 @@ impl FlashFS {
     /// Scans a physical (raw) image for FlashFS signatures using spare metadata,
     /// with LBA map awareness for accurate bad block remapping.
     /// Based on x360Utils NANDReader ScanForFsRootAndMobile with LBA tracking.
-    pub fn scan_physical_with_lba(image: &[u8], layout: &NandLayout, lba_map: &crate::core::data::blocks::LbaMap) -> Self {
+    pub fn scan_physical_with_lba(image: &[u8], layout: &NandLayout, lba_map: &crate::core::images::blocks::LbaMap) -> Self {
         let mut fs = FlashFS::new();
         let total_blocks = layout.total_blocks(image.len());
         let pages_per_block = layout.logical_pages_per_block();
@@ -807,7 +807,7 @@ impl FlashFS {
         }
 
         // Phase 2: strip spare so root.read() uses correct 0x200-byte page stride.
-        let logical = crate::core::data::blocks::remove_spare(image);
+        let logical = crate::core::images::blocks::remove_spare(image);
 
         for (btype, (block, seq)) in best {
             let mut root = FileSystemRoot::new(block as i32, seq as i32, btype);

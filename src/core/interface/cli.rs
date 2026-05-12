@@ -335,7 +335,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     }
 
     // --- CLI Command-Line Specific Overrides ---
-    let mut cli_overrides = crate::core::data::xeini::OptionsIni::new();
+    let mut cli_overrides = crate::core::data::optini::OptionsIni::new();
     if let Some(key) = &args.cpu_key {
         cli_overrides.cpukey = Some(key.clone());
     }
@@ -350,7 +350,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     // --- CLI Generic Options Overrides (-o) ---
     for group in &args.options {
         for (k, v) in group {
-            let mut o = crate::core::data::xeini::OptionsIni::new();
+            let mut o = crate::core::data::optini::OptionsIni::new();
             match k.to_lowercase().as_str() {
                 "region" | "avregion" => o.avregion = Some(v.clone()),
                 "gameregion" => o.gameregion = Some(v.clone()),
@@ -546,17 +546,17 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         session.enqueue(InternalCommand::ParseImage { path, key: None });
     } else {
         let layout = match console_type {
-            CliConsoleType::xenon => crate::core::data::blocks::NandLayout::Xsb,
+            CliConsoleType::xenon => crate::core::images::blocks::NandLayout::Xsb,
             CliConsoleType::zephyr | CliConsoleType::falcon | CliConsoleType::jasper => {
-                crate::core::data::blocks::NandLayout::Sb
+                crate::core::images::blocks::NandLayout::Sb
             }
             CliConsoleType::jasper256 | CliConsoleType::jasper512 | CliConsoleType::jasperbb | CliConsoleType::jasperbigffs => {
-                crate::core::data::blocks::NandLayout::Bb
+                crate::core::images::blocks::NandLayout::Bb
             }
-            CliConsoleType::trinity => crate::core::data::blocks::NandLayout::Sb,
-            CliConsoleType::trinitybigffs => crate::core::data::blocks::NandLayout::Bb,
-            CliConsoleType::corona => crate::core::data::blocks::NandLayout::Sb,
-            CliConsoleType::corona4g | CliConsoleType::winchester => crate::core::data::blocks::NandLayout::Emmc,
+            CliConsoleType::trinity => crate::core::images::blocks::NandLayout::Sb,
+            CliConsoleType::trinitybigffs => crate::core::images::blocks::NandLayout::Bb,
+            CliConsoleType::corona => crate::core::images::blocks::NandLayout::Sb,
+            CliConsoleType::corona4g | CliConsoleType::winchester => crate::core::images::blocks::NandLayout::Emmc,
         };
         info!("[cli] Synthesizing blank image from scratch (Layout: {:?}).", layout);
         session.enqueue(InternalCommand::CreateImage { layout });

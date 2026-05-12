@@ -182,10 +182,10 @@ pub extern "C" fn gx_session_push_create_image(
     let session = unsafe { &mut *session };
     
     let layout = match layout_id {
-        0 => crate::core::data::blocks::NandLayout::Xsb,
-        1 => crate::core::data::blocks::NandLayout::Sb,
-        2 => crate::core::data::blocks::NandLayout::Bb,
-        3 => crate::core::data::blocks::NandLayout::Emmc,
+        0 => crate::core::images::blocks::NandLayout::Xsb,
+        1 => crate::core::images::blocks::NandLayout::Sb,
+        2 => crate::core::images::blocks::NandLayout::Bb,
+        3 => crate::core::images::blocks::NandLayout::Emmc,
         _ => {
             set_error(session, "Invalid NAND layout ID");
             return 1;

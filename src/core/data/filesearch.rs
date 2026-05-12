@@ -415,7 +415,7 @@ impl IniSearch {
             // Parse Auto Patch into Memory
             let mut xe_patch = None;
             if let Some(ref p) = patch_path {
-                if let Ok(parsed) = crate::core::data::gxp::parse_patch_binary(p) {
+                if let Ok(parsed) = crate::core::images::gxp::parse_patch_binary(p) {
                     if let Some(khv) = parsed.khv.as_ref() { 
                         ini.patch.khv = Some(khv.records.clone()); 
                     }
@@ -527,7 +527,7 @@ impl IniSearch {
                                 if let Some(name) = stfs_entry.file_name().to_str() {
                                     if name.starts_with("su") && !name.contains('.') {
                                         if let Ok(data_stfs) = std::fs::read(stfs_entry.path()) {
-                                            if let Ok(stfs) = crate::core::data::stfs::StfsContainer::new(&data_stfs) {
+                                            if let Ok(stfs) = crate::core::images::stfs::StfsContainer::new(&data_stfs) {
                                                 if let Ok(mem) = stfs.extract_to_memory() {
                                                     for (k, v) in mem {
                                                         let k_lower = k.to_lowercase();
@@ -563,13 +563,13 @@ impl IniSearch {
                     if let Some(ref parsed_patch) = xe_patch {
                         if Some(&lower_name) == target_cb.as_ref() {
                             if let Some(ref cb_patch) = parsed_patch.cb {
-                                let _ = crate::core::data::gxp::apply_records(&cb_patch.records, &mut c);
+                                let _ = crate::core::images::gxp::apply_records(&cb_patch.records, &mut c);
                             } else if let Some(ref cbb_patch) = parsed_patch.cb_b {
-                                let _ = crate::core::data::gxp::apply_records(&cbb_patch.records, &mut c);
+                                let _ = crate::core::images::gxp::apply_records(&cbb_patch.records, &mut c);
                             }
                         } else if lower_name.starts_with("cd_") || lower_name.starts_with("sd_") {
                             if let Some(ref cd_patch) = parsed_patch.cd {
-                                let _ = crate::core::data::gxp::apply_records(&cd_patch.records, &mut c);
+                                let _ = crate::core::images::gxp::apply_records(&cd_patch.records, &mut c);
                             }
                         }
                     }
