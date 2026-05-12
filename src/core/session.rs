@@ -16,7 +16,6 @@ use crate::builder::builder::{SouthbridgeType, LayoutCalculator};
 use crate::core::images::gxp::parse_patch_binary;
 use crate::core::data::filesearch::IniSearch;
 use log::{info, error, warn};
-use crate::core::images::blocks::NandLayout;
 #[derive(Debug)]
 pub enum InternalCommand { 
     ParseIni { path: PathBuf, target: String, ini_base: PathBuf, common: PathBuf, data: PathBuf },
@@ -645,7 +644,7 @@ impl Session {
 
     /// Parses an options.ini content string and merges it into the session options.
     pub fn load_options_ini(&mut self, content: &str) -> Result<(), String> {
-        match crate::core::data::xeini::parse_options_ini(content) {
+        match crate::core::data::optini::parse_options_ini(content) {
             Ok(new_opts) => {
                 self.options.merge(new_opts);
                 info!("[session] Merged options from INI content string.");
@@ -748,7 +747,7 @@ impl Session {
         let options_path = data_dir.join("options.ini");
         if options_path.exists() {
             if let Ok(content) = fs::read_to_string(&options_path) {
-                match crate::core::data::xeini::parse_options_ini(&content) {
+                match crate::core::data::optini::parse_options_ini(&content) {
                     Ok(disk_opts) => {
                         let user_opts = self.options.clone();
                         self.options = disk_opts;

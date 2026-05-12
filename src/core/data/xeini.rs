@@ -12,7 +12,6 @@ use crc32fast::Hasher;
 use thiserror::Error;
 use crate::builder::builder::NandSkeleton;
 use log::{info, warn, error};
-use crate::core::data::optini::OptionsIni;
 use crate::core::images::gxp::PatchRecord;
 
 #[derive(Error, Debug)]

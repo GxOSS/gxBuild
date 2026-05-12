@@ -324,7 +324,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     let options_path = data_dir.join("options.ini");
     if options_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&options_path) {
-            match crate::core::data::xeini::parse_options_ini(&content) {
+            match crate::core::data::optini::parse_options_ini(&content) {
                 Ok(opts) => {
                     session.options.merge(opts);
                     info!("[cli] Merged defaults from {:?}", options_path);
