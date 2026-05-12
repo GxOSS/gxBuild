@@ -9,7 +9,7 @@
 
 gxBuild is a Xbox 360 image builder and patcher. Features full nand, xell and shadowboot parsing, patching and building. Stays as close to xeBuild as possible, with a few changes. 
 
-Based on [RGBuild](), [xenon-bltool]() and [J-Runner with Extras]()
+Based on [x360utils](), [xenon-bltool](), and [J-Runner with Extras]()
 
 ## Features
 
@@ -70,6 +70,9 @@ Any testing is greatly appreciated, as I don't have the funds for every platform
 
 ## License
 
-All code wrote by ExposureMG is for the public domain.
+Original code by ExposureMG is for the public domain.
+x360utils is unlicense (Permissive)
+J-Runner is MIT (Permissive)
+xenon-bltool is GPL v2
 
 All code taken from other projects has been properly attributed in the header.

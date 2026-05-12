@@ -8,32 +8,23 @@ use log::info;
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum NandLayout {
-    /// Small Block, Xenon-era spare format. Promoted from Sb at runtime
-    /// after inspecting bootloaders / FlashFS spare data - never returned by detect().
     Xsb,
-    /// Small Block (16 MB). Default for all 16 MB images until spare format is confirmed.
     Sb,
-    /// Big Block (64 MB / 256 MB / 512 MB).
     Bb,
-    /// eMMC, no spare (48 MB / 4 GB).
     Emmc,
 }
 
-/// Anchor block offsets for eMMC NANDs (48MB/4GB). 
-/// These contain the FlashFS root block and sequence number.
 pub const EMMC_ANCHOR_OFFSETS: [usize; 4] = [0x2fe0000, 0x2fe4000, 0x2fe8000, 0x2fec000];
 
-/// Spare metadata format type - defines byte layout of the 16-byte spare area per page.
-/// Based on x360Utils NANDSpare.MetaType detection.
 #[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SpareMetaType {
-    /// Pre-Jasper (Xenon/Zephyr/Falcon/early Jasper) - BlockID at [0..1], FsSequence at [2..4]
+    /// Small Block XSB
     MetaType0,
-    /// Jasper/Trinity/Corona - BlockID at [1..2], FsSequence at [0,3..4]
+    /// Small Block PSB/KSB
     MetaType1,
-    /// Big-Block Jasper - BlockID at [1..2], FsSequence at [3..5], BadBlock at [0] 
+    /// Big Block
     MetaType2,
-    /// No spare data or unknown (eMMC, clean logical images)
+    /// eMMC / Logical Image
     #[default]
     MetaTypeNone,
 }
@@ -97,11 +88,6 @@ impl NandLayout {
         self.page_size() + self.spare_size()
     }
 
-    /// Converts a logical page number to its physical offset in a raw NAND image.
-    /// Matches the proven pattern from scratch iterations (V25, V43, V46).
-    /// - Small Block: logical page N → physical offset (N/512)*528 + (N%512)
-    /// - Big Block:   logical page N → physical offset (N/2048)*2112 + (N%2048)
-    /// - eMMC:        logical page N → physical offset N (identity mapping)
     pub fn logical_to_physical(&self, logical_page: usize) -> u64 {
         match self {
             NandLayout::Emmc => logical_page as u64,
@@ -118,9 +104,6 @@ impl NandLayout {
 /// Reads `len` bytes starting from logical page `logical_page` in a physical NAND image.
 /// Handles cross-page boundary reads transparently by translating each logical page
 /// to its physical offset and reading chunks that don't cross physical page boundaries.
-///
-/// This is essential for parsing bootloader headers and data from raw physical dumps
-/// where spare/ECC areas are interleaved with actual data.
 pub fn read_logical_from_physical(
     image: &[u8],
     logical_page: usize,

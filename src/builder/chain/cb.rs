@@ -408,10 +408,6 @@ impl BootloaderCb {
             }
         }
         // Note: populate_metadata_unchecked is NOT called here intentionally.
-        // RC4 is symmetric so decrypt_v1 is used for both decryption (decrypt_chain)
-        // and re-encryption (encrypt_chain). Calling it here on the encrypt path
-        // would re-read ciphertext and corrupt the synced metadata.
-        // decrypt_chain calls populate_metadata_unchecked explicitly after this.
     }
 
     pub fn decrypt_v2(&mut self, cb_a_hdr: &BootloaderHeader, cb_a_key: &[u8; 16], cpu_key: &[u8; 16]) {
@@ -421,7 +417,6 @@ impl BootloaderCb {
 
         if self.data.len() < payload_len { return; }
 
-        // copy cb_a_hdr's BootloaderHeader and nullify flags
         let mut cb_a_hdr_copy = cb_a_hdr.clone();
         cb_a_hdr_copy.flags.set(0);
 
@@ -437,13 +432,12 @@ impl BootloaderCb {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }
         }
-        // Same as decrypt_v1: no populate_metadata here (called for both encrypt and decrypt passes).
     }
     /// Returns the 16-byte value at `data[0..16]`.
-    /// - In **encrypted** state: this is the original nonce.
-    /// - In **decrypted** state (after `decrypt()` / `decrypt_v1()`): the nonce has been
-    ///   overwritten in-place by `HMAC(inkey, nonce)`, i.e. the derived chain key.
-    ///   CD and CE must be decrypted with this key on split (CB_A+CB_B) and glitch3 layouts.
+    /// In encrypted state: this is the original nonce.
+    /// In decrypted state the nonce has been
+    /// overwritten in-place by `HMAC(inkey, nonce)`, i.e. the derived chain key.
+    /// CD and CE must be decrypted with this key on split (CB_A+CB_B) and glitch3 layouts.
     pub fn derived_key(&self) -> [u8; 16] {
         if let Some(key) = self.derived_key {
             return key;
