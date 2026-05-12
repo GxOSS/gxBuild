@@ -212,12 +212,21 @@ pub fn decrypt_chain(
         cb_x_bl.decrypt_v1(&cb_key, &[0u8; 16]); // RGH3 CB_X uses zeroed CPU key
     }
 
-    // For split (CB_A+CB_B) and glitch3 layouts, CD and CE use the CB_B output key -
-    // the derived RC4 key written in-place to cb_b.data[0..16] after decrypt_v1.
-    // For single-CB layouts, cb_b is None and we fall back to cb_key directly.
+    // Determine v1 vs v2 from CB_A header flags (bit 0x1000).
+    // xenon-bltool: cb_b_decrypt_v1 vs cb_b_decrypt_v2
+    // J-Runner: (CB_A[0x6..0x8] & 0x1000) != 0 → new crypto scheme
+    // v2 passes the CB_A derived key + CB_A header (flags zeroed) as extra HMAC inputs.
+    let cb_a_uses_new_crypto = (cb.header.flags.get() & 0x1000) != 0;
+
     let cd_key: [u8; 16] = if let Some(cb_b_bl) = cb_b {
-        cb_b_bl.decrypt_v1(&cb_key, _cpukey);
-        cb_b_bl.derived_key() // nonce overwritten by derived key in-place
+        if cb_a_uses_new_crypto {
+            info!("[builder] CB_A new crypto (flags & 0x1000): using decrypt_v2 for CB_B");
+            cb_b_bl.decrypt_v2(&cb.header, &cb_key, _cpukey);
+        } else {
+            cb_b_bl.decrypt_v1(&cb_key, _cpukey);
+        }
+        cb_b_bl.populate_metadata_unchecked();
+        cb_b_bl.derived_key()
     } else {
         cb_key
     };
@@ -230,6 +239,7 @@ pub fn decrypt_chain(
     // Decrypt Updates (Slot 0 and Slot 1)
     if let (Some(cf), Some(cg)) = (cf_0, cg_0) {
         cf.decrypt(&ONEBL_KEY);
+        cf.populate_metadata_unchecked();
         if cf.verify_decrypted() {
             info!("[builder] CF slot 0 decryption verified successfully.");
         } else {
@@ -245,6 +255,7 @@ pub fn decrypt_chain(
 
     if let (Some(cf), Some(cg)) = (cf_1, cg_1) {
         cf.decrypt(&ONEBL_KEY);
+        cf.populate_metadata_unchecked();
         if cf.verify_decrypted() {
             info!("[builder] CF slot 1 decryption verified successfully.");
         } else {
@@ -302,8 +313,8 @@ pub fn encrypt_chain(
     if let Some(ref mut cg) = cg_1 { cg.sync_metadata(); }
 
     let digest = fix_per_box_digest(&smc.data, &cb.header, &cb.data, &cb_key, cpukey)?;
-    if cb.data.len() >= 0x20 {
-        cb.data[0x10..0x20].copy_from_slice(&digest);
+    if cb.data.len() >= 0x30 {
+        cb.data[0x20..0x30].copy_from_slice(&digest);
     }
 
     // Encrypt in reverse order (innermost first).

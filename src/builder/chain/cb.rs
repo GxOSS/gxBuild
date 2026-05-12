@@ -58,6 +58,7 @@ pub struct BootloaderCb {
     pub header: BootloaderHeader,
     pub data: Vec<u8>,
     pub metadata: Option<CbMetadata>,
+    pub derived_key: Option<[u8; 16]>,
 }
 
 impl BootloaderCb {
@@ -83,6 +84,7 @@ impl BootloaderCb {
                     header: empty_header,
                     data: bytes.to_vec(),
                     metadata: None,
+                    derived_key: None,
                 };
             }
         };
@@ -91,6 +93,7 @@ impl BootloaderCb {
             header: header.clone(),
             data: payload.to_vec(),
             metadata: None,
+            derived_key: None,
         };
         // Attempt to populate metadata if the size looks like a decrypted or valid CB
         cb.populate_metadata();
@@ -104,6 +107,7 @@ impl BootloaderCb {
             header: header.clone(),
             data: payload.to_vec(),
             metadata: None,
+            derived_key: None,
         };
         // Attempt to populate metadata if the size looks like a decrypted or valid CB
         cb.populate_metadata();
@@ -111,11 +115,31 @@ impl BootloaderCb {
     }
 
     pub fn populate_metadata(&mut self) {
+        // is_decrypted() checks CB_A zero-padding. CB_B never has this, so for
+        // post-decrypt_v1 calls use populate_metadata_unchecked directly.
         if !self.is_decrypted() || self.data.len() < 0x3B0 { return; }
+        self.populate_metadata_unchecked();
+    }
+
+    /// Populates metadata unconditionally (no is_decrypted guard).
+    /// Use after decrypt_v1 for CB_B, which lacks CB_A's zero-padding region.
+    pub fn populate_metadata_unchecked(&mut self) {
+        if self.data.len() < 0x3B0 { return; }
 
         // Mappings (+0x10 from RGBuild DecryptedData offsets)
-        let pairing_data: [u8; 3] = self.data[0x10..0x13].try_into().unwrap();
-        let lockdown_value = self.data[0x13];
+        // Absolute 0x20 = self.data[0x10]
+        let mut pairing_data: [u8; 3] = self.data[0x10..0x13].try_into().unwrap();
+        pairing_data.reverse(); // J-Runner reverses the 3 bytes
+
+        // Absolute 0x23 = self.data[0x13]
+        let mut lockdown_value = self.data[0x13];
+        
+        // J-Runner check: if bootloader starts with specific branch, LDV is 0
+        // cb_dec[0x02] and cb_dec[0x03] correspond to the version field in the header.
+        if self.header.version.get() == 0x3C48 {
+            lockdown_value = 0;
+        }
+
         let reserved_per_box: [u8; 0xC] = self.data[0x14..0x20].try_into().unwrap();
         let per_box_digest: [u8; 0x10] = self.data[0x20..0x30].try_into().unwrap();
         
@@ -170,11 +194,27 @@ impl BootloaderCb {
         if let Some(ref meta) = self.metadata {
             if self.data.len() < 0x3A4 { return; }
 
-            self.data[0x10..0x13].copy_from_slice(&meta.pairing_data);
+            let mut pd_sync = meta.pairing_data;
+            pd_sync.reverse(); // Reverse back for storage
+            self.data[0x10..0x13].copy_from_slice(&pd_sync);
             self.data[0x13] = meta.lockdown_value;
+            self.data[0x3A1] = meta.lockdown_value; // J-Runner display offset
+            
             self.data[0x14..0x20].copy_from_slice(&meta.reserved_per_box);
             self.data[0x20..0x30].copy_from_slice(&meta.per_box_digest);
             
+            // If this is a combined CB (like CB_6750), it contains an embedded CB_B.
+            // External tools like J-Runner-with-Extras will decrypt the payload and read the LDV from CB_B.
+            // We must sync the metadata to the embedded CB_B as well.
+            if self.data.len() > 0x2400 && self.data[0x1FF0] == 0x43 && self.data[0x1FF1] == 0x42 {
+                self.data[0x2010..0x2013].copy_from_slice(&pd_sync);
+                self.data[0x2013] = meta.lockdown_value;
+                self.data[0x23B1] = meta.lockdown_value;
+                self.data[0x2014..0x2020].copy_from_slice(&meta.reserved_per_box);
+                self.data[0x2020..0x2030].copy_from_slice(&meta.per_box_digest);
+                info!("[pfa] Synchronized embedded CB_B metadata!");
+            }
+
             self.data[0x30..0x130].copy_from_slice(&meta.signature);
 
             self.data[0x240..0x248].copy_from_slice(&meta.post_output_addr.to_be_bytes());
@@ -298,7 +338,7 @@ impl BootloaderCb {
         if let Ok(derived_key) = excrypt::hmac_sha(onebl_key, &[&self.data[0..16]]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
-            self.data[0..16].copy_from_slice(&decrypt_key);
+            self.derived_key = Some(decrypt_key);
             info!("[builder] Decrypting CB using derived key: {:02x?}", decrypt_key);
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
@@ -331,6 +371,7 @@ impl BootloaderCb {
         if let Ok(derived_key) = excrypt::hmac_sha(&zero_key, &[&hmac_input]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
+            self.derived_key = Some(decrypt_key);
             info!("[builder] Decrypting CB (MFG zero-key) using derived key: {:02x?}", decrypt_key);
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
@@ -361,12 +402,16 @@ impl BootloaderCb {
         if let Ok(derived_key) = excrypt::hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
-            self.data[0..16].copy_from_slice(&decrypt_key);
+            self.derived_key = Some(decrypt_key);
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }
         }
-        self.populate_metadata();
+        // Note: populate_metadata_unchecked is NOT called here intentionally.
+        // RC4 is symmetric so decrypt_v1 is used for both decryption (decrypt_chain)
+        // and re-encryption (encrypt_chain). Calling it here on the encrypt path
+        // would re-read ciphertext and corrupt the synced metadata.
+        // decrypt_chain calls populate_metadata_unchecked explicitly after this.
     }
 
     pub fn decrypt_v2(&mut self, cb_a_hdr: &BootloaderHeader, cb_a_key: &[u8; 16], cpu_key: &[u8; 16]) {
@@ -386,12 +431,13 @@ impl BootloaderCb {
         ) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
+            self.derived_key = Some(decrypt_key);
             
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }
         }
-        self.populate_metadata();
+        // Same as decrypt_v1: no populate_metadata here (called for both encrypt and decrypt passes).
     }
     /// Returns the 16-byte value at `data[0..16]`.
     /// - In **encrypted** state: this is the original nonce.
@@ -399,6 +445,9 @@ impl BootloaderCb {
     ///   overwritten in-place by `HMAC(inkey, nonce)`, i.e. the derived chain key.
     ///   CD and CE must be decrypted with this key on split (CB_A+CB_B) and glitch3 layouts.
     pub fn derived_key(&self) -> [u8; 16] {
+        if let Some(key) = self.derived_key {
+            return key;
+        }
         if self.data.len() >= 16 {
             self.data[0..16].try_into().unwrap_or([0u8; 16])
         } else {

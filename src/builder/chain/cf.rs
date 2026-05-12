@@ -72,7 +72,16 @@ impl BootloaderCf {
     }
 
     pub fn populate_metadata(&mut self) {
+        // verify_decrypted() checks reserved_per_box zeros — unreliable for all CFs.
+        // After decrypt() use populate_metadata_unchecked instead.
         if !self.is_decrypted() || self.data.len() < 0x344 { return; }
+        self.populate_metadata_unchecked();
+    }
+
+    /// Populates metadata unconditionally (no is_decrypted guard).
+    /// Use after decrypt() since verify_decrypted() can fail for valid CFs.
+    pub fn populate_metadata_unchecked(&mut self) {
+        if self.data.len() < 0x344 { return; }
 
         // Stage 1 (Plain)
         let source_version = BigEndian::read_u16(&self.data[0x0..0x2]);
@@ -93,8 +102,11 @@ impl BootloaderCf {
         let mut reserved_per_box = [0u8; 0x2B];
         reserved_per_box.copy_from_slice(&self.data[0x1E0..0x20B]);
         let update_slot = self.data[0x20B];
+        
         let mut pairing_data = [0u8; 3];
         pairing_data.copy_from_slice(&self.data[0x20C..0x20F]);
+        pairing_data.reverse(); // J-Runner reverses the 3 bytes
+
         let lockdown_value = self.data[0x20F];
         let mut per_box_digest = [0u8; 0x10];
         per_box_digest.copy_from_slice(&self.data[0x210..0x220]);
@@ -148,7 +160,11 @@ impl BootloaderCf {
 
             self.data[0x1E0..0x20B].copy_from_slice(&meta.reserved_per_box);
             self.data[0x20B] = meta.update_slot;
-            self.data[0x20C..0x20F].copy_from_slice(&meta.pairing_data);
+            
+            let mut pd_sync = meta.pairing_data;
+            pd_sync.reverse(); // Reverse back for storage
+            self.data[0x20C..0x20F].copy_from_slice(&pd_sync);
+
             self.data[0x20F] = meta.lockdown_value;
             self.data[0x210..0x220].copy_from_slice(&meta.per_box_digest);
 
@@ -257,6 +273,10 @@ impl BootloaderCf {
                 let _ = rc4.crypt(&mut self.data[0x20..payload_size]);
             }
         }
+        // Do NOT call populate_metadata_unchecked here: this function is used
+        // symmetrically for re-encryption in encrypt_chain. Calling it after
+        // re-encryption would overwrite synced metadata with ciphertext garbage.
+        // decrypt_chain calls populate_metadata_unchecked explicitly after this.
     }
 
     /// Verifies that a CF bootloader has been successfully decrypted.

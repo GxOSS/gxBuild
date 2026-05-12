@@ -207,6 +207,7 @@ impl Default for NandUpdate {
 #[derive(Clone)]
 pub struct NandExtra {
     pub smc: Vec<u8>,
+    pub smc_metadata: Option<crate::builder::chain::smc::SmcMetadata>,
     pub smc_config: Vec<u8>,
     pub keyvault: Vec<u8>,
     pub fcrt: Option<Vec<u8>>,
@@ -374,6 +375,9 @@ pub struct NandSkeleton {
     pub flashfs: FlashFS,
     pub layout: NandLayout,
     pub total_blocks: usize,
+    pub input_ldv_cb: Option<u8>,
+    pub input_ldv_cf: Option<u8>,
+    pub input_pd: Option<[u8; 3]>,
 }
 
 impl NandSkeleton {
@@ -438,6 +442,7 @@ impl NandSkeleton {
             },
             extra: NandExtra {
                 smc: Vec::new(),
+                smc_metadata: None,
                 smc_config: Vec::new(),
                 keyvault: Vec::new(),
                 fcrt: None,
@@ -445,21 +450,17 @@ impl NandSkeleton {
                 power_on_cause_b: 0,
             },
             kv: None,
-            bootloaders: NandBootloaders {
-                cb: None, cb_a: None, cb_x: None, cb_b: None,
-                sc: None, cd: None, ce: None, khvpatch: None, xell: None,
-            },
+            bootloaders: NandBootloaders::default(),
             rebooter: None,
-            update: NandUpdate { cf_0: None, cg_0: None, cf_1: None, cg_1: None },
+            update: NandUpdate::default(),
             rebooter_update: None,
             payloads: Vec::new(),
-            flashfs: {
-                let mut fs = FlashFS::new();
-                fs.root.block_map = vec![0; total_blocks];
-                fs
-            },
+            flashfs: FlashFS::new(),
             layout,
             total_blocks,
+            input_ldv_cb: None,
+            input_ldv_cf: None,
+            input_pd: None,
         }
     }
 
@@ -474,6 +475,154 @@ impl NandSkeleton {
         self.update.clear();
         if let Some(ref mut r) = self.rebooter_update {
             r.clear();
+        }
+    }
+
+    pub fn prepare_for_assembly(&mut self) {
+        info!("[pfa] === prepare_for_assembly START ===");
+        info!("[pfa] input_pd: {:02x?}", self.input_pd);
+        info!("[pfa] input_ldv_cb: {:?}", self.input_ldv_cb);
+        info!("[pfa] input_ldv_cf: {:?}", self.input_ldv_cf);
+        info!("[pfa] cb present: {}, cb_a present: {}, cb_b present: {}",
+            self.bootloaders.cb.is_some(), self.bootloaders.cb_a.is_some(), self.bootloaders.cb_b.is_some());
+        info!("[pfa] cb meta: {}, cb_a meta: {}, cb_b meta: {}",
+            self.bootloaders.cb.as_ref().map_or(false, |b| b.metadata.is_some()),
+            self.bootloaders.cb_a.as_ref().map_or(false, |b| b.metadata.is_some()),
+            self.bootloaders.cb_b.as_ref().map_or(false, |b| b.metadata.is_some()));
+        info!("[pfa] cf_0 present: {}, cf_0 meta: {}",
+            self.update.cf_0.is_some(),
+            self.update.cf_0.as_ref().map_or(false, |cf| cf.metadata.is_some()));
+
+        // Decrypt newly assigned bootloaders individually — do NOT call decrypt_chain
+        // since it would double-encrypt any source NAND bootloaders still in memory.
+        // Each bootloader is only decrypted if it has no metadata (i.e. freshly assigned).
+        if let Some(cpukey) = self.cpukey {
+            // CB_B (split) — needs cb_a_key derived from decrypted CB_A
+            if let Some(cb_b) = self.bootloaders.cb_b.as_mut() {
+                if cb_b.metadata.is_none() {
+                    info!("[pfa] CB_B has no metadata — decrypting");
+                    if let Some(cb_a) = self.bootloaders.cb_a.as_ref() {
+                        // cb_a.data[0..16] is the derived key (already decrypted)
+                        let cb_a_key: [u8; 16] = cb_a.data[0..16].try_into().unwrap_or([0u8; 16]);
+                        let uses_new_crypto = (cb_a.header.flags.get() & 0x1000) != 0;
+                        if uses_new_crypto {
+                            cb_b.decrypt_v2(&cb_a.header.clone(), &cb_a_key, &cpukey);
+                        } else {
+                            cb_b.decrypt_v1(&cb_a_key, &cpukey);
+                        }
+                        cb_b.populate_metadata_unchecked();
+                        info!("[pfa] CB_B decrypted, meta: {:?}", cb_b.metadata.as_ref().map(|m| (m.ldv, &m.pairing_data)));
+                    } else {
+                        warn!("[pfa] CB_B needs decrypt but CB_A is missing — cannot derive key");
+                    }
+                }
+            }
+
+            // Single CB — decrypt using 1BL key
+            if let Some(cb) = self.bootloaders.cb.as_mut() {
+                if cb.metadata.is_none() {
+                    info!("[pfa] CB (single) has no metadata — decrypting with 1BL key");
+                    cb.decrypt(&ONEBL_KEY);
+                    cb.populate_metadata_unchecked();
+                    info!("[pfa] CB decrypted, meta: {:?}", cb.metadata.as_ref().map(|m| (m.ldv, &m.pairing_data)));
+                }
+            }
+
+            // CF0 — decrypt using 1BL key
+            if let Some(cf) = self.update.cf_0.as_mut() {
+                if cf.metadata.is_none() {
+                    info!("[pfa] CF_0 has no metadata — decrypting with 1BL key");
+                    cf.decrypt(&ONEBL_KEY);
+                    cf.populate_metadata_unchecked();
+                    info!("[pfa] CF_0 decrypted, meta: {:?}", cf.metadata.as_ref().map(|m| (m.lockdown_value, &m.pairing_data)));
+                }
+            }
+
+            // CF1 — decrypt using 1BL key
+            if let Some(cf) = self.update.cf_1.as_mut() {
+                if cf.metadata.is_none() {
+                    info!("[pfa] CF_1 has no metadata — decrypting with 1BL key");
+                    cf.decrypt(&ONEBL_KEY);
+                    cf.populate_metadata_unchecked();
+                    info!("[pfa] CF_1 decrypted, meta: {:?}", cf.metadata.as_ref().map(|m| (m.lockdown_value, &m.pairing_data)));
+                }
+            }
+        }
+
+        let pd = self.input_pd;
+        let ldv_cb = self.input_ldv_cb;
+        let ldv_cf = self.input_ldv_cf;
+
+        // 1. Sync Pairing Data to CB_B (split) or CB (single), and to both CF slots
+        if let Some(pd_val) = pd {
+            if let Some(ref mut cb_b) = self.bootloaders.cb_b {
+                if let Some(ref mut meta) = cb_b.metadata {
+                    info!("[pfa] Syncing PD {:02x?} -> CB_B (was {:02x?})", pd_val, meta.pairing_data);
+                    meta.pairing_data = pd_val;
+                }
+            } else if let Some(ref mut cb) = self.bootloaders.cb {
+                if let Some(ref mut meta) = cb.metadata {
+                    info!("[pfa] Syncing PD {:02x?} -> CB (was {:02x?})", pd_val, meta.pairing_data);
+                    meta.pairing_data = pd_val;
+                }
+            }
+            if let Some(ref mut cf) = self.update.cf_0 {
+                if let Some(ref mut meta) = cf.metadata { meta.pairing_data = pd_val; }
+            }
+            if let Some(ref mut cf) = self.update.cf_1 {
+                if let Some(ref mut meta) = cf.metadata { meta.pairing_data = pd_val; }
+            }
+            if let Some(ref mut meta) = self.extra.smc_metadata {
+                meta.pairing_data = pd_val;
+            }
+        } else {
+            warn!("[pfa] input_pd is None — PD will not be synced");
+        }
+
+        // 2. Sync CB LDV
+        if let Some(ldv) = ldv_cb {
+            if let Some(ref mut cb_b) = self.bootloaders.cb_b {
+                if let Some(ref mut meta) = cb_b.metadata {
+                    info!("[pfa] Syncing LDV {} -> CB_B (was {})", ldv, meta.lockdown_value);
+                    meta.ldv = ldv; meta.lockdown_value = ldv;
+                }
+            } else if let Some(ref mut cb) = self.bootloaders.cb {
+                if let Some(ref mut meta) = cb.metadata {
+                    info!("[pfa] Syncing LDV {} -> CB (was {})", ldv, meta.lockdown_value);
+                    meta.ldv = ldv; meta.lockdown_value = ldv;
+                }
+            }
+        } else {
+            warn!("[pfa] input_ldv_cb is None — CB LDV will not be synced");
+        }
+
+        // 3. Sync CF LDV
+        if let Some(ldv) = ldv_cf {
+            if let Some(ref mut cf) = self.update.cf_0 {
+                if let Some(ref mut meta) = cf.metadata { meta.lockdown_value = ldv; }
+            }
+            if let Some(ref mut cf) = self.update.cf_1 {
+                if let Some(ref mut meta) = cf.metadata { meta.lockdown_value = ldv; }
+            }
+        }
+
+        // 4. Sync metadata back to raw bytes
+        if let Some(ref mut cb) = self.bootloaders.cb { cb.sync_metadata(); }
+        if let Some(ref mut cba) = self.bootloaders.cb_a { cba.sync_metadata(); }
+        if let Some(ref mut cbx) = self.bootloaders.cb_x { cbx.sync_metadata(); }
+        if let Some(ref mut cbb) = self.bootloaders.cb_b { cbb.sync_metadata(); }
+        if let Some(ref mut cd) = self.bootloaders.cd { cd.sync_metadata(); }
+        if let Some(ref mut ce) = self.bootloaders.ce { ce.sync_metadata(); }
+        if let Some(ref mut cf) = self.update.cf_0 { cf.sync_metadata(); }
+        if let Some(ref mut cf) = self.update.cf_1 { cf.sync_metadata(); }
+        if let Some(ref mut cg) = self.update.cg_0 { cg.sync_metadata(); }
+        if let Some(ref mut cg) = self.update.cg_1 { cg.sync_metadata(); }
+
+        if let Some(meta) = &self.extra.smc_metadata {
+            if self.extra.smc.len() >= 0x107 {
+                self.extra.smc[0x103] = meta.lockdown_value;
+                self.extra.smc[0x104..0x107].copy_from_slice(&meta.pairing_data);
+            }
         }
     }
 
@@ -537,6 +686,7 @@ impl NandSkeleton {
 
         let extra = NandExtra {
             smc: smc.data,
+            smc_metadata: smc.metadata.clone(),
             smc_config: config_data,
             keyvault: kv.data.clone(),
             fcrt: None,
@@ -591,6 +741,38 @@ impl NandSkeleton {
         let total_blocks = layout.total_blocks(image.len());
         let lba_map = LbaMap::from_layout(layout, total_blocks);
 
+        let mut input_ldv_cb = None;
+        let mut input_pd = None;
+
+        // Per-box data lives in CB_B (split image) or CB (single image). CB_A never holds it.
+        // J-Runner's unpack_cbb_data reads from the decrypted CB_B — we match that exactly.
+        if let Some(cb_b) = bl_mut.cb_b.as_ref() {
+            if let Some(meta) = &cb_b.metadata {
+                input_ldv_cb = Some(meta.lockdown_value);
+                input_pd = Some(meta.pairing_data);
+            }
+        } else if let Some(cb) = bl_mut.cb.as_ref() {
+            if let Some(meta) = &cb.metadata {
+                input_ldv_cb = Some(meta.lockdown_value);
+                input_pd = Some(meta.pairing_data);
+            }
+        }
+
+        // Fall back to CF0 PD if CB had no per-box data (older single-CB images)
+        if input_pd.is_none() {
+            input_pd = update.cf_0.as_ref().and_then(|cf| cf.metadata.as_ref().map(|m| m.pairing_data));
+        }
+
+        // CF LDV: take the highest across both CF slots
+        let ldv0 = update.cf_0.as_ref().and_then(|cf| cf.metadata.as_ref().map(|m| m.lockdown_value));
+        let ldv1 = update.cf_1.as_ref().and_then(|cf| cf.metadata.as_ref().map(|m| m.lockdown_value));
+        let input_ldv_cf = match (ldv0, ldv1) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (Some(a), None)    => Some(a),
+            (None, Some(b))    => Some(b),
+            _                  => None,
+        };
+
         Ok(NandSkeleton {
             cpukey: Some(cpukey),
             image,
@@ -616,6 +798,9 @@ impl NandSkeleton {
             rebooter_update: None,
             payloads: Vec::new(),
             flashfs: final_flashfs,
+            input_ldv_cb,
+            input_ldv_cf,
+            input_pd,
         })
     }
 
@@ -796,6 +981,8 @@ impl NandSkeleton {
     /// Chain 0 (Base) starts at 0x8000.
     /// Chain 1 (Update) starts at 0x20000.
     pub fn assemble_rebooter(&mut self) -> Result<Vec<u8>, String> {
+        // Note: prepare_for_assembly() is called by the outer build() function BEFORE
+        // encrypt_chain runs. Do NOT call it again here — the data is already encrypted.
         let layout = &self.layout;
         let expected_size = self.total_blocks * layout.logical_pages_per_block() * 0x200;
         
@@ -870,15 +1057,7 @@ impl NandSkeleton {
             curr_off += data.len();
         }
 
-        // 3a. Update metadata synchronization (Chain 1 CB -> CF/CG)
-        let mut pairing_data = [0u8; 3];
-        let mut ldv = 0u8;
-        if let Some(meta) = rebooter.cb.as_ref().and_then(|b| b.metadata.as_ref()) {
-            pairing_data = meta.pairing_data;
-            ldv = meta.ldv;
-            info!("[builder] Syncing JTAG update metadata: Pairing {:02X?}, LDV {}", pairing_data, ldv);
-        }
-
+        // Update metadata is already synced during prepare_for_assembly
         let target_cf_offset = (curr_off + 0xFFFF) & !0xFFFF; // Align to 64KB for JTAG CF/CG
         header.cf_offset.set(target_cf_offset as u32);
 
@@ -888,12 +1067,8 @@ impl NandSkeleton {
         let cf0 = self.update.cf_0.as_ref();
         let cg0 = self.update.cg_0.as_ref();
         
-        if let Some(mut cf) = cf0.cloned() {
-            if let Some(meta) = cf.metadata.as_mut() {
-                meta.pairing_data = pairing_data;
-                meta.lockdown_value = ldv;
-                cf.sync_metadata();
-            }
+        if let Some(cf) = cf0.cloned() {
+            // Removed late metadata sync here to prevent corrupting CF ciphertext.
             let data = cf.serialize();
             logical_image[curr_update..curr_update+data.len()].copy_from_slice(&data);
             curr_update += data.len();
@@ -1025,6 +1200,8 @@ impl NandSkeleton {
     }
 
     pub fn assemble_logical(&mut self) -> Result<Vec<u8>, String> {
+        // Note: prepare_for_assembly() is called by the outer build() function BEFORE
+        // encrypt_chain runs. Do NOT call it again here — the data is already encrypted.
         let layout = &self.layout;
         let expected_size = self.total_blocks * layout.logical_pages_per_block() * 0x200;
         
@@ -1095,6 +1272,13 @@ impl NandSkeleton {
             forensic_cf_default
         };
 
+        // Enforce accurate profile (single vs split) based on actual CB presence before layout calc
+        if self.bootloaders.cb_b.is_some() {
+            if self.options.image_profile == "single" { self.options.image_profile = "split".to_string(); }
+        } else {
+            if self.options.image_profile == "split" { self.options.image_profile = "single".to_string(); }
+        }
+
         // NAND Header preparation
         let sb_type = SouthbridgeType::from(self.options.motherboard);
         let (fs_addr, smc_config_offset, phys_fs_block) = LayoutCalculator::calculate(sb_type, &self.options.image_profile, self.layout);
@@ -1128,74 +1312,48 @@ impl NandSkeleton {
             logical_image[kv_offset..kv_offset + self.extra.keyvault.len()].copy_from_slice(&self.extra.keyvault);
         }
 
-        // 3a. Update metadata synchronization (Pairing Data & LDV propagation)
-        let mut pairing_data = [0u8; 3];
-        let mut ldv = 0u8;
-        let mut metadata_found = false;
-
-        // Extract metadata from the active CB stage (latest in the chain)
-        if let Some(meta) = self.bootloaders.cb_b.as_ref().and_then(|b| b.metadata.as_ref()) {
-            pairing_data = meta.pairing_data;
-            ldv = meta.ldv;
-            metadata_found = true;
-        } else if let Some(meta) = self.bootloaders.cb.as_ref().and_then(|b| b.metadata.as_ref()) {
-            pairing_data = meta.pairing_data;
-            ldv = meta.ldv;
-            metadata_found = true;
-        }
-
-        if metadata_found {
-            info!("[builder] Syncing update metadata: Pairing {:02X?}, LDV {}", pairing_data, ldv);
-            
-            // Apply to CF0
-            if let Some(cf0) = self.update.cf_0.as_mut() {
-                if let Some(meta) = cf0.metadata.as_mut() {
-                    meta.pairing_data = pairing_data;
-                    meta.lockdown_value = ldv;
-                    cf0.sync_metadata();
-                }
-            }
-            // Apply to CF1
-            if let Some(cf1) = self.update.cf_1.as_mut() {
-                if let Some(meta) = cf1.metadata.as_mut() {
-                    meta.pairing_data = pairing_data;
-                    meta.lockdown_value = ldv;
-                    cf1.sync_metadata();
-                }
-            }
-        }
+        // 3a. Update metadata synchronization
+        // Removed: prepare_for_assembly already correctly syncs PD/LDV into CF before encryption.
+        // Syncing it here after encrypt_chain overwrote the CF RC4 ciphertext with plaintext metadata,
+        // causing J-Runner to decrypt garbage.
 
         let cf0 = self.update.cf_0.as_ref().map(|b| b.serialize());
         let cg0 = self.update.cg_0.as_ref().map(|b| b.serialize());
-        let cf1 = self.update.cf_1.as_ref().map(|b| b.serialize()).or_else(|| cf0.clone());
-        let cg1 = self.update.cg_1.as_ref().map(|b| b.serialize()).or_else(|| cg0.clone());
+        let cf1 = self.update.cf_1.as_ref().map(|b| b.serialize());
+        let cg1 = self.update.cg_1.as_ref().map(|b| b.serialize());
 
         if let Some(cf0d) = cf0 {
             let cf0_offset = target_cf_offset;
-            let cf1_offset = cf0_offset + 0x10000; // 64KB gap between CF_0 and CF_1
-            
             header.patch_slots.set(if cf1.is_some() { 2 } else { 1 });
 
             if cf0_offset + cf0d.len() > logical_image.len() {
                 return Err(format!("CF0 overflow at 0x{:X}: need 0x{:X} bytes", cf0_offset, cf0d.len()));
             }
             logical_image[cf0_offset..cf0_offset+cf0d.len()].copy_from_slice(&cf0d);
+            
+            let mut next_offset = cf0_offset + cf0d.len();
+
             if let Some(cg0d) = cg0 {
-                // 16-byte align CG after CF - parser advances by (size + 0xF) & !0xF between loaders
-                let cg0_offset = (cf0_offset + cf0d.len() + 0xF) & !0xF;
+                // 16-byte align CG after CF
+                let cg0_offset = (next_offset + 0xF) & !0xF;
                 if cg0_offset + cg0d.len() > logical_image.len() {
                     return Err(format!("CG0 overflow at 0x{:X}: need 0x{:X} bytes", cg0_offset, cg0d.len()));
                 }
                 logical_image[cg0_offset..cg0_offset+cg0d.len()].copy_from_slice(&cg0d);
+                next_offset = cg0_offset + cg0d.len();
             }
+
             if let Some(cf1d) = cf1 {
+                // Align CF1 to the next 64KB block after CG0
+                let cf1_offset = (next_offset + 0xFFFF) & !0xFFFF;
                 if cf1_offset + cf1d.len() > logical_image.len() {
                     return Err(format!("CF1 overflow at 0x{:X}: need 0x{:X} bytes", cf1_offset, cf1d.len()));
                 }
                 logical_image[cf1_offset..cf1_offset+cf1d.len()].copy_from_slice(&cf1d);
+                next_offset = cf1_offset + cf1d.len();
+
                 if let Some(cg1d) = cg1 {
-                    // 16-byte align CG after CF - parser advances by (size + 0xF) & !0xF between loaders
-                    let cg1_offset = (cf1_offset + cf1d.len() + 0xF) & !0xF;
+                    let cg1_offset = (next_offset + 0xF) & !0xF;
                     if cg1_offset + cg1d.len() > logical_image.len() {
                         return Err(format!("CG1 overflow at 0x{:X}: need 0x{:X} bytes", cg1_offset, cg1d.len()));
                     }
@@ -1433,28 +1591,74 @@ impl NandSkeleton {
         info!("[builder] Starting final image build (Profile: {}, Mode: {:?})...", skel.options.image_profile, skel.options.build_mode);
 
         // 0. Universal Metadata Synchronization
-        if let Some(pairing) = skel.options.jtag_pairing_2bl {
-            info!("[builder] Synchronizing JTAG 2BL pairing data...");
-            // Chain 0
-            if let Some(cb) = skel.bootloaders.cb.as_mut() {
+
+        // 0a. Pairing Data (PD) Sync
+        // Priority: JTAG override -> Input PD -> CB's current PD
+        let target_pd = if let Some(pairing) = skel.options.jtag_pairing_2bl {
+            info!("[builder] Using JTAG 2BL pairing override: {:02x?}", pairing);
+            Some(pairing)
+        } else {
+            skel.input_pd
+        };
+
+        if let Some(pd) = target_pd {
+            info!("[builder] Synchronizing Pairing Data: {:02x?}", pd);
+            
+            // Sync Chain 0 CB/CB_A
+            if let Some(cb) = skel.bootloaders.cb_a.as_mut().or(skel.bootloaders.cb.as_mut()) {
                 if let Some(meta) = cb.metadata.as_mut() {
-                    meta.pairing_data = pairing;
+                    meta.pairing_data = pd;
+                    // Also sync CB LDV from input image if available (Rule: Input image is source of truth)
+                    if let Some(ldv) = skel.input_ldv_cb {
+                        meta.lockdown_value = ldv;
+                    }
                     cb.recalculate_per_box_digest(&cpukey);
                 }
             }
-            if let Some(cba) = skel.bootloaders.cb_a.as_mut() {
-                if let Some(meta) = cba.metadata.as_mut() {
-                    meta.pairing_data = pairing;
-                    cba.recalculate_per_box_digest(&cpukey);
-                }
-            }
-            // Chain 1 (Rebooter)
+            
+            // Sync Chain 1 (Rebooter)
             if let Some(rebooter) = skel.rebooter.as_mut() {
                 if let Some(cb) = rebooter.cb.as_mut() {
                     if let Some(meta) = cb.metadata.as_mut() {
-                        meta.pairing_data = pairing;
+                        meta.pairing_data = pd;
+                        if let Some(ldv) = skel.input_ldv_cb {
+                            meta.lockdown_value = ldv;
+                        }
                         cb.recalculate_per_box_digest(&cpukey);
                     }
+                }
+            }
+
+            // Sync CF/CG Slots
+            if let Some(meta) = skel.update.cf_0.as_mut().and_then(|cf| cf.metadata.as_mut()) { meta.pairing_data = pd; }
+            if let Some(meta) = skel.update.cf_1.as_mut().and_then(|cf| cf.metadata.as_mut()) { meta.pairing_data = pd; }
+        }
+
+        // 0b. Lockdown Value (LDV) Sync
+        // Rule: For CF/CG 0/1, Choose the highest of the two (from input), and set both to it.
+        // Priority: skel.input_ldv_cf (Max from input NAND) -> Current Max of slots
+        let ldv0 = skel.update.cf_0.as_ref().and_then(|cf| cf.metadata.as_ref().map(|m| m.lockdown_value));
+        let ldv1 = skel.update.cf_1.as_ref().and_then(|cf| cf.metadata.as_ref().map(|m| m.lockdown_value));
+        let current_max = match (ldv0, ldv1) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            _ => None,
+        };
+
+        let target_cf_ldv = skel.input_ldv_cf.or(current_max);
+
+        if let Some(h) = target_cf_ldv {
+            if let Some(meta) = skel.update.cf_0.as_mut().and_then(|cf| cf.metadata.as_mut()) { 
+                if meta.lockdown_value != h {
+                    info!("[builder] Syncing CF_0 LDV to target: {}", h);
+                    meta.lockdown_value = h; 
+                }
+            }
+            if let Some(meta) = skel.update.cf_1.as_mut().and_then(|cf| cf.metadata.as_mut()) { 
+                if meta.lockdown_value != h {
+                    info!("[builder] Syncing CF_1 LDV to target: {}", h);
+                    meta.lockdown_value = h; 
                 }
             }
         }
@@ -1483,8 +1687,13 @@ impl NandSkeleton {
                 &mut smc, &cpukey
             )?;
         } else {
-            info!("[builder] Re-encrypting bootloader chain...");
-            encrypt_chain(
+        // prepare_for_assembly must run BEFORE encrypt_chain:
+        // it decrypts any freshly assigned bootloaders (from INI) and syncs input_pd/ldv into
+        // their metadata. encrypt_chain then re-encrypts the correctly patched plaintext.
+        skel.prepare_for_assembly();
+
+        info!("[builder] Re-encrypting bootloader chain...");
+        encrypt_chain(
                 skel.bootloaders.cb_a.as_mut().or(skel.bootloaders.cb.as_mut()).ok_or("Missing primary CB (CB or CB_A) for encryption")?,
                 skel.bootloaders.cb_x.as_mut(),
                 skel.bootloaders.cb_b.as_mut(),
