@@ -121,7 +121,7 @@ mod tests {
         let session = Session::new();
         let mut nand = NandSkeleton::new_blank(NandLayout::Sb);
 
-        // CB has ldv=7, CF has ldv=2 — they must NOT bleed into each other
+        // CB has ldv=7, CF has ldv=2 â€” they must NOT bleed into each other
         nand.bootloaders.cb_a = Some(test_cb([0x12, 0x34, 0x56], 7));
         nand.update.cf_0 = Some(test_cf([0xAA, 0xBB, 0xCC], 2));
 
@@ -138,7 +138,7 @@ mod tests {
         assert_eq!(cb_meta.lockdown_value, 7);
         assert_eq!(cb_meta.ldv, 7);
 
-        // CF keeps its own LDV — must NOT be overwritten by CB's value
+        // CF keeps its own LDV â€” must NOT be overwritten by CB's value
         assert_eq!(cf_meta.pairing_data, [0x12, 0x34, 0x56]);
         assert_eq!(cf_meta.lockdown_value, 2);
     }
@@ -167,28 +167,28 @@ impl InternalCommand {
     ///     0 - Build: always the final step
     fn priority_score(&self) -> u8 {
         match self {
-            // ── Key assignment (Must happen before ParseImage) ───────────
+            // -- Key assignment (Must happen before ParseImage) ------------
             Self::ParseKey { .. }     => 160,
             Self::ParseKeybin { .. }  => 160,
-            // ── Foundation ────────────────────────────────────────────────
+            // -- Foundation ------------------------------------------------
             Self::ParseImage { .. }   => 150,
             Self::CreateImage { .. }  => 150,
-            // ── Standalone ops (no active-NAND dependency) ────────────────
+            // -- Standalone ops (no active-NAND dependency) ----------------
             Self::ExtractStfs { .. }  => 110,
             Self::Update { .. }       => 110,
-            // ── Session admin (immediate, before queue processing) ────────
+            // -- Session admin (immediate, before queue processing) --------
             Self::SessionInit { .. }  => 100,
             Self::SessionList         => 100,
             Self::SessionDelete { .. }=> 100,
-            // ── Post-load mutations ────────────────────────────────────────
+            // -- Post-load mutations ----------------------------------------
             Self::ParseIni { .. }     => 100,
             Self::ParseFlashfs { .. } => 100,
             Self::ParsePatch { .. }   => 100,
-            // ── Inspection / decompression ─────────────────────────────────
+            // -- Inspection / decompression ---------------------------------
             Self::Decompress          => 99,
-            // ── FlashFS finalization ───────────────────────────────────────
+            // -- FlashFS finalization ---------------------------------------
             Self::FinalizeFlashfs     => 90,
-            // ── Extraction ────────────────────────────────────────────────
+            // -- Extraction ------------------------------------------------
             Self::Extract { .. }      => 89,
             Self::ExtractAll { .. }   => 88,
             //  Modification 
@@ -199,9 +199,9 @@ impl InternalCommand {
             Self::ApplyPatch { .. }   => 79,
             Self::ApplySmcSignature { .. } => 79,
             Self::Compress            => 78,
-            // ── SessionRun: drains queue; must follow all real work ───────
+            // -- SessionRun: drains queue; must follow all real work -------
             Self::SessionRun          => 50,
-            // ── Build: always last ────────────────────────────────────────
+            // -- Build: always last ----------------------------------------
             Self::Build { .. }        => 0,
             Self::SwapBootloader { .. } => 140,
             Self::ApplyOptions        => 80,
@@ -263,7 +263,7 @@ pub struct Session {
     /// Last error message for FFI reporting
     pub last_error: Option<String>,
 
-    // ── Build configuration (set via FFI setters, consumed by prepare_build) ──
+    // -- Build configuration (set via FFI setters, consumed by prepare_build) --
     pub build_type: Option<String>,
     pub console_type: Option<String>,
     pub ini_dir: Option<std::path::PathBuf>,
@@ -345,7 +345,7 @@ impl Session {
     }
 
     fn sync_per_box_settings(nand: &mut NandSkeleton, pairing: [u8; 3], cb_ldv: u8, cf_ldv: u8) {
-        // CB side — uses cb_ldv only
+        // CB side â€” uses cb_ldv only
         if let Some(ref mut cb) = nand.bootloaders.cb {
             if let Some(ref mut meta) = cb.metadata {
                 meta.pairing_data = pairing;
@@ -373,7 +373,7 @@ impl Session {
             }
         }
 
-        // CF side — uses cf_ldv only, never touches CB values
+        // CF side â€” uses cf_ldv only, never touches CB values
         if let Some(ref mut cf) = nand.update.cf_0 {
             if let Some(ref mut meta) = cf.metadata {
                 meta.pairing_data = pairing;
@@ -533,7 +533,7 @@ impl Session {
         self.enqueue(InternalCommand::SessionRun);
     }
 
-    // ── Build configuration setters ─────────────────────────────────────────
+    // -- Build configuration setters -------------------------------------------
 
     pub fn set_build_type(&mut self, build_type: String) {
         self.build_type = Some(build_type);
@@ -803,7 +803,7 @@ impl Session {
         // Enqueue FinalizeFlashfs early (priority ordering handles sequencing)
         self.enqueue(InternalCommand::FinalizeFlashfs);
 
-        // Build the search path list: ini → ini/flashfs → ini/data → common
+        // Build the search path list: ini â†’ ini/flashfs â†’ ini/data â†’ common
         let ini_flashfs = ini_dir.join("flashfs");
         let ini_data    = ini_dir.join("data");
         let mut search_dirs: Vec<PathBuf> = vec![ini_dir.clone()];
