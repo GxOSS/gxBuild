@@ -8,10 +8,18 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::path::PathBuf;
+use crate::core::session::{Session, InternalCommand};
 use std::sync::{Arc, Mutex};
 use crate::core::interface::gxscript::GxScriptEngine;
-use crate::core::session::{Session, InternalCommand};
 use serde::Serialize;
+
+pub type GxLogCallback = extern "C" fn(level: i32, message: *const c_char);
+pub(crate) static mut LOG_CALLBACK: Option<GxLogCallback> = None;
+
+#[no_mangle]
+pub extern "C" fn gx_set_log_callback(callback: GxLogCallback) {
+    unsafe { LOG_CALLBACK = Some(callback); }
+}
 
 
 /// Opaque wrapper for the Session struct
@@ -370,6 +378,7 @@ pub extern "C" fn gx_session_run(session: *mut GxSession) -> i32 {
     let session = unsafe { &mut *session };
     
     let res = session.inner.lock().unwrap().run();
+    crate::core::logger::flush_logger();
     if let Err(e) = res {
         set_error(session, &e);
         return 1;
@@ -454,6 +463,25 @@ pub extern "C" fn gx_session_set_option(
     let k = unsafe { CStr::from_ptr(key) }.to_string_lossy();
     let v = unsafe { CStr::from_ptr(value) }.to_string_lossy();
     session.inner.lock().unwrap().set_option(&k, &v);
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn gx_session_load_ini(
+    session: *mut GxSession,
+    content: *const c_char,
+    target: *const c_char,
+) -> i32 {
+    if session.is_null() || content.is_null() || target.is_null() { return -1; }
+    let session = unsafe { &mut *session };
+    let c = unsafe { CStr::from_ptr(content) }.to_string_lossy();
+    let t = unsafe { CStr::from_ptr(target) }.to_string_lossy();
+    
+    let res = session.inner.lock().unwrap().load_ini(&c, &t);
+    if let Err(e) = res {
+        set_error(session, &e);
+        return 1;
+    }
     0
 }
 
@@ -603,10 +631,16 @@ struct NandMetadata {
     cg_0: u16,
     cf_1: u16,
     cg_1: u16,
+    cb_ldv: u8,
+    cb_pd: String,
+    cf_0_ldv: u8,
+    cf_0_pd: String,
+    cf_1_ldv: u8,
+    cf_1_pd: String,
     smc_ver: String,
     smc_type: String,
     smc_ldv: u8,
-    smc_pd: u8,
+    smc_pd: String,
     dvd_key: String,
     serial: String,
     console_id: String,
@@ -644,10 +678,21 @@ pub extern "C" fn gx_session_get_info(session: *mut GxSession) -> *const c_char 
             cg_0: nand.update.cg_0.as_ref().map(|bl| bl.header.version.get()).unwrap_or(0),
             cf_1: nand.update.cf_1.as_ref().map(|bl| bl.header.version.get()).unwrap_or(0),
             cg_1: nand.update.cg_1.as_ref().map(|bl| bl.header.version.get()).unwrap_or(0),
-            smc_ver: if !nand.extra.smc.is_empty() { format!("{}.{}", nand.extra.smc[0x101], nand.extra.smc[0x102]) } else { "0.0".to_string() },
-            smc_type: if !nand.extra.smc.is_empty() { format!("{:X}", (nand.extra.smc[0x100] >> 4) & 0xF) } else { "0".to_string() },
-            smc_ldv: if !nand.extra.smc.is_empty() { nand.extra.smc[0x103] } else { 0 },
-            smc_pd: if !nand.extra.smc.is_empty() { nand.extra.smc[0x104] } else { 0 },
+            // J-Runner reads LDV/PD from CB_B (split) or CB (single). CB_A never holds per-box data.
+            cb_ldv: nand.bootloaders.cb_b.as_ref().and_then(|bl| bl.metadata.as_ref().map(|m| m.ldv))
+                .or_else(|| nand.bootloaders.cb.as_ref().and_then(|bl| bl.metadata.as_ref().map(|m| m.ldv)))
+                .unwrap_or(0),
+            cb_pd: nand.bootloaders.cb_b.as_ref().and_then(|bl| bl.metadata.as_ref().map(|m| format!("0x{}", hex::encode_upper(&m.pairing_data))))
+                .or_else(|| nand.bootloaders.cb.as_ref().and_then(|bl| bl.metadata.as_ref().map(|m| format!("0x{}", hex::encode_upper(&m.pairing_data)))))
+                .unwrap_or_else(|| "".to_string()),
+            cf_0_ldv: nand.update.cf_0.as_ref().and_then(|cf| cf.metadata.as_ref().map(|m| m.lockdown_value)).unwrap_or(0),
+            cf_0_pd: nand.update.cf_0.as_ref().and_then(|cf| cf.metadata.as_ref().map(|m| format!("0x{}", hex::encode_upper(&m.pairing_data)))).unwrap_or_else(|| "".to_string()),
+            cf_1_ldv: nand.update.cf_1.as_ref().and_then(|cf| cf.metadata.as_ref().map(|m| m.lockdown_value)).unwrap_or(0),
+            cf_1_pd: nand.update.cf_1.as_ref().and_then(|cf| cf.metadata.as_ref().map(|m| format!("0x{}", hex::encode_upper(&m.pairing_data)))).unwrap_or_else(|| "".to_string()),
+            smc_ver: if let Some(m) = &nand.extra.smc_metadata { format!("{}.{:02}", m.major_version, m.minor_version) } else if !nand.extra.smc.is_empty() { format!("{}.{:02}", nand.extra.smc[0x101], nand.extra.smc[0x102]) } else { "0.00".to_string() },
+            smc_type: format!("{:?}", nand.options.motherboard),
+            smc_ldv: if let Some(m) = &nand.extra.smc_metadata { m.lockdown_value } else if !nand.extra.smc.is_empty() { nand.extra.smc[0x103] } else { 0 },
+            smc_pd: if let Some(m) = &nand.extra.smc_metadata { format!("0x{}", hex::encode_upper(&m.pairing_data)) } else if nand.extra.smc.len() >= 0x107 { format!("0x{}", hex::encode_upper(&nand.extra.smc[0x104..0x107])) } else { "0x000000".to_string() },
             dvd_key: nand.kv.as_ref().and_then(|kv| kv.metadata.as_ref()).map(|m| hex::encode(m.dvd_key)).unwrap_or_default(),
             serial: nand.kv.as_ref().and_then(|kv| kv.metadata.as_ref()).map(|m| m.serial.clone()).unwrap_or_default(),
             console_id: nand.kv.as_ref().and_then(|kv| kv.metadata.as_ref()).map(|m| hex::encode(m.console_id)).unwrap_or_default(),

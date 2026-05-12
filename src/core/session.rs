@@ -268,6 +268,7 @@ pub struct Session {
     pub ini_ext: Option<String>,
     pub bl_ext: Option<String>,
     pub addons: Vec<String>,
+    pub build_ini_loaded: bool,
 }
 
 impl Session {
@@ -409,6 +410,7 @@ impl Session {
             ini_ext: None,
             bl_ext: None,
             addons: Vec::new(),
+            build_ini_loaded: false,
         }
     }
 
@@ -636,6 +638,59 @@ impl Session {
         }
     }
 
+    /// Parses a build INI content string and discovers assets immediately.
+    pub fn load_ini(&mut self, content: &str, target: &str) -> Result<(), String> {
+        let is_verbose = self.options.verbose.unwrap_or(false);
+        let _ = crate::core::logger::init_logger("build", is_verbose);
+
+        info!("[session] Loading build INI from string for target: {}", target);
+        self.build_ini_loaded = true;
+        
+        let ini_dir = self.ini_dir.clone().unwrap_or_else(|| PathBuf::from("."));
+        let common_dir = self.common_dir.clone().unwrap_or_else(|| ini_dir.join("../common"));
+        let data_dir = self.data_dir.clone().unwrap_or_else(|| PathBuf::from("data"));
+
+        // Build hint for build type detection (usually _<type>.ini)
+        let hint = self.build_type.as_ref().map(|t| format!("_{}.ini", t));
+
+        match crate::core::data::xeini::parse_xe_ini_str(content, target, hint.as_deref()) {
+            Ok(ini) => {
+                match IniSearch::new(ini.clone(), &ini_dir, &common_dir, &data_dir, &self.active_nand, self.options.gxunsafe) {
+                    Ok(search) => {
+                        self.bootloader_assets.extend(search.result.bootloader_assets);
+                        self.security_assets.extend(search.result.security_assets);
+                        self.flashfs_assets.extend(search.result.flashfs_assets);
+
+                        let nand = self.active_nand.take().unwrap_or_else(|| {
+                            let console = self.console_type.clone().unwrap_or("Jasper".to_string());
+                            let layout = match console.to_lowercase().as_str() {
+                                "trinity" | "corona" | "winchester" => crate::core::data::blocks::NandLayout::Sb,
+                                _ => crate::core::data::blocks::NandLayout::Sb,
+                            };
+                            crate::builder::builder::NandSkeleton::new_blank(layout)
+                        });
+
+                        let pending = crate::core::data::xeini::PendingAssets {
+                            bootloaders: &self.bootloader_assets,
+                            security: &self.security_assets,
+                        };
+                        match crate::core::data::xeini::apply_xe_ini(nand, ini, pending) {
+                            Ok(updated_nand) => {
+                                self.active_nand = Some(updated_nand);
+                                self.build_ini_loaded = true;
+                                info!("[session] INI assets applied to NAND skeleton.");
+                            }
+                            Err(e) => return Err(format!("Failed to apply INI data: {}", e)),
+                        }
+                        Ok(())
+                    }
+                    Err(e) => Err(format!("INI discovery failed: {}", e)),
+                }
+            }
+            Err(e) => Err(format!("Failed to parse INI string: {}", e)),
+        }
+    }
+
     /// Loads an options.ini file from the specified path and merges it into the session options.
     pub fn load_options_ini_file(&mut self, path: impl AsRef<Path>) -> Result<(), String> {
         let content = fs::read_to_string(path).map_err(|e| format!("Failed to read options INI file: {}", e))?;
@@ -654,6 +709,7 @@ impl Session {
         self.addons.clear();
         self.options = crate::core::data::xeini::OptionsIni::new();
         self.last_error = None;
+        self.build_ini_loaded = false;
     }
 
     /// Resolves all build configuration set via the setter methods, discovers
@@ -714,13 +770,15 @@ impl Session {
 
         // Pre-parse INI to know which asset filenames we need
         let mut target_filenames: HashSet<String> = HashSet::new();
-        match crate::core::data::xeini::parse_xe_ini(&ini_path, &console_section) {
-            Ok(ini) => {
-                for e in ini.main    { target_filenames.insert(e.filename.to_lowercase()); }
-                for e in ini.security { target_filenames.insert(e.filename.to_lowercase()); }
-                for e in ini.flashfs  { target_filenames.insert(e.filename.to_lowercase()); }
+        if !self.build_ini_loaded {
+            match crate::core::data::xeini::parse_xe_ini(&ini_path, &console_section) {
+                Ok(ini) => {
+                    for e in ini.main    { target_filenames.insert(e.filename.to_lowercase()); }
+                    for e in ini.security { target_filenames.insert(e.filename.to_lowercase()); }
+                    for e in ini.flashfs  { target_filenames.insert(e.filename.to_lowercase()); }
+                }
+                Err(_) => return Err(format!("prepare_build: cannot read INI at {:?}", ini_path)),
             }
-            Err(_) => return Err(format!("prepare_build: cannot read INI at {:?}", ini_path)),
         }
 
         info!("[session] prepare_build | type={} console={} section={}", build_type, console, console_section);
@@ -771,32 +829,36 @@ impl Session {
             }
         }
 
-        // NAND image (data dir)
-        let nand_candidates = [
-            data_dir.join("nanddump.bin"),
-            data_dir.join("nanddump1.bin"),
-            data_dir.join("nanddump2.bin"),
-            data_dir.join("updflash.bin"),
-        ];
-        let mut nand_found = false;
-        for p in &nand_candidates {
-            if p.exists() {
-                self.enqueue(InternalCommand::ParseImage { path: p.clone(), key: None });
-                nand_found = true;
-                break;
+        // 5. NAND image (data dir)
+        let nand_needed = self.active_nand.is_none();
+        
+        if nand_needed {
+            let nand_candidates = [
+                data_dir.join("nanddump.bin"),
+                data_dir.join("nanddump1.bin"),
+                data_dir.join("nanddump2.bin"),
+                data_dir.join("updflash.bin"),
+            ];
+            let mut nand_found = false;
+            for p in &nand_candidates {
+                if p.exists() {
+                    self.enqueue(InternalCommand::ParseImage { path: p.clone(), key: None });
+                    nand_found = true;
+                    break;
+                }
             }
-        }
-        if !nand_found {
-            // No source NAND: create a blank image based on console layout
-            let layout = match console.as_str() {
-                "xenon"                        => crate::core::data::blocks::NandLayout::Xsb,
-                "jasper256" | "jasper512" |
-                "jasperbb"  | "jasperbigffs" |
-                "trinitybigffs"                => crate::core::data::blocks::NandLayout::Bb,
-                "corona4g"  | "winchester"     => crate::core::data::blocks::NandLayout::Emmc,
-                _                              => crate::core::data::blocks::NandLayout::Sb,
-            };
-            self.enqueue(InternalCommand::CreateImage { layout });
+            if !nand_found {
+                // No source NAND: create a blank image based on console layout
+                let layout = match console.as_str() {
+                    "xenon"                        => crate::core::data::blocks::NandLayout::Xsb,
+                    "jasper256" | "jasper512" |
+                    "jasperbb"  | "jasperbigffs" |
+                    "trinitybigffs"                => crate::core::data::blocks::NandLayout::Bb,
+                    "corona4g"  | "winchester"     => crate::core::data::blocks::NandLayout::Emmc,
+                    _                              => crate::core::data::blocks::NandLayout::Sb,
+                };
+                self.enqueue(InternalCommand::CreateImage { layout });
+            }
         }
 
         // CPU key (cpukey.txt / cpukey.bin in data dir)
@@ -831,8 +893,10 @@ impl Session {
             }
         }
 
-        // Enqueue INI parsing
-        self.parse_ini(&ini_path, console_section, &ini_dir, &common_dir, &data_dir);
+        // Enqueue INI parsing (Only if not already loaded via string)
+        if !self.build_ini_loaded {
+            self.parse_ini(&ini_path, console_section, &ini_dir, &common_dir, &data_dir);
+        }
 
         // Addon patches
         let addons = self.addons.clone();
@@ -1253,6 +1317,10 @@ impl Session {
                             _ => crate::core::data::blocks::SpareMetaType::MetaType1,
                         };
 
+                        if let Some(parent) = output.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+
                         match nand.build(cpukey) {
                             Ok(clean_bytes) => {
                                 let mut fs_meta = std::collections::HashMap::new();
@@ -1302,12 +1370,13 @@ impl Session {
                                 let final_size = finalized_bytes.len();
                                 if let Err(e) = std::fs::write(&output, finalized_bytes) {
                                     error!("[session] Failed to write build output to '{}': {}", output.display(), e);
+                                    return Err(format!("Failed to write output: {}", e));
                                 } else {
                                     info!("[session] Build complete: '{}' written ({} bytes, layout {:?})",
                                         output.display(), final_size, layout);
                                 }
                             }
-                            Err(e) => error!("[session] Build failed: {}", e),
+                            Err(e) => return Err(format!("Build failed: {}", e)),
                         }
                     } else {
                         error!("[session] No active NAND loaded to build!");

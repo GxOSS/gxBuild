@@ -39,6 +39,7 @@ pub struct BootloaderCd {
     pub header: BootloaderHeader,
     pub data: Vec<u8>,
     pub metadata: Option<CdMetadata>,
+    pub derived_key: Option<[u8; 16]>,
 }
 
 impl BootloaderCd {
@@ -49,6 +50,7 @@ impl BootloaderCd {
             header: header.clone(),
             data: payload.to_vec(),
             metadata: None,
+            derived_key: None,
         };
         cd.populate_metadata();
         Ok(cd)
@@ -162,11 +164,22 @@ impl BootloaderCd {
                 }
             }
 
-            self.data[0..16].copy_from_slice(&final_key);
+            self.derived_key = Some(final_key);
             if let Ok(mut rc4) = Rc4::new(&final_key) {
                 // Encryption starts at signature, which is 0x10 rel into payload (absolute 0x20)
                 let _ = rc4.crypt(&mut self.data[0x10..payload_size]);
             }
+        }
+    }
+
+    pub fn derived_key(&self) -> [u8; 16] {
+        if let Some(key) = self.derived_key {
+            return key;
+        }
+        if self.data.len() >= 16 {
+            self.data[0..16].try_into().unwrap_or([0u8; 16])
+        } else {
+            [0u8; 16]
         }
     }
 

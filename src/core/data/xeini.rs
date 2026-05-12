@@ -332,10 +332,17 @@ pub fn parse_xe_ini(
     target_section: &str,
 ) -> Result<XeBuildIni, IniError> {
     let ini_path = ini_path.as_ref();
-    info!("[ini] Parsing section '{}' from INI: {:?}", target_section, ini_path);
-
     let content = fs::read_to_string(ini_path).map_err(|e| IniError::IoError(e))?;
+    let filename_hint = ini_path.file_name().and_then(|s| s.to_str());
     
+    parse_xe_ini_str(&content, target_section, filename_hint)
+}
+
+pub fn parse_xe_ini_str(
+    content: &str,
+    target_section: &str,
+    filename_hint: Option<&str>,
+) -> Result<XeBuildIni, IniError> {
     let mut sections: HashMap<String, Vec<Vec<String>>> = HashMap::new();
     let mut current_section = String::new();
 
@@ -362,10 +369,10 @@ pub fn parse_xe_ini(
         format!("{}bl", target_section)
     };
 
-    // Determine the build type from filename
-    let mut build_type = ini_path.file_stem()
-        .and_then(|s| s.to_str())
+    // Determine the build type from filename hint or default
+    let mut build_type = filename_hint
         .map(|s| s.trim_start_matches('_').to_lowercase())
+        .map(|s| s.replace(".ini", ""))
         .unwrap_or_else(|| "retail".to_string());
     
     if build_type == "glitch" {

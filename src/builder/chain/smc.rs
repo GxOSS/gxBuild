@@ -31,6 +31,8 @@ pub struct SmcMetadata {
     pub type_byte: u8,
     pub major_version: u8,
     pub minor_version: u8,
+    pub lockdown_value: u8,
+    pub pairing_data: [u8; 3],
 }
 
 #[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
@@ -68,16 +70,24 @@ impl Smc {
         let minor = self.data[0x102];
         let identified_type = self.identify_type();
 
+        let ldv = self.data[0x103];
+        let mut pd = [0u8; 3];
+        if self.data.len() >= 0x107 {
+            pd.copy_from_slice(&self.data[0x104..0x107]);
+        }
+
         self.metadata = Some(SmcMetadata {
             smc_type: identified_type,
             console_type: (type_byte >> 4) & 0xF,
             type_byte,
             major_version: major,
             minor_version: minor,
+            lockdown_value: ldv,
+            pairing_data: pd,
         });
 
         if let Some(meta) = &self.metadata {
-            info!("[smc] Metadata: [{:?}] Type 0x{:02X}, Ver {}.{}", meta.smc_type, meta.type_byte, meta.major_version, meta.minor_version);
+            info!("[smc] Metadata: [{:?}] Type 0x{:02X}, Ver {}.{:02}", meta.smc_type, meta.type_byte, meta.major_version, meta.minor_version);
         }
     }
 
@@ -189,13 +199,28 @@ impl RawSmc {
         // Use Smc's structural logic for identification if possible
         let identified_type = self.identify_type();
 
+        let ldv = self.data[0x103];
+        let mut pd = [0u8; 3];
+        if self.data.len() >= 0x107 {
+            pd.copy_from_slice(&self.data[0x104..0x107]);
+        }
+
         self.metadata = Some(SmcMetadata {
             smc_type: identified_type,
             console_type: (type_byte >> 4) & 0xF,
             type_byte,
             major_version: major,
             minor_version: minor,
+            lockdown_value: ldv,
+            pairing_data: pd,
         });
+
+        if major != 0 && major != 0xFF {
+            info!("[smc] Identified Version: {}.{:02} (Type: 0x{:02X}, Offset: 0x101)", major, minor, type_byte);
+        } else {
+            // For debugging garbage versions
+            info!("[smc] Raw Version Bytes at 0x100: {:02X} {:02X} {:02X}", type_byte, major, minor);
+        }
     }
 
     pub fn identify_type(&self) -> SmcType {
@@ -251,30 +276,26 @@ impl RawSmc {
     }
 
     pub fn decrypt(&mut self) {
+        // RGH3 scrambling is applied to the ciphertext in the NAND.
+        // We must unscramble BEFORE decryption to keep the rolling key state in sync.
+        self.unscramble();
         smc_crypt(&mut self.data, false);
-        
-        let mut is_retail = false;
-        if let Some(ref meta) = self.metadata {
-            if meta.smc_type == SmcType::Retail { is_retail = true; }
-        }
-        
-        if !is_retail {
-            self.unscramble();
-        }
-        
         self.populate_metadata();
     }
 
     pub fn encrypt(&mut self) {
         let mut is_retail = false;
+        self.populate_metadata();
         if let Some(ref meta) = self.metadata {
             if meta.smc_type == SmcType::Retail { is_retail = true; }
         }
+
+        smc_crypt(&mut self.data, true);
         
+        // RGH3 scrambling is applied to the ciphertext.
         if !is_retail {
             self.scramble();
         }
-        smc_crypt(&mut self.data, true);
     }
 
     pub fn unscramble(&mut self) {
