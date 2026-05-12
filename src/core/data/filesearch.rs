@@ -2,6 +2,7 @@
     filesearch.rs - xeBuild style file searching engine
 
     Created in 2026 by Exposure / Zach for gxBuild.
+    Modified in 2026 by M4ttW00d / Matt 
     Licensed under GPLv2 (inherited from xenon-bltool).
 */
 use std::collections::HashMap;
