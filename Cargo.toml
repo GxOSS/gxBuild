@@ -24,9 +24,14 @@ rhai = "1.19.0"
 shlex = "1.3.0"
 hex = "0.4.3"
 
+interoptopus = "0.14"
+interoptopus_backend_c = "0.14"
+interoptopus_backend_csharp = "0.14"
+
 [features]
-default = ["cli", "tui"]
+default = ["cli", "ffi", "tui"]
 cli = ["dep:clap"]
+ffi = []
 tui = ["dep:rustyline"]
 pygg = []
 
