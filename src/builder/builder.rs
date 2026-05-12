@@ -1855,6 +1855,7 @@ mod tests {
         skeleton.bootloaders.cd = Some(crate::builder::chain::cd::BootloaderCd {
             header: bl_header,
             data: large_cd,
+            derived_key: None,
             metadata: None,
         });
 
