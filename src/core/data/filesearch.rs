@@ -13,8 +13,6 @@ use crate::core::data::xeini::{XeBuildIni, IniError};
 use log::{info, warn, error};
 
 
-// Search for files listed in INI
-
 fn resolve_robust(base: &Path, cand: &str) -> PathBuf {
     let mut p = base.to_path_buf();
     for component in cand.split(['/', '\\']) {

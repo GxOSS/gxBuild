@@ -62,9 +62,7 @@ pub struct BootloaderCb {
 }
 
 impl BootloaderCb {
-    /// Construct a CB bootloader from raw binary data (full blob including header).
-    /// This matches xenon-bltool's pattern of working directly with raw byte buffers.
-    /// The input should be the complete CB binary as found in a NAND image or bootloader file.
+    /// Constructs CB bootloader from raw binary.
     pub fn new(bytes: &[u8]) -> Self {
         // Parse header from the beginning of the data
         let (header, payload) = match BootloaderHeader::read_from_prefix(bytes) {

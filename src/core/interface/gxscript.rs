@@ -62,14 +62,12 @@ impl GxScriptEngine {
         }
     }
 
-    /// Run a script file
     pub fn run_file(&mut self, path: &str) -> Result<(), String> {
         info!("[script] Running script: {}", path);
         self.engine.run_file_with_scope(&mut self.scope, path.into())
             .map_err(|e| format!("Script error: {}", e))
     }
 
-    /// Start an interactive REPL
     pub fn repl(&mut self) {
         let mut rl = DefaultEditor::new().expect("Failed to initialize terminal editor");
         println!("gxBuild Scripting Shell (Rhai Engine)");

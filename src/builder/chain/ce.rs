@@ -270,7 +270,6 @@ impl BootloaderCe {
         Ok(())
     }
 
-    /// Split Decompressed CE into Kernel and Hypervisor
     pub fn split_into_stages(&self) -> Result<(), String> {
         // TODO: Implement
         Ok(())

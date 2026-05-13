@@ -263,7 +263,6 @@ impl Keyvault {
         Ok(())
     }
 
-    /// Provides a view of the record header at the start of the KV.
     pub fn get_record(&self) -> Result<KeyvaultRecord, String> {
         KeyvaultRecord::read_from_prefix(&self.data)
             .map(|(r, _)| r)

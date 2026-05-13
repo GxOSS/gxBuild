@@ -15,8 +15,7 @@ pub struct Signature {
 }
 
 impl Signature {
-    /// Creates a new Signature from hex strings. 
-    /// Use "??" or ".." for wildcards.
+    /// Creates Signature from hex strings.
     pub fn from_hex(name: Option<&str>, pattern_hex: &str, replacement_hex: &str) -> Result<Self, String> {
         let pattern = Self::parse_hex(pattern_hex)?;
         let replacement = Self::parse_hex(replacement_hex)?;

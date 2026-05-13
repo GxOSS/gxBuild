@@ -185,7 +185,6 @@ pub struct QueuedCommand {
 }
 
 impl Ord for QueuedCommand {
-    // Compare priority score
     fn cmp(&self, other: &Self) -> Ordering {
         let p_cmp = self.command.priority_score().cmp(&other.command.priority_score());
         if p_cmp != Ordering::Equal {
@@ -240,12 +239,10 @@ pub struct Session {
 }
 
 impl Session {
-    // fallback pairing if nothing usable comes from the nand
     fn fallback_pairing_data() -> [u8; 3] {
         [0, 0, 1]
     }
 
-    // fallback ldv if the nand and options do not provide one
     fn fallback_lockdown_value() -> u8 {
         1
     }
@@ -602,7 +599,6 @@ impl Session {
         }
     }
 
-    /// Build ini
     pub fn load_ini(&mut self, content: &str, target: &str) -> Result<(), String> {
         let is_verbose = self.options.verbose.unwrap_or(false);
         let _ = crate::core::logger::init_logger("build", is_verbose);
@@ -660,8 +656,7 @@ impl Session {
         self.load_options_ini(&content)
     }
 
-    /// Resets the command queue and build config for a fresh build,
-    /// while keeping the active NAND and CPU key in place.
+    /// Resets queue and config for fresh build.
     pub fn reset_build(&mut self) {
         self.queue.clear();
         self.next_seq_id = 0;
@@ -675,9 +670,7 @@ impl Session {
         self.build_ini_loaded = false;
     }
 
-    /// Resolves all build configuration set via the setter methods, discovers
-    /// assets, and enqueues everything ready for `run()`. This is the FFI-facing
-    /// equivalent of `handle_build()` in `cli.rs`.
+    /// Resolves build configuration and enqueues assets.
     pub fn prepare_build(&mut self) -> Result<(), String> {
         use std::collections::HashSet;
 
@@ -887,8 +880,7 @@ impl Session {
         Ok(())
     }
 
-    /// Pulls hardware/image defaults from the active NAND into the session options.
-    /// Only populates options that are currently None.
+    /// Pulls defaults from NAND into session options.
     pub fn extract_options_from_nand(&mut self) {
         if let Some(nand) = &mut self.active_nand {
             info!("[session] Extracting hardware defaults from active NAND image...");
@@ -1135,9 +1127,7 @@ impl Session {
         }
     }
 
-    /// Execute a specific queued command by its sequence_id, then remove it from the queue.
-    /// Returns `Ok(true)` if found and executed successfully, `Ok(false)` if not found,
-    /// or `Err` if the command was found but failed during execution.
+    /// Execute a command by ID and remove it.
     pub fn session_run_once(&mut self, id: usize) -> Result<bool, String> {
         let mut remaining = Vec::new();
         let mut result: Result<bool, String> = Ok(false);

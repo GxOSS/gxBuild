@@ -11,12 +11,7 @@ use crate::core::images::blocks::*;
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use log::{info, error};
 
-/// Calculates the base block offset for MetaType2 (Big-Block) NANDs when reading FlashFS file data.
-/// Based on x360Utils NANDFileSystem.GetBaseBlockForMeta2():
-///   baseBlock = (0x1E0 - FsPageCount - (FsSize0 << 2)) * 8
-///
-/// This offset must be added to each block number in the chain when extracting file data
-/// from big-block NAND images.
+/// Calculates the base block offset for MetaType2 NANDs.
 pub fn get_fs_base_block_for_meta2(
     image: &[u8],
     layout: &NandLayout,
@@ -31,13 +26,6 @@ pub fn get_fs_base_block_for_meta2(
     let spare = &image[spare_offset..spare_offset + 16];
     let parsed = FsSpareData::parse(spare, layout);
 
-    // reserved = 0x1E0 - FsPageCount - (FsSize0 << 2)
-    // Note: FsSize for MetaType2 has FsSize0 at byte [8], FsSize1 at byte [7]
-    // The size is (FsSize0 << 8) | FsSize1, but we need FsSize0 << 2
-    // x360Utils: reserved -= meta.Meta2.FsSize0 << 2
-    // FsSize0 = spare[8] = the high byte of fs_size word = fs_size >> 8
-    // (fs_size >> 8) << 2 is NOT the same as fs_size >> 6 when the low byte of fs_size is non-zero.
-    // Example: fs_size=0x01C0 -> (>>8)<<2 = 4, but >>6 = 7 (wrong).
     let reserved = 0x1E0u32
         .saturating_sub(parsed.fs_page_count as u32)
         .saturating_sub(((parsed.fs_size >> 8) as u32) << 2);
@@ -75,16 +63,6 @@ pub struct FsSpareData {
 
 impl FsSpareData {
     /// Parses spare metadata from a 16-byte spare area.
-    /// Based on x360Utils NANDSpare.MetaData with correct byte offsets per MetaType:
-    ///
-    /// | Field       | MetaType0 (Pre-Jasper) | MetaType1 (Jasper/Trinity/Corona) | MetaType2 (Big-Block) |
-    /// |-------------|----------------------|----------------------------------|----------------------|
-    /// | BlockID     | [1]&0xF<<8 \| [0]    | [2]&0xF<<8 \| [1]                | [2]&0xF<<8 \| [1]    |
-    /// | BadBlock    | [5]                  | [5]                              | [0]                  |
-    /// | FsSequence  | [2]\|[3]<<8\|[4]<<16 | [0]\|[3]<<8\|[4]<<16             | [5]\|[4]<<8\|[3]<<16 |
-    /// | FsSize      | [8]<<8 \| [7]        | [8]<<8 \| [7]                    | [8]<<8 \| [7]        |
-    /// | FsPageCount | [9]                  | [9]                              | [9] * 4              |
-    /// | FsBlockType | [12] & 0x3F          | [12] & 0x3F                      | [12] & 0x3F          |
     pub fn parse(data: &[u8], layout: &NandLayout) -> Self {
         if data.len() < 16 {
             return FsSpareData { block_id: 0, fs_sequence: 0, fs_size: 0, fs_page_count: 0, fs_block_type: 0, bad_block: false };
@@ -100,7 +78,6 @@ impl FsSpareData {
 
         match meta_type {
             crate::core::images::blocks::SpareMetaType::MetaType0 => {
-                // Pre-Jasper: BlockID at [0..1], FsSequence at [2..4], BadBlock at [5]
                 let block_id = u16::from_le_bytes([data[0], data[1] & 0xF]);
                 let fs_sequence = (data[2] as u32)
                     | ((data[3] as u32) << 8)
@@ -112,7 +89,6 @@ impl FsSpareData {
                 FsSpareData { block_id, fs_sequence, fs_size, fs_page_count, fs_block_type, bad_block }
             }
             crate::core::images::blocks::SpareMetaType::MetaType1 => {
-                // Jasper/Trinity/Corona: BlockID at [1..2], FsSequence at [0,3..4], BadBlock at [5]
                 let block_id = u16::from_le_bytes([data[1], data[2] & 0xF]);
                 let fs_sequence = (data[0] as u32)
                     | ((data[3] as u32) << 8)
@@ -124,14 +100,13 @@ impl FsSpareData {
                 FsSpareData { block_id, fs_sequence, fs_size, fs_page_count, fs_block_type, bad_block }
             }
             crate::core::images::blocks::SpareMetaType::MetaType2 => {
-                // Big-Block: BlockID at [1..2], FsSequence at [3..5], BadBlock at [0]
                 let block_id = u16::from_le_bytes([data[1], data[2] & 0xF]);
                 let fs_sequence = (data[5] as u32)
                     | ((data[4] as u32) << 8)
                     | ((data[3] as u32) << 16);
                 let bad_block = data[0] != 0xFF;
                 let fs_size = u16::from_be_bytes([data[8], data[7]]);
-                let fs_page_count = data[9] * 4; // Big-block: page count multiplied by 4
+                let fs_page_count = data[9] * 4;
                 let fs_block_type = data[12] & 0x3F;
                 FsSpareData { block_id, fs_sequence, fs_size, fs_page_count, fs_block_type, bad_block }
             }
@@ -162,9 +137,6 @@ impl FileSystemEntry {
         let mut cursor = Cursor::new(chunk);
         let mut name_buf = [0u8; 0x16];
         let _ = cursor.read_exact(&mut name_buf);
-        // Check the raw first byte before any lossy UTF-8 conversion.
-        // Slicing the lossy string after conversion is fragile if 0x05 was substituted by U+FFFD (3 bytes).
-        // Matches RGBuild: if (FileName[0] == 0x05) { FileName = "_" + ...; Deleted = true; }
         let first_byte = name_buf[0];
         let name = if first_byte == 0x05 {
             self.deleted = true;
@@ -276,10 +248,7 @@ impl FileSystemRoot {
         }
     }
 
-    /// Calibrates the physical BlockOffset for Big-Block (MetaType2) NANDs.
-    /// Ported from RGBuild::NANDImage.cs (LoadFileSystem): 
-    /// Searches for "XEX2" or "XEX1" headers at common offsets (0xAE0, 0x2E0) 
-    /// relative to an existing .xex file's starting block.
+    /// Calibrates the physical BlockOffset for MetaType2 NANDs.
     pub fn calibrate_block_offset(&mut self, image: &[u8], layout: &NandLayout) {
         if *layout != NandLayout::Bb { return; }
 
@@ -289,7 +258,6 @@ impl FileSystemRoot {
         for entry in self.entries.iter().filter(|e| !e.deleted && e.file_name.to_lowercase().ends_with(".xex")) {
             let base_block = entry.block_number;
             
-            // Common offsets to check: 0xAE0, 0x2E0, 0x0
             for &offset in &[0xAE0u16, 0x2E0u16, 0x0u16] {
                 let physical_block = base_block.wrapping_add(offset) as usize;
                 let page_offset = physical_block * logical_block_size;
@@ -401,9 +369,6 @@ impl FileSystemRoot {
         let mut data = Vec::new();
         let pages_per_block = layout.logical_pages_per_block();
 
-        // For MetaType2 (Big-Block), calculate base block offset for file data.
-        // Based on x360Utils NANDFileSystem.GetBaseBlockForMeta2():
-        //   baseBlock = (0x1E0 - FsPageCount - (FsSize0 << 2)) * 8
         let base_block_offset: u16 = if *layout == NandLayout::Bb {
             // Find the FS root block's spare data to extract FsPageCount and FsSize
             // The FS root block is at self.block_number
@@ -486,8 +451,6 @@ impl FileSystemRoot {
     }
 
     pub fn set_chain_data(&mut self, image: &mut [u8], layout: &NandLayout, start_block: u16, data: &[u8]) {
-        // Guard: zero-length data → needed=0 → shrink path frees the start block immediately.
-        // RGBuild: if (data.Length == 0) data = new byte[1];
         let placeholder;
         let data: &[u8] = if data.is_empty() {
             placeholder = [0u8; 1];
@@ -544,7 +507,6 @@ impl FileSystemRoot {
         entry.data = data.to_vec();
     }
 
-    /// Surgically replaces the content of an existing file.
     pub fn replace_file(&mut self, image: &mut [u8], layout: &NandLayout, name: &str, data: &[u8]) -> Result<(), String> {
         let entry_idx = self.entries.iter().position(|e| e.file_name == name && !e.deleted)
             .ok_or_else(|| format!("File not found or already deleted: {}", name))?;
@@ -558,7 +520,6 @@ impl FileSystemRoot {
         Ok(())
     }
 
-    /// Injects a new file into the filesystem root.
     pub fn inject_file(&mut self, image: &mut [u8], layout: &NandLayout, name: &str, data: &[u8]) -> Result<(), String> {
         if self.entries.iter().any(|e| e.file_name == name && !e.deleted) {
             return Err(format!("File already exists: {}. Use replace instead.", name));
@@ -589,7 +550,6 @@ impl FileSystemRoot {
         Ok(())
     }
 
-    /// High-level extraction of a filesystem asset.
     pub fn extract_asset(&self, name: &str) -> Option<Vec<u8>> {
         self.entries.iter()
             .find(|e| e.file_name == name && !e.deleted)
@@ -602,7 +562,6 @@ impl FileSystemRoot {
         let logical_block_size = pages_per_block * page_size;
         
         // 1. Create a temporary logical buffer for the root block content (e.g. 0x4000 bytes)
-        // Note: Zero-filling is preferred over 0xFF to ensure clean string termination for RGBuild.
         let mut root_buffer = vec![0x00u8; logical_block_size];
         
         // 3. Setup relative page lists (Even for Block Map, Odd for Entries)
@@ -651,7 +610,7 @@ impl FileSystemRoot {
             }
         }
         
-        // 6. Final Write: use the hybrid writer to handle logical-to-physical translation if needed
+        // 6. Final Write
         let logical_start = self.block_number as usize * pages_per_block * page_size;
         Self::write_data_hybrid(image, logical_start, &root_buffer, layout);
     }
@@ -671,7 +630,7 @@ impl FileSystemRoot {
         let pages_per_block = layout.logical_pages_per_block();
         let logical_block_size = pages_per_block * page_size;
         
-        // serialize_logical() produces exactly ONE logical FlashFS block.
+
         let mut image = vec![0x00u8; logical_block_size];
 
         let mut bm_pages = Vec::new();
@@ -720,8 +679,7 @@ impl FlashFS {
         FlashFS { root: FileSystemRoot::new(-1, 0, 0x30), partitions: std::collections::HashMap::new() }
     }
 
-    /// Scans a physical (raw) image for FlashFS signatures using spare metadata,
-    /// then reads block content from the logical (spare-stripped) view.
+    /// Scans physical image for FlashFS signatures.
     pub fn scan_physical(image: &[u8], layout: &NandLayout) -> Self {
         let mut fs = FlashFS::new();
         let total_blocks = layout.total_blocks(image.len());
@@ -754,9 +712,7 @@ impl FlashFS {
         fs
     }
 
-    /// Scans a physical (raw) image for FlashFS signatures using spare metadata,
-    /// with LBA map awareness for accurate bad block remapping.
-    /// Based on x360Utils NANDReader ScanForFsRootAndMobile with LBA tracking.
+    /// Scans physical image for FlashFS signatures with LBA map awareness.
     pub fn scan_physical_with_lba(image: &[u8], layout: &NandLayout, lba_map: &crate::core::images::blocks::LbaMap) -> Self {
         let mut fs = FlashFS::new();
         let total_blocks = layout.total_blocks(image.len());
@@ -770,8 +726,7 @@ impl FlashFS {
                 let sig = &image[offset..offset + 4];
                 if sig == b"ANCH" {
                     let mut cursor = Cursor::new(&image[offset + 4..offset + 20]);
-                    // xeBuild selects the anchor with the HIGHEST VERSION, not sequence.
-                    // Log: "anchor block v 2 at 0x2fec000 is selected" (v2 > v1).
+
                     let version = cursor.read_u32::<BigEndian>().unwrap_or(0);
                     let block   = cursor.read_u32::<BigEndian>().unwrap_or(0) as usize;
                     let _seq    = cursor.read_u32::<BigEndian>().unwrap_or(0);

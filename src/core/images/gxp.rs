@@ -223,7 +223,6 @@ fn read_patch_sections(mut reader: impl Read, patch_type: GxpPatchType, is_legac
     Ok(sections)
 }
 
-/// Parse patch file
 pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> {
     let mut file = File::open(&path)?;
     let mut magic_buf = [0u8; 4];
@@ -344,8 +343,6 @@ pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> 
     Ok(binary)
 }
 
-/// Parses a human-readable GXS (GXP-Source) file into a GxpSection.
-/// Supports [Address]: [Hex Data...] format with comments and multi-line payloads.
 pub fn parse_gxs_source<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpSection> {
     let file = File::open(&path)?;
     let reader = BufReader::new(file);
@@ -400,8 +397,6 @@ pub fn parse_gxs_source<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpSection> {
     Ok(GxpSection { records })
 }
 
-/// Serializes a list of patch records back into a binary blob.
-/// This assumes word-based records (standard for KHV and RGLoader patches).
 pub fn serialize_records(records: &[PatchRecord]) -> Vec<u8> {
     let mut buf = Vec::new();
     for record in records {
@@ -421,7 +416,6 @@ pub fn serialize_records(records: &[PatchRecord]) -> Vec<u8> {
     buf
 }
 
-/// Low-level function to apply a set of patch records to a buffer.
 pub fn apply_records(records: &[PatchRecord], data: &mut Vec<u8>) -> anyhow::Result<()> {
     info!("[gxp] Applying {} records to buffer (size 0x{:X})", records.len(), data.len());
     let mut modified_words = 0;
@@ -445,7 +439,6 @@ pub fn apply_records(records: &[PatchRecord], data: &mut Vec<u8>) -> anyhow::Res
     Ok(())
 }
 
-/// Convenience function: Parses a patch file and applies its first section to a buffer.
 pub fn parse_and_apply_to_buffer<P: AsRef<Path>>(path: P, data: &mut Vec<u8>) -> anyhow::Result<()> {
     let patch = parse_patch_binary(path)?;
     if let Some(section) = patch.sections.first() {

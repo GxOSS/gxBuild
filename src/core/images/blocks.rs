@@ -101,9 +101,7 @@ impl NandLayout {
     }
 }
 
-/// Reads `len` bytes starting from logical page `logical_page` in a physical NAND image.
-/// Handles cross-page boundary reads transparently by translating each logical page
-/// to its physical offset and reading chunks that don't cross physical page boundaries.
+/// Reads logical bytes from a physical NAND image.
 pub fn read_logical_from_physical(
     image: &[u8],
     logical_page: usize,
@@ -137,9 +135,7 @@ pub fn read_logical_from_physical(
     Some(result)
 }
 
-/// Writes `data` starting from logical byte offset `logical_offset` into a physical NAND image.
-/// Safely handles spare area gaps by translating the logical offset to physical and writing
-/// across page boundaries.
+/// Writes logical data into a physical NAND image.
 pub fn write_logical_data(
     image: &mut [u8],
     logical_offset: usize,
@@ -447,9 +443,7 @@ pub fn add_spare(
     }
 }
 
-/// Returns true if the image has spare/ECC data appended to each page.
-/// Matches J-Runner's hasecc() detection: validates multiple pages and ECC bytes
-/// to prevent false positives from erased or corrupted NAND.
+/// Returns true if image has spare/ECC data.
 pub fn has_spare(image: &[u8]) -> bool {
     // Check for small-block format (spare at +0x200 per page)
     // J-Runner iterates through multiple pages; we check the first few with validation.
@@ -867,12 +861,10 @@ impl LbaMap {
         }
     }
 
-    /// Returns the physical block for a given logical block number.
     pub fn physical_block(&self, logical: usize) -> Option<usize> {
         self.logical_to_physical.get(logical).copied()
     }
 
-    /// Returns true if a physical block is known to be bad.
     pub fn is_bad(&self, physical: usize) -> bool {
         self.bad_blocks.contains(&physical)
     }
@@ -926,8 +918,7 @@ impl LbaMap {
 }
 
 impl NandProcessor {
-    /// Preprocesses a raw NAND image: detects layout, heals bad blocks, strips spare.
-    /// Returns the clean logical image and layout type.
+    /// Preprocesses a raw NAND image.
     pub fn preprocess_nand(raw_image: &[u8]) -> Result<(Vec<u8>, NandLayout), String> {
         let (clean, layout, _lba_map) = Self::preprocess_nand_with_lba(raw_image)?;
         Ok((clean, layout))

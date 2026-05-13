@@ -43,8 +43,7 @@ fn bl_magic_to_str(magic: u16) -> String {
     }.to_string()
 }
 
-/// Checks magic, version, and size from the first 0x10 bytes of `data`.
-/// Then attempts HMAC-SHA(key)+RC4 decryption with Retail, Devkit, and chain keys.
+/// Identifies and decrypts bootloader.
 fn bl_try_identify(data: &[u8], parent_key: &[u8; 16]) -> Option<BlDiscovery> {
     use crate::builder::deps::excrypt::{self, Rc4};
     if data.len() < 0x10 { return None; }
