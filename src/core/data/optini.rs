@@ -2,7 +2,7 @@
     optini.rs - xeBuild style options.ini parser
 
     Created in 2026 by Exposure / Zach for gxBuild.
-    Licensed under GPLv2 (inherited from xenon-bltool).
+    Licensed under the GNU General Public License Version 2.0
 */
 
 use log::{info, warn};

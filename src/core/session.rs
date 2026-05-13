@@ -3,19 +3,19 @@
 
     Created in 2026 by Exposure / Zach for gxBuild.
     Modified/Contributed by erorn (2026)
-    Licensed under GPLv2 (inherited from xenon-bltool).
+    Licensed under the GNU General Public License Version 2.0
 */
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::path::{Path, PathBuf};
-
 use crate::builder::builder::NandSkeleton;
 use std::fs;
 use crate::builder::builder::{SouthbridgeType, LayoutCalculator};
 use crate::core::images::gxp::parse_patch_binary;
 use crate::core::data::filesearch::IniSearch;
 use log::{info, error, warn};
+
 #[derive(Debug)]
 pub enum InternalCommand { 
     ParseIni { path: PathBuf, target: String, ini_base: PathBuf, common: PathBuf, data: PathBuf },
@@ -145,53 +145,24 @@ mod tests {
 }
 
 impl InternalCommand {
-    /// Priority score - higher value runs first.
-    ///
-    /// Tiers:
-    ///   150 - Foundation: Load/create the NAND image (ParseImage, CreateImage)
-    ///   145 - Key assignment: must run after NAND is loaded (ParseKey, ParseKeybin)
-    ///   110 - Standalone ops: no NAND dependency (ExtractStfs, Update)
-    ///   100 - Session admin: immediate teardown/inspection ops (SessionInit, SessionList, SessionDelete)
-    ///   100 - Post-load mutations: ParseIni, ParseFlashfs, ParsePatch (safe; 150 runs first)
-    ///    99 - Decompress: inspection op, after NAND load + INI apply
-    ///    90 - FinalizeFlashfs: consumes pending_assets gathered by ParseIni
-    ///    89 - Extract (single component)
-    ///    88 - ExtractAll
-    ///    87 - Replace
-    ///    86 - List
-    ///    85 - Delete
-    ///    84 - Clear
-    ///    79 - ApplyPatch
-    ///    78 - Compress
-    ///    50 - SessionRun: drains and re-executes queue; must fire after all real work is dispatched
-    ///     0 - Build: always the final step
     fn priority_score(&self) -> u8 {
         match self {
-            // -- Key assignment (Must happen before ParseImage) ------------
             Self::ParseKey { .. }     => 160,
             Self::ParseKeybin { .. }  => 160,
-            // -- Foundation ------------------------------------------------
             Self::ParseImage { .. }   => 150,
             Self::CreateImage { .. }  => 150,
-            // -- Standalone ops (no active-NAND dependency) ----------------
             Self::ExtractStfs { .. }  => 110,
             Self::Update { .. }       => 110,
-            // -- Session admin (immediate, before queue processing) --------
             Self::SessionInit { .. }  => 100,
             Self::SessionList         => 100,
             Self::SessionDelete { .. }=> 100,
-            // -- Post-load mutations ----------------------------------------
             Self::ParseIni { .. }     => 100,
             Self::ParseFlashfs { .. } => 100,
             Self::ParsePatch { .. }   => 100,
-            // -- Inspection / decompression ---------------------------------
             Self::Decompress          => 99,
-            // -- FlashFS finalization ---------------------------------------
             Self::FinalizeFlashfs     => 90,
-            // -- Extraction ------------------------------------------------
             Self::Extract { .. }      => 89,
             Self::ExtractAll { .. }   => 88,
-            //  Modification 
             Self::Replace { .. }      => 87,
             Self::List                => 86,
             Self::Delete { .. }       => 85,
@@ -199,9 +170,7 @@ impl InternalCommand {
             Self::ApplyPatch { .. }   => 79,
             Self::ApplySmcSignature { .. } => 79,
             Self::Compress            => 78,
-            // -- SessionRun: drains queue; must follow all real work -------
             Self::SessionRun          => 50,
-            // -- Build: always last ----------------------------------------
             Self::Build { .. }        => 0,
             Self::SwapBootloader { .. } => 140,
             Self::ApplyOptions        => 80,
@@ -216,13 +185,13 @@ pub struct QueuedCommand {
 }
 
 impl Ord for QueuedCommand {
+    // Compare priority score
     fn cmp(&self, other: &Self) -> Ordering {
-        // Compare priority score (higher score = runs sooner = Should be ordered as 'Greater')
         let p_cmp = self.command.priority_score().cmp(&other.command.priority_score());
         if p_cmp != Ordering::Equal {
             return p_cmp;
         }
-        // Then sequence_id tie breaker (lower ID = enqueued earlier = Should be chosen sooner)
+        // tie breaker based on when queued from id
         other.sequence_id.cmp(&self.sequence_id)
     }
 }
@@ -246,24 +215,18 @@ impl Eq for QueuedCommand {}
 pub struct Session {
     queue: BinaryHeap<QueuedCommand>,
     next_seq_id: usize,
-    /// Legacy single-asset pool (used by the Update command for ad-hoc file loading).
+    // Legacy single-asset pool used by the Update command
     pub pending_assets: HashMap<String, Vec<u8>>,
-    /// Assets resolved from the INI [main] section (bootloader binaries, CF/CG).
     pub bootloader_assets: HashMap<String, Vec<u8>>,
-    /// Assets resolved from the INI [security] section (smc.bin, kv.bin, fcrt.bin).
     pub security_assets: HashMap<String, Vec<u8>>,
-    /// Assets resolved from the INI [flashfs] section (XEX/dat files for FlashFS).
     pub flashfs_assets: HashMap<String, Vec<u8>>,
-    /// Dummy state object for passing over to extract commands
     pub active_nand: Option<NandSkeleton>,
-    /// Global xeBuild options / preferences
     pub options: crate::core::data::optini::OptionsIni,
-    /// CPU Key buffer if provided before NAND is loaded
     pub pending_key: Option<[u8; 16]>,
-    /// Last error message for FFI reporting
+    // Last error message for FFI reporting
     pub last_error: Option<String>,
 
-    // -- Build configuration (set via FFI setters, consumed by prepare_build) --
+    // Build config
     pub build_type: Option<String>,
     pub console_type: Option<String>,
     pub ini_dir: Option<std::path::PathBuf>,
@@ -307,8 +270,6 @@ impl Session {
             .unwrap_or_else(Self::fallback_pairing_data)
     }
 
-    /// Resolves the CB LDV independently: reads from cb_a/cb only, fallback to 1.
-    /// The `cfldv` option does NOT affect CB.
     fn resolve_cb_ldv(
         _options: &crate::core::data::optini::OptionsIni,
         nand: &NandSkeleton,
@@ -324,8 +285,6 @@ impl Session {
         Ok(from_nand.unwrap_or_else(Self::fallback_lockdown_value))
     }
 
-    /// Resolves the CF LDV independently: reads from cf_0 only, fallback to 1.
-    /// The `cfldv` option applies here (CF only).
     fn resolve_cf_ldv(
         options: &crate::core::data::optini::OptionsIni,
         nand: &NandSkeleton,
@@ -345,7 +304,6 @@ impl Session {
     }
 
     fn sync_per_box_settings(nand: &mut NandSkeleton, pairing: [u8; 3], cb_ldv: u8, cf_ldv: u8) {
-        // CB side â€” uses cb_ldv only
         if let Some(ref mut cb) = nand.bootloaders.cb {
             if let Some(ref mut meta) = cb.metadata {
                 meta.pairing_data = pairing;
@@ -373,7 +331,6 @@ impl Session {
             }
         }
 
-        // CF side â€” uses cf_ldv only, never touches CB values
         if let Some(ref mut cf) = nand.update.cf_0 {
             if let Some(ref mut meta) = cf.metadata {
                 meta.pairing_data = pairing;
@@ -437,10 +394,6 @@ impl Session {
         });
         self.next_seq_id += 1;
     }
-
-    // ------------------------------------
-    // Fixed public methods (Interface API)
-    // ------------------------------------
 
     pub fn extract(&mut self, id: String, output_dir: PathBuf) {
         self.enqueue(InternalCommand::Extract { id, output_dir });
@@ -519,7 +472,6 @@ impl Session {
     }
 
     pub fn session_clear(&mut self) {
-        // Full teardown: clear queue, active NAND, all asset pools, and reset sequence counter.
         self.queue.clear();
         self.active_nand = None;
         self.pending_assets.clear();
@@ -532,8 +484,6 @@ impl Session {
     pub fn session_run(&mut self) {
         self.enqueue(InternalCommand::SessionRun);
     }
-
-    // -- Build configuration setters -------------------------------------------
 
     pub fn set_build_type(&mut self, build_type: String) {
         self.build_type = Some(build_type);
@@ -582,10 +532,10 @@ impl Session {
             if let Ok(arr) = bytes.try_into() {
                 self.parse_key(arr);
             } else {
-                error!("[session] CPU Key must be 32 hex characters (16 bytes).");
+                error!("[session] CPU Key must be 32 hex chars / 16 bytes");
             }
         } else {
-            error!("[session] Invalid hex format for CPU Key: {}", key);
+            error!("[session] Invalid formatting for CPU Key: {}", key);
         }
     }
 
@@ -600,7 +550,6 @@ impl Session {
             "unsafe" | "gxunsafe" => o.gxunsafe = Some(is_true),
             "verbose"             => {
                 o.verbose = Some(is_true);
-                // Update logger level immediately if verbose is toggled
                 let _ = crate::core::logger::init_logger("build", is_true);
             },
             "cba"                 => o.cba = Some(v.to_string()),
@@ -642,7 +591,6 @@ impl Session {
         self.options.merge(o);
     }
 
-    /// Parses an options.ini content string and merges it into the session options.
     pub fn load_options_ini(&mut self, content: &str) -> Result<(), String> {
         match crate::core::data::optini::parse_options_ini(content) {
             Ok(new_opts) => {
@@ -654,7 +602,7 @@ impl Session {
         }
     }
 
-    /// Parses a build INI content string and discovers assets immediately.
+    /// Build ini
     pub fn load_ini(&mut self, content: &str, target: &str) -> Result<(), String> {
         let is_verbose = self.options.verbose.unwrap_or(false);
         let _ = crate::core::logger::init_logger("build", is_verbose);
@@ -666,7 +614,6 @@ impl Session {
         let common_dir = self.common_dir.clone().unwrap_or_else(|| ini_dir.join("../common"));
         let data_dir = self.data_dir.clone().unwrap_or_else(|| PathBuf::from("data"));
 
-        // Build hint for build type detection (usually _<type>.ini)
         let hint = self.build_type.as_ref().map(|t| format!("_{}.ini", t));
 
         match crate::core::data::xeini::parse_xe_ini_str(content, target, hint.as_deref()) {
@@ -694,7 +641,7 @@ impl Session {
                             Ok(updated_nand) => {
                                 self.active_nand = Some(updated_nand);
                                 self.build_ini_loaded = true;
-                                info!("[session] INI assets applied to NAND skeleton.");
+                                info!("[session] INI assets applied to NAND skeleton");
                             }
                             Err(e) => return Err(format!("Failed to apply INI data: {}", e)),
                         }

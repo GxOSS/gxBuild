@@ -1,8 +1,8 @@
 /*
     builder.rs - Core NAND assembly and parsing logic.
 
-    Modified in 2026 by Exposure / Zach for GGX
-    Licensed under GPLv2 (inherited from xenon-bltool).
+    Created in 2026 by Exposure / Zach for GGX
+    Licensed under the GNU General Public License Version 2.0
 */
 
 use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable};
@@ -13,6 +13,102 @@ use crate::core::images::blocks::*;
 use crate::builder::chain::*;
 use crate::builder::chain::flashfs::FlashFS;
 use crate::core::images::gxp::{GxpBinary, GxpPatchType, apply_records, PatchRecord};
+
+const NAND_RETAIL_1BL_KEY: [u8; 16] = [
+    0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7,
+    0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA,
+];
+
+struct BlDiscovery {
+    magic:       String,
+    version:     u16,
+    size:        u32,
+    key_source:  String,
+}
+
+fn bl_is_valid_magic(magic: u16) -> bool {
+    matches!(magic & 0xFFF, 0x342 | 0x343 | 0x344 | 0x345 | 0x346 | 0x347 | 0x341)
+}
+
+fn bl_magic_to_str(magic: u16) -> String {
+    match magic {
+        0x4342 | 0x5342 => "CB",
+        0x4343 | 0x5343 => "SC",
+        0x4344 | 0x5344 => "CD",
+        0x4345 | 0x5345 => "CE",
+        0x4346 | 0x5346 => "CF",
+        0x4347 | 0x5347 => "CG",
+        0x0341          => "1BL",
+        _               => "??",
+    }.to_string()
+}
+
+/// Checks magic, version, and size from the first 0x10 bytes of `data`.
+/// Then attempts HMAC-SHA(key)+RC4 decryption with Retail, Devkit, and chain keys.
+fn bl_try_identify(data: &[u8], parent_key: &[u8; 16]) -> Option<BlDiscovery> {
+    use crate::builder::deps::excrypt::{self, Rc4};
+    if data.len() < 0x10 { return None; }
+
+    let magic_val = u16::from_be_bytes([data[0],  data[1]]);
+    let version   = u16::from_be_bytes([data[2],  data[3]]);
+    let size      = u32::from_be_bytes([data[12], data[13], data[14], data[15]]);
+
+    // Plain / unencrypted — header is already readable
+    if bl_is_valid_magic(magic_val) && version >= 1888 && version < 20000 && size < 0x2000000 {
+        return Some(BlDiscovery {
+            magic: bl_magic_to_str(magic_val), version, size,
+            key_source: "Plain".to_string(),
+        });
+    }
+
+    let devkit_key = [0u8; 16];
+    let key_sources: [(&str, &[u8; 16]); 3] = [
+        ("Retail", &NAND_RETAIL_1BL_KEY),
+        ("Devkit", &devkit_key),
+        ("Chain",  parent_key),
+    ];
+
+    for (key_name, key_base) in key_sources {
+        if key_name == "Chain" && key_base.iter().all(|&x| x == 0) { continue; }
+        for &salt_off in &[0x10usize, 0x20usize] {
+            if data.len() < salt_off + 0x10 { continue; }
+            let dk = match excrypt::hmac_sha(key_base, &[&data[salt_off..salt_off + 0x10]]) {
+                Ok(k) => k, Err(_) => continue,
+            };
+            let mut block = data[0..0x10].to_vec();
+            if let Ok(mut rc4) = Rc4::new(&dk[..0x10]) { let _ = rc4.crypt(&mut block); }
+            else { continue; }
+
+            let dm = u16::from_be_bytes([block[0],  block[1]]);
+            let dv = u16::from_be_bytes([block[2],  block[3]]);
+            let ds = u32::from_be_bytes([block[12], block[13], block[14], block[15]]);
+
+            if bl_is_valid_magic(dm) && dv >= 1888 && dv < 20000 && ds < 0x2000000 {
+                return Some(BlDiscovery {
+                    magic: bl_magic_to_str(dm), version: dv, size: ds,
+                    key_source: key_name.to_string(),
+                });
+            }
+        }
+    }
+    None
+}
+
+/// Scans `scan_range` bytes from `start_offset` in 0x10-byte steps for a valid bootloader.
+fn bl_scan<F>(read_fn: &mut F, start_offset: usize, scan_range: usize, parent_key: &[u8; 16])
+    -> Option<(usize, BlDiscovery)>
+where F: FnMut(usize, usize) -> Option<Vec<u8>>
+{
+    for offset in (start_offset..start_offset + scan_range).step_by(0x10) {
+        let buf = read_fn(offset, 0x100)?;
+        if let Some(r) = bl_try_identify(&buf, parent_key) {
+            info!("[builder] bl_scan: found {} v{} at 0x{:08X} via {} key",
+                  r.magic, r.version, offset, r.key_source);
+            return Some((offset, r));
+        }
+    }
+    None
+}
 
 pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
     if hex.len() % 2 != 0 {
@@ -34,7 +130,7 @@ pub struct NandHeaderPrefix {
     pub version: U16<BigEndian>,
     pub pairing: U16<BigEndian>,
     pub flags: U16<BigEndian>,
-    pub entrypoint: U32<BigEndian>, // points to CB offset
+    pub entrypoint: U32<BigEndian>, // CB
     pub size: U32<BigEndian>,
 }
 
@@ -50,8 +146,6 @@ pub struct NandHeader {
     pub patch_slots: I16<BigEndian>,
     pub kv_version: U16<BigEndian>,
     pub kv_addr: U32<BigEndian>,
-    /// Maps to `FileSystemAddress` in RGBuild/xeBuild. Real eMMC dumps show 0x10000.
-    /// Not used for booting; do not overwrite unless managing a full FS root.
     pub fs_addr: U32<BigEndian>,
     pub smc_config_offset: U32<BigEndian>,
     pub smc_boot_size: U32<BigEndian>,
@@ -215,14 +309,6 @@ pub struct NandExtra {
     pub power_on_cause_b: u8,
 }
 
-// Legacy local PatchRecord removed in favor of crate::core::images::gxp::PatchRecord
-
-#[derive(Clone)]
-pub struct NandPatches {
-    pub rglp: Option<Vec<u8>>,
-    pub xebuild: Option<Vec<u8>>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum MotherboardType {
     Xenon = 1, Zephyr = 2, Falcon = 3, Jasper = 4, Trinity = 5, Corona = 6, Winchester = 7, Unknown = 0xF,
@@ -319,7 +405,6 @@ pub struct BuildOptions {
     pub noremap: bool,
     pub khv_apply: bool,
     pub khv_header_size: u32,
-    pub patches: Option<NandPatches>,
     pub jtag_syscall: Option<u16>,
     pub jtag_pairing_2bl: Option<[u8; 3]>,
     pub gxunsafe: bool,
@@ -346,7 +431,6 @@ impl Default for BuildOptions {
             noremap: false,
             khv_apply: false,
             khv_header_size: 0x4000,
-            patches: None,
             jtag_syscall: None,
             jtag_pairing_2bl: None,
             gxunsafe: false,
@@ -381,12 +465,11 @@ pub struct NandSkeleton {
 }
 
 impl NandSkeleton {
-    /// Create a blank NandSkeleton for building from scratch.
     pub fn new_blank(layout: NandLayout) -> Self {
         let size = match layout {
             NandLayout::Xsb | NandLayout::Sb => 0x1000000,
             NandLayout::Bb => 0x4000000,
-            NandLayout::Emmc => 0x3000000, // 48MB standard EMMC corona dump
+            NandLayout::Emmc => 0x3000000,
         };
         let mut image = vec![0xFFu8; size];
         image[0] = 0xFF; image[1] = 0x4F;
@@ -493,16 +576,12 @@ impl NandSkeleton {
             self.update.cf_0.is_some(),
             self.update.cf_0.as_ref().map_or(false, |cf| cf.metadata.is_some()));
 
-        // Decrypt newly assigned bootloaders individually — do NOT call decrypt_chain
-        // since it would double-encrypt any source NAND bootloaders still in memory.
-        // Each bootloader is only decrypted if it has no metadata (i.e. freshly assigned).
+        // Decrypt newly assigned bootloaders individually
         if let Some(cpukey) = self.cpukey {
-            // CB_B (split) — needs cb_a_key derived from decrypted CB_A
             if let Some(cb_b) = self.bootloaders.cb_b.as_mut() {
                 if cb_b.metadata.is_none() {
                     info!("[pfa] CB_B has no metadata — decrypting");
                     if let Some(cb_a) = self.bootloaders.cb_a.as_ref() {
-                        // cb_a.data[0..16] is the derived key (already decrypted)
                         let cb_a_key: [u8; 16] = cb_a.data[0..16].try_into().unwrap_or([0u8; 16]);
                         let uses_new_crypto = (cb_a.header.flags.get() & 0x1000) != 0;
                         if uses_new_crypto {
@@ -518,7 +597,6 @@ impl NandSkeleton {
                 }
             }
 
-            // Single CB — decrypt using 1BL key
             if let Some(cb) = self.bootloaders.cb.as_mut() {
                 if cb.metadata.is_none() {
                     info!("[pfa] CB (single) has no metadata — decrypting with 1BL key");
@@ -528,7 +606,6 @@ impl NandSkeleton {
                 }
             }
 
-            // CF0 — decrypt using 1BL key
             if let Some(cf) = self.update.cf_0.as_mut() {
                 if cf.metadata.is_none() {
                     info!("[pfa] CF_0 has no metadata — decrypting with 1BL key");
@@ -538,7 +615,6 @@ impl NandSkeleton {
                 }
             }
 
-            // CF1 — decrypt using 1BL key
             if let Some(cf) = self.update.cf_1.as_mut() {
                 if cf.metadata.is_none() {
                     info!("[pfa] CF_1 has no metadata — decrypting with 1BL key");
@@ -553,7 +629,7 @@ impl NandSkeleton {
         let ldv_cb = self.input_ldv_cb;
         let ldv_cf = self.input_ldv_cf;
 
-        // 1. Sync Pairing Data to CB_B (split) or CB (single), and to both CF slots
+        // Sync Pairing Data
         if let Some(pd_val) = pd {
             if let Some(ref mut cb_b) = self.bootloaders.cb_b {
                 if let Some(ref mut meta) = cb_b.metadata {
@@ -579,7 +655,7 @@ impl NandSkeleton {
             warn!("[pfa] input_pd is None — PD will not be synced");
         }
 
-        // 2. Sync CB LDV
+        // CB LDV
         if let Some(ldv) = ldv_cb {
             if let Some(ref mut cb_b) = self.bootloaders.cb_b {
                 if let Some(ref mut meta) = cb_b.metadata {
@@ -626,15 +702,7 @@ impl NandSkeleton {
         }
     }
 
-    /// Parses a clean logical NAND image (no ECC/Spare) into a skeleton.
-    /// Based on x360Utils NANDReader + J-Runner Nand.cs parsing:
-    /// 1. Validate header magic and bounds
-    /// 2. Extract KV and SMC using header offset pointers
-    /// 3. Walk bootloader chain: CB_A → [CB_X] → CB_B → CD → CE → CF/CG
-    /// 4. Handle CF_Ptr bridging when CF isn't contiguous after CE
-    /// 5. Decrypt full chain with verification
     pub fn parse_clean(image: Vec<u8>, layout: NandLayout, cpukey: [u8; 16], flashfs: FlashFS) -> Result<Self, String> {
-        // 1. Validate header
         let header_sz = std::mem::size_of::<NandHeader>();
         if image.len() < header_sz {
             return Err(format!("Image too small for header: {} bytes (need {})", image.len(), header_sz));
@@ -645,7 +713,6 @@ impl NandSkeleton {
         header.validate()?;
         header.print_info();
 
-        // 2. Extract and decrypt Keyvault
         let kv_addr = header.kv_addr.get() as usize;
         let kv_size = header.kv_size.get() as usize;
         if kv_size != 0x4000 {
@@ -659,7 +726,6 @@ impl NandSkeleton {
         let mut kv = crate::builder::chain::kv::Keyvault::parse(&image[kv_addr..kv_addr + kv_size])?;
         kv.decrypt(&cpukey)?;
 
-        // 3. Extract and decrypt SMC
         let smc_offset = header.smc_boot_offset.get() as usize;
         let smc_size = header.smc_boot_size.get() as usize;
         if smc_offset.checked_add(smc_size).ok_or("SMC offset overflow")? > image.len() {
@@ -670,9 +736,8 @@ impl NandSkeleton {
         let mut smc = crate::builder::chain::smc::RawSmc::new(image[smc_offset..smc_offset + smc_size].to_vec());
         smc.decrypt();
 
-        // 3b. Extract SMC Config (usually 0x10000 bytes)
         let config_offset = header.smc_config_offset.get() as usize;
-        let config_size = 0x10000; // standard config partition size
+        let config_size = 0x10000;
         
         let config_data = if config_offset > 0 && config_offset + config_size <= image.len() {
             info!("[builder] Extracting SMC Config (Addr: 0x{:X}, Size: 0x{:X})...", config_offset, config_size);
@@ -694,11 +759,9 @@ impl NandSkeleton {
             power_on_cause_b: 0,
         };
 
-        // 4. Walk bootloader chain
         info!("[builder] Walking bootloader chain starting at offset 0x{:X}...", header.cb_offset());
         let (bl, mut update) = Self::parse_bootloader_chain(&image, header.cb_offset() as usize, header.cf_offset.get() as usize)?;
 
-        // 5. Decrypt chain - fail early if critical bootloaders are missing
         info!("[builder] Decrypting bootloader chain...");
         let mut bl_mut = bl;
         if bl_mut.cb_a.is_none() { return Err("Missing CB_A bootloader".into()); }
@@ -720,14 +783,12 @@ impl NandSkeleton {
         )?;
         info!("[builder] Bootloader chain successfully decrypted.");
 
-        // 6. Build skeleton
         let motherboard = if extra.smc.len() > 0x100 {
             MotherboardType::from_smc(extra.smc[0x100])
         } else {
             MotherboardType::Unknown
         };
         
-        // Initialize FlashFS root block from header fs_addr
         let mut final_flashfs = flashfs;
         let fs_addr = header.fs_addr.get();
         if fs_addr > 0 {
@@ -744,8 +805,6 @@ impl NandSkeleton {
         let mut input_ldv_cb = None;
         let mut input_pd = None;
 
-        // Per-box data lives in CB_B (split image) or CB (single image). CB_A never holds it.
-        // J-Runner's unpack_cbb_data reads from the decrypted CB_B — we match that exactly.
         if let Some(cb_b) = bl_mut.cb_b.as_ref() {
             if let Some(meta) = &cb_b.metadata {
                 input_ldv_cb = Some(meta.lockdown_value);
@@ -758,12 +817,10 @@ impl NandSkeleton {
             }
         }
 
-        // Fall back to CF0 PD if CB had no per-box data (older single-CB images)
         if input_pd.is_none() {
             input_pd = update.cf_0.as_ref().and_then(|cf| cf.metadata.as_ref().map(|m| m.pairing_data));
         }
 
-        // CF LDV: take the highest across both CF slots
         let ldv0 = update.cf_0.as_ref().and_then(|cf| cf.metadata.as_ref().map(|m| m.lockdown_value));
         let ldv1 = update.cf_1.as_ref().and_then(|cf| cf.metadata.as_ref().map(|m| m.lockdown_value));
         let input_ldv_cf = match (ldv0, ldv1) {
@@ -804,9 +861,6 @@ impl NandSkeleton {
         })
     }
 
-    /// Parses the bootloader chain from a clean NAND image.
-    /// Based on x360Utils Bootloader + J-Runner sequential parsing:
-    /// CB_A → [CB_X] → CB_B → CD → CE → [CF_Ptr jump] → CF/CG pairs
     fn parse_bootloader_chain(
         image: &[u8],
         cb_offset: usize,
@@ -826,7 +880,7 @@ impl NandSkeleton {
         let mut cg_count = 0;
         let mut cb_seen = 0;
 
-        // Primary chain walk: CB_A → [CB_X] → CB_B → CD → CE
+        // Primary chain walk
         let mut iteration = 0;
         while iteration < 16 {
             iteration += 1;
@@ -925,7 +979,22 @@ impl NandSkeleton {
                     else { update.cg_1 = Some(cg); }
                 }
                 _ => {
-                    info!("[builder] Unknown bootloader type at 0x{:08X}, stopping chain walk", off);
+                    // Try discovery as a diagnostic — handles devkit (all-zero 1BL key)
+                    // and plain/unencrypted bootloaders with non-standard magic encodings.
+                    let zero_key = [0u8; 16];
+                    let probe_len = 0x100.min(image.len().saturating_sub(off));
+                    if probe_len >= 0x10 {
+                        if let Some(disco) = bl_try_identify(&image[off..off + probe_len], &zero_key) {
+                            info!(
+                                "[builder] Discovery probe at 0x{:08X}: {} v{} (0x{:X} bytes) via {} key — not a standard chain type, stopping",
+                                off, disco.magic, disco.version, disco.size, disco.key_source
+                            );
+                        } else {
+                            info!("[builder] Unknown bootloader type at 0x{:08X}, stopping chain walk", off);
+                        }
+                    } else {
+                        info!("[builder] Unknown bootloader type at 0x{:08X}, stopping chain walk", off);
+                    }
                     break;
                 }
             }
@@ -971,6 +1040,59 @@ impl NandSkeleton {
                 }
 
                 off += aligned_size;
+            }
+
+            // Discovery scan fallback: if CF still not found after direct CF_Ptr read,
+            // scan in 0x10-byte steps through a 128KB window
+            if update.cf_0.is_none() {
+                let zero_key = [0u8; 16];
+                let scan_range = 0x20000;
+                let image_ref: &[u8] = image;
+                let mut read_fn = |offset: usize, len: usize| -> Option<Vec<u8>> {
+                    if offset + len <= image_ref.len() {
+                        Some(image_ref[offset..offset + len].to_vec())
+                    } else {
+                        None
+                    }
+                };
+                if let Some((found_off, disco)) = bl_scan(&mut read_fn, cf_ptr, scan_range, &zero_key) {
+                    info!(
+                        "[builder] Discovery scan found {} v{} at 0x{:08X} via {} key",
+                        disco.magic, disco.version, found_off, disco.key_source
+                    );
+                    off = found_off;
+                    while off + 0x10 <= image.len() && cf_count < 2 {
+                        let bl_header = match BootloaderHeader::read_from_prefix(&image[off..off + 0x10]) {
+                            Ok((h, _)) => h,
+                            Err(_) => break,
+                        };
+                        let bl_size = bl_header.size.get() as usize;
+                        if bl_size < 0x10 || bl_size > 0x2000000 { break; }
+                        if off + bl_size > image.len() { break; }
+                        let bl_data = image[off..off + bl_size].to_vec();
+                        let aligned_size = (bl_size + 0xF) & 0xFFFFFFF0;
+                        match bl_header.get_type() {
+                            XenonBlType::CF => {
+                                cf_count += 1;
+                                info!("[builder] CF_{} at 0x{:08X} (v{}, 0x{:X} bytes) [discovery]", cf_count, off, bl_header.version.get(), bl_size);
+                                let cf = BootloaderCf::parse(&bl_data)?;
+                                if cf_count == 1 { update.cf_0 = Some(cf); }
+                                else { update.cf_1 = Some(cf); }
+                            }
+                            XenonBlType::CG => {
+                                cg_count += 1;
+                                info!("[builder] CG_{} at 0x{:08X} (v{}, 0x{:X} bytes) [discovery]", cg_count, off, bl_header.version.get(), bl_size);
+                                let cg = BootloaderCg::parse(&bl_data)?;
+                                if cg_count == 1 { update.cg_0 = Some(cg); }
+                                else { update.cg_1 = Some(cg); }
+                            }
+                            _ => break,
+                        }
+                        off += aligned_size;
+                    }
+                } else {
+                    info!("[builder] Discovery scan: no CF found in 0x{:08X}..0x{:08X}", cf_ptr, cf_ptr + scan_range);
+                }
             }
         }
 

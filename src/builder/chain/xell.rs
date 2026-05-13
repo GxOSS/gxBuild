@@ -2,6 +2,7 @@
     xell.rs - Handling for XeLL (Xenon Linux Loader).
 
     Modified for GGX by Exposure / Zach
+    Licensed under the GNU General Public License Version 2.0
 */
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]

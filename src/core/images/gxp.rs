@@ -2,7 +2,7 @@
     gxp.rs - gxBuild Patch (GXP) binary parser
 
     Created in 2026 by Exposure / Zach for gxBuild.
-    Licensed under GPLv2 (inherited from xenon-bltool).
+    Licensed under the GNU General Public License Version 2.0
 */
 
 use std::fs::File;
@@ -10,7 +10,7 @@ use std::io::{self, Read, Seek, SeekFrom, BufRead, BufReader};
 use std::path::Path;
 use log::{info, warn};
 
-/// GXP Header Magic: "GXP\0" (0x47 0x58 0x50 0x00)
+/// GXP Header Magic: "GXP\0"
 pub const GXP_MAGIC: [u8; 4] = [0x47, 0x58, 0x50, 0x00];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,7 +105,7 @@ impl From<u8> for BootloaderId {
 pub struct PatchRecord {
     pub address: u32,
     pub amount: u32,
-    pub data: Vec<u8>, // Switched to Vec<u8> for byte-level granularity
+    pub data: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -159,8 +159,7 @@ pub struct GxpBinary {
     pub smc: Option<GxpSection>,
 }
 
-/// Core record reading logic. 
-/// Handles legacy word-based patches and modern GXP patches with section-aware granularity.
+/// Parse sections and determine xepatch or gxs
 fn read_patch_sections(mut reader: impl Read, patch_type: GxpPatchType, is_legacy: bool, smc_id: BootloaderId) -> io::Result<Vec<GxpSection>> {
     let mut sections = Vec::new();
     let mut cur_records = Vec::new();
@@ -186,14 +185,14 @@ fn read_patch_sections(mut reader: impl Read, patch_type: GxpPatchType, is_legac
         reader.read_exact(&mut amt_buf)?;
         let amount = u32::from_be_bytes(amt_buf);
         
-        // Determine granularity: SMC sections in GXP files are byte-based.
+        // SMC sections in GXP files are GXS
         let current_section_idx = sections.len();
         let is_byte_mode = if is_legacy {
             false
         } else {
             match patch_type {
-                GxpPatchType::Rgh4Section => current_section_idx == 3, // Section 4 (SMC)
-                GxpPatchType::Jtag5Section => current_section_idx == 4, // Section 5 (SMC)
+                GxpPatchType::Rgh4Section => current_section_idx == 3,
+                GxpPatchType::Jtag5Section => current_section_idx == 4,
                 GxpPatchType::Standalone | GxpPatchType::Addon => smc_id == BootloaderId::Smc,
                 _ => false,
             }
@@ -224,6 +223,7 @@ fn read_patch_sections(mut reader: impl Read, patch_type: GxpPatchType, is_legac
     Ok(sections)
 }
 
+/// Parse patch file
 pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> {
     let mut file = File::open(&path)?;
     let mut magic_buf = [0u8; 4];

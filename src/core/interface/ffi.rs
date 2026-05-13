@@ -1,5 +1,9 @@
+#![allow(improper_ctypes_definitions)]
 /*
-    ffi.rs - interoptopus-based Foreign Function Interface
+    ffi.rs - interoptopus FFI and cxx-qt
+
+    Created in 2026 by Exposure / Zach for gxBuild.
+    Licensed under the GNU General Public License Version 2.0
 */
 
 use interoptopus::{ffi_function, ffi_type, Inventory, InventoryBuilder, function};

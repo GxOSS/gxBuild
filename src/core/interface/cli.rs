@@ -2,7 +2,7 @@
     cli.rs - xeBuild style command line interface
 
     Created in 2026 by Exposure / Zach for gxBuild.
-    Licensed under GPLv2 (inherited from xenon-bltool).
+    Licensed under the GNU General Public License Version 2.0
 */
 
 #![cfg(feature = "cli")]
