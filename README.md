@@ -22,20 +22,18 @@ Based on [x360utils](https://github.com/Swizzy/x360Utils), [xenon-bltool](), and
 
 | Feature | gxBuild | xeBuild | RGBuild |
 | ------- | ------- | ------- | ------- |
-| Retail | ✅ | ❌ | ❌ |
-| Devkit | ✅ | - | ❌ |
-| DevGL | ✅ | - | ❌ |
+| Retail | ✅ | ✅ | ❌ |
+| Devkit | ✅ | ✅ | ❌ |
+| DevGL | ✅ | ✅ | ❌ |
 | RGLoader | ✅ | ❌ | ✅ |
-| XDKBuild | ✅ | ❌ | ❌ |
+| XDKBuild | ✅ | - | ❌ |
 | Glitch3 | ✅ | ❌ | ❌ |
 | SMC Patcher | ✅ | ❌ | ❌ |
 | KV Patcher | ✅ | ❌ | ❌ |
-| CE Patcher | ✅ | ❌ | ❌ |
 | RGLP | ✅ | ❌ | ✅ |
 | API | ✅ | ❌ | ❌ |
-| Wireless | - | ✅ | - |
+| Wireless | ❌ | ✅ | ❌ |
 | UI Editor | ✅ | ❌ | ✅ |
-
 
 ## Documentation
 
