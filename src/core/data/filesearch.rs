@@ -7,10 +7,33 @@
 */
 use crate::builder::builder::NandSkeleton;
 use crate::builder::chain::flashfs::{FileSystemEntry, FlashFS};
-use crate::core::data::xeini::{IniError, XeBuildIni};
-use log::{error, info, warn};
+use crate::core::data::xeini::XeBuildIni;
+use log::{info, warn};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum FilesearchError {
+    #[error("[filesearch] File not found: {0}")]
+    FileNotFound(String),
+    #[error("[filesearch] Incorrect formatting in {0}")]
+    BadBuildFormat(String),
+    #[error("[filesearch] Rebooter bootloader chain requested in INI but not initialized in NAND skeleton")]
+    RebooterNotInitialized,
+    #[error("[filesearch] {0} Patches for platform {1} not found at path {2}")]
+    NoAutoPatches(String, String, String),
+    #[error("[filesearch] No security files found in INI")]
+    NoSecurityFiles,
+    #[error("[ini] Hash mismatch for {0}")]
+    HashMismatch(String),
+    #[error("[ini] No SMC.bin or {0}_CLEAN.bin found")]
+    NoSmcOrCleanBin(String),
+    #[error("[ini] Payload {0} has broken hash")]
+    PayloadBrokenHash(String),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
 
 fn resolve_robust(base: &Path, cand: &str) -> PathBuf {
     let mut p = base.to_path_buf();
@@ -156,7 +179,7 @@ impl IniSearch {
         data: impl AsRef<Path>,
         nand: &Option<NandSkeleton>,
         unsafe_mode: Option<bool>,
-    ) -> Result<Self, IniError> {
+    ) -> Result<Self, FilesearchError> {
         let unsafe_mode = unsafe_mode.unwrap_or(false);
         let mut ini = ini;
         let mut result = IniSearchResult {
@@ -221,7 +244,7 @@ impl IniSearch {
                                 );
                                 patch_path = Some(p);
                             } else {
-                                return Err(IniError::NoAutoPatches(
+                                return Err(FilesearchError::NoAutoPatches(
                                     "Glitch1".to_string(),
                                     ini.name.clone(),
                                     format!("<build>/bin/{}", n),
@@ -239,7 +262,7 @@ impl IniSearch {
                             );
                             patch_path = Some(p);
                         } else {
-                            return Err(IniError::NoAutoPatches(
+                            return Err(FilesearchError::NoAutoPatches(
                                 "Glitch2".to_string(),
                                 ini.name.clone(),
                                 format!("<build>/bin/{}", n),
@@ -257,7 +280,7 @@ impl IniSearch {
                             );
                             patch_path = Some(p);
                         } else {
-                            return Err(IniError::NoAutoPatches(
+                            return Err(FilesearchError::NoAutoPatches(
                                 ini.buildtype.clone(),
                                 ini.name.clone(),
                                 format!("<build>/bin/{}", n),
@@ -278,7 +301,7 @@ impl IniSearch {
                             warn!("[ini] Glitch3 Patches for platform {} not found, using fallback: {}", platform, p2.display());
                             patch_path = Some(p2);
                         } else {
-                            return Err(IniError::NoAutoPatches(
+                            return Err(FilesearchError::NoAutoPatches(
                                 "Glitch3".to_string(),
                                 ini.name.clone(),
                                 format!("<build>/bin/{}", n3),
@@ -295,7 +318,7 @@ impl IniSearch {
                             );
                             patch_path = Some(p);
                         } else {
-                            return Err(IniError::NoAutoPatches(
+                            return Err(FilesearchError::NoAutoPatches(
                                 "Devkit".to_string(),
                                 ini.name.clone(),
                                 format!("<build>/bin/{}", n),
@@ -312,7 +335,7 @@ impl IniSearch {
                             );
                             patch_path = Some(p);
                         } else {
-                            return Err(IniError::NoAutoPatches(
+                            return Err(FilesearchError::NoAutoPatches(
                                 "RGBuild".to_string(),
                                 ini.name.clone(),
                                 format!("<build>/bin/{}", n),
@@ -322,7 +345,7 @@ impl IniSearch {
                     _ => {}
                 }
             }
-            _ => return Err(IniError::BadBuildFormat(ini.buildtype.clone())),
+            _ => return Err(FilesearchError::BadBuildFormat(ini.buildtype.clone())),
         }
         ini.patch.path = patch_path.clone();
 
@@ -374,11 +397,11 @@ impl IniSearch {
                             hasher.update(&c);
                             let actual = format!("{:08x}", hasher.finalize());
                             if actual.to_lowercase() == expected.to_lowercase() {
-                                found_content = Some(c);
+                                found_content = Some(c.clone());
                                 found_path = Some(cand);
                             } else if unsafe_mode {
                                 warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Data Folder Tier). Continuing...", filename, expected, actual);
-                                found_content = Some(c);
+                                found_content = Some(c.clone());
                                 found_path = Some(cand);
                             } else {
                                 info!("[ini] Hash mismatch for {} in Data Folder Tier, seeking fallback...", filename);
@@ -407,10 +430,7 @@ impl IniSearch {
                                 found_content = Some(c);
                                 found_path = Some(cand);
                             } else {
-                                anyhow::bail!(
-                                    "[ini] Hash mismatch for {} in Common Folder Tier",
-                                    filename
-                                );
+                                return Err(FilesearchError::HashMismatch(filename.to_string()));
                             }
                         } else {
                             found_content = Some(c);
@@ -429,8 +449,8 @@ impl IniSearch {
                         warn!("[ini] odd.bin not found during discovery, skipping with warning.");
                         continue;
                     }
-                    anyhow::bail!("[ini] All tiers failed for priority asset: {}", filename);
-                    return Err(IniError::FileNotFound(filename.clone()));
+                    warn!("[ini] All tiers failed for priority asset: {}", filename);
+                    return Err(FilesearchError::FileNotFound(filename.clone()));
                 }
             }
             result.security = Some(sec_paths);
@@ -461,10 +481,7 @@ impl IniSearch {
                 result.security_assets.insert("smc.bin".to_string(), c);
             }
         } else {
-            anyhow::bail!(
-                "[ini] No SMC.bin or {}_CLEAN.bin found in data folder",
-                platform_clean
-            );
+            return Err(FilesearchError::NoSmcOrCleanBin(platform_clean));
         }
 
         for entry in &ini.payloads {
@@ -473,7 +490,6 @@ impl IniSearch {
             let cand = data.join(filename);
             if cand.exists() {
                 if let Ok(c) = std::fs::read(&cand) {
-                    let mut verified = true;
                     if let Some(expected) = &entry.hash {
                         let actual = get_xebuild_crc32(&c, filename);
                         if actual.to_lowercase() != expected.to_lowercase() {
@@ -481,11 +497,7 @@ impl IniSearch {
                                 warn!("[ini] Unsafe Bypass: payload {} CRC32 mismatch (Expected: {}, Found: {}). Continuing...", filename, expected, actual);
                                 result.bootloader_assets.insert(lower_name, c);
                             } else {
-                                anyhow::bail!(
-                                    "[ini] Hash mismatch for payload {} in Data Folder",
-                                    filename
-                                );
-                                verified = false;
+                                return Err(FilesearchError::HashMismatch(filename.to_string()));
                             }
                         } else {
                             info!(
@@ -496,18 +508,11 @@ impl IniSearch {
                             result.bootloader_assets.insert(lower_name, c);
                         }
                     } else {
-                        anyhow::bail!(
-                            "[ini] Payload {} has broken hash, aborting build.",
-                            filename
-                        );
-                        return Err(IniError::NoSecurityFiles);
+                        return Err(FilesearchError::PayloadBrokenHash(filename.to_string()));
                     }
                 }
             } else {
-                anyhow::bail!(
-                    "[ini] Payload discovery failed: {} not found in data folder",
-                    filename
-                );
+                return Err(FilesearchError::FileNotFound(filename.to_string()));
             }
         }
 
@@ -575,8 +580,7 @@ impl IniSearch {
                                     warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in {} Tier). Continuing...", $name, expected, actual, $tier);
                                     true
                                 } else {
-                                    anyhow::bail!("[ini] Hash mismatch for {} in {} Tier", $name, $tier);
-                                    false
+                                    return Err(FilesearchError::HashMismatch($name.to_string()));
                                 }
                             }
                         } else { true }
@@ -718,6 +722,8 @@ impl IniSearch {
                     }
                 }
 
+
+                // Need to add rebooter patching
                 if let Some(mut c) = found_content {
                     // Apply Patch after confirmation
                     if let Some(ref parsed_patch) = xe_patch {
@@ -748,7 +754,7 @@ impl IniSearch {
                         result
                             .rebooter
                             .as_mut()
-                            .ok_or(IniError::RebooterNotInitialized)?
+                            .ok_or(FilesearchError::RebooterNotInitialized)?
                     } else {
                         result.bootloaders.as_mut().unwrap()
                     };
@@ -772,20 +778,19 @@ impl IniSearch {
                         target_bl.sc = Some(fp);
                     }
                 } else {
-                    anyhow::bail!("[ini] Bootloader Tiered Search failed: {}", filename);
-                    return Err(IniError::FileNotFound(filename.to_string()));
+                    return Err(FilesearchError::FileNotFound(filename.to_string()));
                 }
             }
         }
 
-        // --- FlashFS Tiered Discovery ---
+        // FlashFS Tiered Discovery
         if !ini.flashfs.is_empty() {
             let mut flashfs = FlashFS::new();
             for entry in &ini.flashfs {
                 let filename = &entry.filename;
                 let mut found_content: Option<Vec<u8>> = None;
 
-                // Tier 1: NAND Image
+                // NAND Image
                 if let Some(n) = nand {
                     if let Some(n_entry) = n
                         .flashfs
@@ -813,7 +818,7 @@ impl IniSearch {
                     }
                 }
 
-                // Tier 2 & 3: Local Folder (orig, orig1, orig2)
+                // Local Folder
                 if found_content.is_none() {
                     let candidates = [
                         filename.clone(),
@@ -899,8 +904,7 @@ impl IniSearch {
                     flashfs.root.entries.push(fs_entry);
                     result.flashfs_assets.insert(lower, c);
                 } else {
-                    anyhow::bail!("[ini] FlashFS Tiered Search failed: {}", filename);
-                    return Err(IniError::FileNotFound(filename.to_string()));
+                    return Err(FilesearchError::FileNotFound(filename.to_string()));
                 }
             }
             result.flashfs = Some(flashfs);

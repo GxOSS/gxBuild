@@ -1,5 +1,6 @@
 /*
     stfs.rs - STFS (PIRS) extraction tool for Xbox 360 content packages.
+    
     Based on extract360.py by Rene Ladan.
 
     Modified in 2026 by Exposure / Zach for gxBuild.

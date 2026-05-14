@@ -1,7 +1,7 @@
 /*
     xell.rs - Handling for XeLL (Xenon Linux Loader).
 
-    Modified for GGX by Exposure / Zach
+    Created in 2026 for gxBuild by Exposure / Zach
     Licensed under the GNU General Public License Version 2.0
 */
 

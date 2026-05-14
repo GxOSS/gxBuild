@@ -2,7 +2,7 @@
     ce.rs - Handling for Xbox 360 CE/5BL bootloader stages.
     Copyright 2024 Emma https://ipg.gay/
 
-    Modified in 2026 by Exposure / Zach for GGX
+    Modified in 2026 by Exposure / Zach for gxBuild
 
     This file has been taken from xenon-bltool and modified, and therefore retains the original
     License.
@@ -20,13 +20,15 @@
 */
 
 use super::BootloaderHeader;
-use crate::builder::chain::cf::BootloaderCf;
-use crate::builder::chain::cg::BootloaderCg;
+// use crate::builder::chain::cf::BootloaderCf;
+// use crate::builder::chain::cg::BootloaderCg;
 use crate::builder::deps::excrypt::{self, Rc4};
-use crate::builder::deps::xenia;
+// use crate::builder::deps::xenia;
 use byteorder::{BigEndian as RealBigEndian, ByteOrder};
 use log::info;
-use zerocopy::byteorder::{BigEndian, U16, U32, U64};
+
+// U16 removed as not used since decompression disabled
+use zerocopy::byteorder::{BigEndian, U32, U64};
 use zerocopy::{FromBytes, IntoBytes};
 
 #[derive(Clone, Debug)]
@@ -51,6 +53,7 @@ pub struct BootloaderCeHeader {
     pub unknown: U32<BigEndian>,
 }
 
+/*
 #[derive(
     zerocopy::FromBytes,
     zerocopy::IntoBytes,
@@ -65,6 +68,7 @@ struct BootloaderCompressionBlock {
     pub compressed_size: U16<BigEndian>,
     pub decompressed_size: U16<BigEndian>,
 }
+*/
 
 #[derive(Clone)]
 pub struct BootloaderCe {
@@ -212,6 +216,7 @@ impl BootloaderCe {
         self.populate_metadata();
     }
 
+    /*
     fn get_full_compressed_buffer(
         &self,
         in_buf: &[u8],
@@ -254,7 +259,9 @@ impl BootloaderCe {
 
         Ok(out_buf)
     }
+    */
 
+    /*
     pub fn decompress(&self) -> Result<Vec<u8>, String> {
         let _size = self.header.size.get();
         if self.data.len() < 0x1C {
@@ -275,7 +282,9 @@ impl BootloaderCe {
 
         Ok(decompressed)
     }
+*/
 
+/*
     pub fn apply_update(&mut self, cf: &BootloaderCf, cg: &BootloaderCg) -> Result<(), String> {
         let cf_meta = cf.metadata.as_ref().ok_or("CF metadata missing")?;
         if cf_meta.source_version != self.header.version.get() {
@@ -304,6 +313,7 @@ impl BootloaderCe {
         // TODO: Implement
         Ok(())
     }
+*/
 
     pub fn serialize(&self) -> Vec<u8> {
         // Always serialize the raw payload (self.data).

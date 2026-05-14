@@ -1,12 +1,14 @@
 /*
     flashfs.rs - 4 type FlashFS parser and builder
 
-    Modified in 2026 by Exposure / Zach for GGX
-    Licensed under GPLv2 (inherited from RGBuild).
+    Taken from x360utils by Swizzy
+
+    Modified in 2026 for gxBuild by Exposure / Zach
+    Licensed under GPLv2 (inherited from xenon-bltool).
 */
 
 use crate::core::images::blocks::*;
-use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use log::{error, info};
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};

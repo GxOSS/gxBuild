@@ -63,7 +63,7 @@ pub enum InternalCommand {
     },
     Clear,
     Compress,
-    Decompress,
+    // Decompress,
     Update {
         path: PathBuf,
     },
@@ -223,7 +223,7 @@ impl InternalCommand {
             Self::ParseIni { .. } => 100,
             Self::ParseFlashfs { .. } => 100,
             Self::ParsePatch { .. } => 100,
-            Self::Decompress => 99,
+            // Self::Decompress => 99,
             Self::FinalizeFlashfs => 90,
             Self::Extract { .. } => 89,
             Self::ExtractAll { .. } => 88,
@@ -522,9 +522,11 @@ impl Session {
         self.enqueue(InternalCommand::Compress);
     }
 
+    /*
     pub fn decompress(&mut self) {
         self.enqueue(InternalCommand::Decompress);
     }
+    */
 
     pub fn session_init(&mut self, base: Option<PathBuf>, common: Option<PathBuf>) {
         self.enqueue(InternalCommand::SessionInit { base, common });
@@ -1956,6 +1958,7 @@ impl Session {
             InternalCommand::Compress => {
                 info!("[session] Compress logic hooks to mspack / xenia (Not Yet Invoked)");
             }
+            /*
             InternalCommand::Decompress => {
                 info!("[session] Decompressing CE Base Kernel payload...");
                 if let Some(nand) = &mut self.active_nand {
@@ -1978,6 +1981,7 @@ impl Session {
                     error!("[session] No active NAND loaded. Cannot run Decompress.");
                 }
             }
+            */
             InternalCommand::ApplyOptions => {
                 info!("[session] Applying session options to active NAND...");
                 self.sync_options_to_nand()?;

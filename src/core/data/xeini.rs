@@ -261,13 +261,9 @@ pub fn parse_xe_ini_str(
     Ok(ini)
 }
 
-/// Typed asset maps passed to `apply_xe_ini`.
-/// Keeps bootloader binaries and security files in separate pools so
-/// they cannot be confused with each other or FlashFS content.
+/// Typed asset maps passed to apply_xe_ini
 pub struct PendingAssets<'a> {
-    /// Assets from the [main] INI section (CB, CD, CE, CF, CG, ...).
     pub bootloaders: &'a HashMap<String, Vec<u8>>,
-    /// Assets from the [security] INI section (smc.bin, kv.bin, fcrt.bin).
     pub security: &'a HashMap<String, Vec<u8>>,
 }
 
@@ -288,17 +284,15 @@ pub fn apply_xe_ini(
 
     let mut notified = false;
 
-    // process [main] bootloaders
     for entry in &ini.main {
         let filename = &entry.filename;
         let lower = filename.to_lowercase();
 
-        // Load the data (Only from memory in this new architecture)
+        // Load the data from memory
         let data = if let Some(mem_data) = pending.bootloaders.get(&lower) {
             mem_data.clone()
         } else {
-            // In the new modular discovery architecture, filesearch.rs should have already
-            // placed these in the pending_assets map.
+            // filesearch.rs should have already placed these in the pending_assets map
             continue;
         };
 
@@ -469,7 +463,6 @@ pub fn apply_xe_ini(
         }
     }
 
-    // process [payloads]
     for entry in &ini.payloads {
         let filename = &entry.filename;
         let lower = filename.to_lowercase();
@@ -560,9 +553,7 @@ pub fn apply_xe_ini(
     nand.options.jtag_syscall = ini.jtag.syscall;
     nand.options.jtag_pairing_2bl = ini.jtag.pairing_2bl;
 
-    // Process File Entries (Security & FlashFS)
-    // In the new architecture, FlashFS entries are added directly to the FlashFS struct
-    // by filesearch.rs. Security and Extra files are merged here.
+    // Security and Extra files merged here
     if let Some(smc_data) = pending.security.get("smc.bin") {
         nand.extra.smc = smc_data.clone();
         info!("[ini] Assigned SMC.bin from memory");
@@ -584,7 +575,7 @@ pub fn apply_xe_ini(
 
     nand.bootloaders.khvpatch = ini.patch.khv.clone();
 
-    // Finalize image profile enforcement
+    // 1f with JTAG ini 
     if nand.options.image_profile == "onef" {
         info!("[ini] Enforcing Onef profile: Clearing second-chain kernel and FlashFS");
         nand.update = crate::builder::builder::NandUpdate::default();
@@ -593,7 +584,7 @@ pub fn apply_xe_ini(
         nand.flashfs.root.block_map = vec![0; total_blocks];
     }
 
-    // Apply Overrides
+    // Overrides
     if let Some(cba_file) = &nand.options.cba {
         if let Some(data) = pending.bootloaders.get(&cba_file.to_lowercase()) {
             nand.bootloaders.cb_a = Some(

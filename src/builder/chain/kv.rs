@@ -1,11 +1,11 @@
 /*
     kv.rs - Handling for Xbox 360 Keyvault (KV).
 
-    Modified for GGX by Exposure / Zach
+    Created in 2026 for gxBuild by Exposure / Zach
 */
 
 use crate::builder::deps::excrypt::{self, Rc4};
-use log::{info, warn};
+use log::info;
 use zerocopy::byteorder::{BigEndian, U16};
 use zerocopy::FromBytes;
 
@@ -134,20 +134,16 @@ impl Keyvault {
     }
 
     /// Detects if the data is already decrypted.
-    /// Primary check: J-Runner updatekvval() L669 - `data[0x40..0x60]` are all zeros in decrypted KVs.
-    /// Fallback: look for OSIG/DRM ASCII magic at their known certificate offsets.
     fn check_decrypted_signatures(&self) -> bool {
         if self.data.len() < 0x60 {
             return false;
         }
 
-        // Canonical zero-pad check (J-Runner / x360Utils): decrypted KVs always have
-        // zeros at 0x40..0x60 (the reserved pad region after the HMAC nonce and header).
         if self.data[0x40..0x60].iter().all(|&b| b == 0x00) {
             return true;
         }
 
-        // Fallback: ASCII magic at known decrypted offsets
+        // Fallback ASCII magic at known decrypted offsets
         if self.data.len() >= 0x2000 {
             let osig_sig = &self.data[0xC82..0xC86]; // "OSIG"
             let drm_sig = &self.data[0x1F64..0x1F67]; // "DRM"
@@ -168,7 +164,7 @@ impl Keyvault {
 
         let original_data = self.data.clone();
 
-        // 1. Try KV1 Decryption
+        // Try KV1 Decryption
         self.hashed = false;
         let mut kv1_data = self.data.clone();
 
@@ -184,7 +180,7 @@ impl Keyvault {
         rc4.crypt(&mut kv1_data[0x10..])
             .map_err(|e| format!("Decryption failed: {}", e))?;
 
-        // 2. Check if KV1 was correct
+        // Check if KV1 was correct and use it if so
         let kv1_valid = {
             let temp_kv = Keyvault {
                 data: kv1_data.clone(),
@@ -192,6 +188,15 @@ impl Keyvault {
             };
             temp_kv.check_decrypted_signatures()
         };
+
+        if kv1_valid {
+            info!("[builder] Keyvault decrypted as Type 1");
+            self.data = kv1_data;
+            self.is_decrypted = true;
+            self.hashed = false;
+            let _ = self.refresh_metadata();
+            return Ok(());
+        }
 
         let kv1_looks_like_type2 = if kv1_valid {
             let sig_region = &kv1_data[0x1DF8..0x1E00];
@@ -203,7 +208,7 @@ impl Keyvault {
         };
 
         if kv1_valid && !kv1_looks_like_type2 {
-            info!("[builder] Keyvault decrypted as Type 1 (Retail).");
+            info!("[builder] Keyvault decrypted as Type 1 (Retail)");
             self.data = kv1_data;
             self.is_decrypted = true;
             self.hashed = false;
@@ -240,15 +245,7 @@ impl Keyvault {
             return Ok(());
         }
 
-        // 4. Final Fallback: Use KV1 if it was valid
-        if kv1_valid {
-            warn!("[builder] KV2 decryption failed but KV1 was valid. Falling back to Type 1.");
-            self.data = kv1_data;
-            self.is_decrypted = true;
-            self.hashed = false;
-            let _ = self.refresh_metadata();
-            return Ok(());
-        }
+
 
         Err("Keyvault decryption failed: Invalid signatures for both KV1 and KV2".to_string())
     }

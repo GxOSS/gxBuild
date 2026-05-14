@@ -2,7 +2,7 @@
     cg.rs - Handling for Xbox 360 CG/7BL bootloader stages.
     Copyright 2024 Emma https://ipg.gay/
 
-    Modified in 2026 by Exposure / Zach for GGX
+    Modified in 2026 by Exposure / Zach for gxBuild
 
     This file has been taken from xenon-bltool and modified, and therefore retains the original
     License.
@@ -21,7 +21,7 @@
 
 use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, Rc4};
-use crate::builder::deps::xenia;
+// use crate::builder::deps::xenia;
 use byteorder::{BigEndian, ByteOrder};
 use log::info;
 use zerocopy::{FromBytes, IntoBytes};
@@ -187,6 +187,7 @@ impl BootloaderCg {
         }
     }
 
+/*
     pub fn apply_patch(&self, base_data: &[u8]) -> Result<Vec<u8>, String> {
         if self.data.len() < 0x40 {
             return Err("CG data too small to read patch header".into());
@@ -225,6 +226,7 @@ impl BootloaderCg {
         info!("[builder] LZX delta patch applied and hash verified OK.");
         Ok(output_buf)
     }
+*/
 
     pub fn serialize(&self) -> Vec<u8> {
         let mut out = IntoBytes::as_bytes(&self.header).to_vec();

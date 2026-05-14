@@ -5,8 +5,15 @@
     Licensed under the GNU General Public License Version 2.0
 */
 
-use crate::core::data::xeini::IniError;
 use log::{info, warn};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum OptionsIniError {
+    #[error("[ini] Incorrect formatting in options.ini")]
+    BadOptionsFormat(),
+}
+
 
 #[derive(Debug, Clone)]
 pub struct OptionsIni {
@@ -263,7 +270,7 @@ impl OptionsIni {
     }
 }
 
-pub fn parse_options_ini(content: &str) -> Result<OptionsIni, IniError> {
+pub fn parse_options_ini(content: &str) -> Result<OptionsIni, OptionsIniError> {
     info!("[ini] Parsing options.ini");
 
     let mut options = OptionsIni::new();
@@ -276,7 +283,7 @@ pub fn parse_options_ini(content: &str) -> Result<OptionsIni, IniError> {
         }
 
         if line.starts_with('[') && line.ends_with(']') {
-            return Err(IniError::BadOptionsFormat());
+            return Err(OptionsIniError::BadOptionsFormat());
         } else {
             let parts: Vec<String> = line
                 .split(" = ")
@@ -336,7 +343,7 @@ pub fn parse_options_ini(content: &str) -> Result<OptionsIni, IniError> {
                     "fcrt" => options.fcrt = Some(value.eq_ignore_ascii_case("true")),
                     _ => warn!("[ini] Unknown option: {}", key),
                 },
-                _ => {} // Skip malformed lines
+                _ => {}
             }
         }
     }

@@ -2,7 +2,7 @@
     cf.rs - Handling for Xbox 360 CF/6BL bootloader stages.
     Copyright 2024 Emma https://ipg.gay/
 
-    Modified in 2026 by Exposure / Zach for GGX
+    Modified in 2026 by Exposure / Zach for gxBuild
 
     This file has been taken from xenon-bltool and modified, and therefore retains the original
     License.

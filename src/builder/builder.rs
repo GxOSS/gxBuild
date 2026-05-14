@@ -1,7 +1,7 @@
 /*
     builder.rs - Core NAND assembly and parsing logic.
 
-    Created in 2026 by Exposure / Zach for GGX
+    Created in 2026 for gxBuild by Exposure / Zach
     Licensed under the GNU General Public License Version 2.0
 */
 

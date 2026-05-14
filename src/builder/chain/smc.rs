@@ -1,10 +1,9 @@
 /*
     smc.rs - Handling for Xbox 360 SMC.
 
-    This file was originally taken from xenon-bltool, but at this point, contains more code from Swizzy's x360Utils
-    and the various buildpy scripts floating around.
+    Taken from x360utils by Swizzy
 
-    Modified in 2026 by Exposure / Zach for GGX
+    Modified in 2026 for gxBuild by Exposure / Zach
     Licensed under GPLv2 (inherited from xenon-bltool).
 */
 
