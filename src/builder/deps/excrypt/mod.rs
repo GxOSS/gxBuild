@@ -239,29 +239,20 @@ pub fn sha(inputs: &[&[u8]]) -> Result<[u8; 20]> {
     }
 
     unsafe {
-        ExCryptSha(
-            in1,
-            in1_s,
-            in2,
-            in2_s,
-            in3,
-            in3_s,
-            output.as_mut_ptr(),
-            20,
-        );
+        ExCryptSha(in1, in1_s, in2, in2_s, in3, in3_s, output.as_mut_ptr(), 20);
     }
     Ok(output)
 }
 
-pub fn verify_signature(sig: &[u8; 256], hash: &[u8; 20], salt: &[u8], pubkey: &ExCryptRsa) -> Result<bool> {
+pub fn verify_signature(
+    sig: &[u8; 256],
+    hash: &[u8; 20],
+    salt: &[u8],
+    pubkey: &ExCryptRsa,
+) -> Result<bool> {
     let signature_ptr = sig.as_ptr() as *const ExCryptSig;
     unsafe {
-        let result = ExCryptBnQwBeSigVerify(
-            signature_ptr,
-            hash.as_ptr(),
-            salt.as_ptr(),
-            pubkey,
-        );
+        let result = ExCryptBnQwBeSigVerify(signature_ptr, hash.as_ptr(), salt.as_ptr(), pubkey);
         Ok(result == 1)
     }
 }

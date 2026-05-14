@@ -1,7 +1,7 @@
 /*
     cg.rs - Handling for Xbox 360 CG/7BL bootloader stages.
     Copyright 2024 Emma https://ipg.gay/
-    
+
     Modified in 2026 by Exposure / Zach for GGX
 
     This file has been taken from xenon-bltool and modified, and therefore retains the original
@@ -19,12 +19,12 @@
     If not, see <https://www.gnu.org/licenses/>.
 */
 
-use zerocopy::{FromBytes, IntoBytes};
 use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, Rc4};
 use crate::builder::deps::xenia;
 use byteorder::{BigEndian, ByteOrder};
 use log::info;
+use zerocopy::{FromBytes, IntoBytes};
 
 #[derive(Clone, Debug)]
 pub struct CgMetadata {
@@ -43,8 +43,8 @@ pub struct BootloaderCg {
 
 impl BootloaderCg {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload): (BootloaderHeader, &[u8]) = BootloaderHeader::read_from_prefix(data)
-            .map_err(|_| "Failed to parse CG header")?;
+        let (header, payload): (BootloaderHeader, &[u8]) =
+            BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CG header")?;
         let mut cg = Self {
             header,
             data: payload.to_vec(),
@@ -55,7 +55,9 @@ impl BootloaderCg {
     }
 
     pub fn populate_metadata(&mut self) {
-        if self.data.len() < 0x40 { return; } // metadata ends at 0x40 relative
+        if self.data.len() < 0x40 {
+            return;
+        } // metadata ends at 0x40 relative
 
         let original_size = BigEndian::read_u32(&self.data[0x10..0x14]);
         let mut original_hash = [0u8; 0x14];
@@ -75,7 +77,9 @@ impl BootloaderCg {
 
     pub fn sync_metadata(&mut self) {
         if let Some(ref meta) = self.metadata {
-            if self.data.len() < 0x40 { return; }
+            if self.data.len() < 0x40 {
+                return;
+            }
 
             BigEndian::write_u32(&mut self.data[0x10..0x14], meta.original_size);
             self.data[0x14..0x28].copy_from_slice(&meta.original_hash);
@@ -85,7 +89,9 @@ impl BootloaderCg {
     }
 
     pub fn is_decrypted(&self) -> bool {
-        if self.data.len() < 0x14 { return false; }
+        if self.data.len() < 0x14 {
+            return false;
+        }
         // Matches xenon-bltool cg_is_decrypted() (source/cg-handler.c:31):
         //   return ((BE(hdr->original_size) & 0xFFF) == 0x000);
         // Real CE kernel sizes are always 4KB-aligned, so this is the canonical check.
@@ -98,40 +104,44 @@ impl BootloaderCg {
         } else {
             "CG"
         };
-        info!("[builder] {} version: {}", indicator, self.header.version.get());
-        info!("[builder] {} size: 0x{:x}", indicator, self.header.size.get());
+        info!(
+            "[builder] {} version: {}",
+            indicator,
+            self.header.version.get()
+        );
+        info!(
+            "[builder] {} size: 0x{:x}",
+            indicator,
+            self.header.size.get()
+        );
 
         if self.is_decrypted() {
             if let Some(ref meta) = self.metadata {
                 info!(
                     "[builder] {} base size: 0x{:x}",
-                    indicator,
-                    meta.original_size
+                    indicator, meta.original_size
                 );
-                info!("[builder] {}-G base hash: {:02x?}", indicator, meta.original_hash);
                 info!(
-                    "[builder] {} target size: 0x{:x}",
-                    indicator,
-                    meta.new_size
+                    "[builder] {}-G base hash: {:02x?}",
+                    indicator, meta.original_hash
                 );
-                info!("[builder] {}-G target hash: {:02x?}", indicator, meta.new_hash);
+                info!("[builder] {} target size: 0x{:x}", indicator, meta.new_size);
+                info!(
+                    "[builder] {}-G target hash: {:02x?}",
+                    indicator, meta.new_hash
+                );
             } else {
                 let original_size = BigEndian::read_u32(&self.data[0x10..0x14]);
                 let original_hash = &self.data[0x14..0x28];
                 let new_size = BigEndian::read_u32(&self.data[0x28..0x2C]);
                 let new_hash = &self.data[0x2C..0x40];
 
+                info!("[builder] {} base size: 0x{:x}", indicator, original_size);
                 info!(
-                    "[builder] {} base size: 0x{:x}",
-                    indicator,
-                    original_size
+                    "[builder] {}-G base hash: {:02x?}",
+                    indicator, original_hash
                 );
-                info!("[builder] {}-G base hash: {:02x?}", indicator, original_hash);
-                info!(
-                    "[builder] {} target size: 0x{:x}",
-                    indicator,
-                    new_size
-                );
+                info!("[builder] {} target size: 0x{:x}", indicator, new_size);
                 info!("[builder] {}-G target hash: {:02x?}", indicator, new_hash);
             }
         } else {
@@ -144,7 +154,9 @@ impl BootloaderCg {
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_size = (size_aligned - 0x10) as usize; // data after header
 
-        if self.data.len() < payload_size { return; }
+        if self.data.len() < payload_size {
+            return;
+        }
 
         if let Ok(cg_key) = excrypt::hmac_sha(cg_hmac, &[&self.data[0..16]]) {
             let mut final_key = [0u8; 16];
@@ -163,7 +175,9 @@ impl BootloaderCg {
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = (size_aligned - 0x10) as usize; // data after header
 
-        if self.data.len() < payload_len { return; }
+        if self.data.len() < payload_len {
+            return;
+        }
 
         if let Ok(hash) = excrypt::rot_sum_sha(
             &IntoBytes::as_bytes(&self.header)[..0x10],
@@ -173,11 +187,10 @@ impl BootloaderCg {
         }
     }
 
-    pub fn apply_patch(
-        &self,
-        base_data: &[u8],
-    ) -> Result<Vec<u8>, String> {
-        if self.data.len() < 0x40 { return Err("CG data too small to read patch header".into()); }
+    pub fn apply_patch(&self, base_data: &[u8]) -> Result<Vec<u8>, String> {
+        if self.data.len() < 0x40 {
+            return Err("CG data too small to read patch header".into());
+        }
         let original_size = BigEndian::read_u32(&self.data[0x10..0x14]) as usize;
         let original_hash = &self.data[0x14..0x28];
         let new_size = BigEndian::read_u32(&self.data[0x28..0x2C]) as usize;
@@ -200,11 +213,8 @@ impl BootloaderCg {
         info!("[builder] Applying LZX delta patch to kernel (base: 0x{:X} bytes -> target: 0x{:X} bytes)...", original_size, new_size);
         // Skip the 0x40 bytes of CG metadata (key + original_size + original_hash + new_size + new_hash)
         // The LZX delta patch data starts after this metadata
-        xenia::apply_patch(
-            &self.data[0x40..],
-            0x8000,
-            &mut output_buf,
-        ).map_err(|e| format!("lzxdelta_apply_patch returned error code {}", e))?;
+        xenia::apply_patch(&self.data[0x40..], 0x8000, &mut output_buf)
+            .map_err(|e| format!("lzxdelta_apply_patch returned error code {}", e))?;
 
         if let Ok(updated_kernel_hash) = excrypt::sha(&[&output_buf]) {
             if updated_kernel_hash != new_hash {

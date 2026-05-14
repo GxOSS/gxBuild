@@ -24,12 +24,16 @@ pub struct Xell {
 impl Xell {
     pub fn parse(data: &[u8], filename: Option<&str>) -> Self {
         let mut xell_type = XellType::XellUnknown;
-        
+
         if let Some(name) = filename {
             let lower = name.to_lowercase();
-            if lower.contains("xell-gggggg") { xell_type = XellType::XellGg; }
-            else if lower.contains("xell-1f") { xell_type = XellType::Xell1f; }
-            else if lower.contains("xell-2f") { xell_type = XellType::Xell2f; }
+            if lower.contains("xell-gggggg") {
+                xell_type = XellType::XellGg;
+            } else if lower.contains("xell-1f") {
+                xell_type = XellType::Xell1f;
+            } else if lower.contains("xell-2f") {
+                xell_type = XellType::Xell2f;
+            }
         }
 
         if xell_type == XellType::XellUnknown {

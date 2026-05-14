@@ -1,16 +1,9 @@
 # gxBuild
 
 >[!CAUTION]
-> * gxBuild is in **BETA**!
+> * gxBuild is **UNSTABLE**!
 > * The app is still **UNTESTED** against real consoles!
 > * There is a **99.99%** chance you will brick your console!
-
->[!CAUTION]
-> * Currently stuck in Licensing Hell.
-> * As of right now, I cannot legally distribute a binary.
-> * To exit licensing hell, either:
-> * FlashFS **Building** needs to be rewritten without RGBuild.
-> * Permission from the RGBuild developers needs to be obtained.
 
 ![gxBuild Colour Transparent Banner](assets/gx_banner_colour_trans.png)
 

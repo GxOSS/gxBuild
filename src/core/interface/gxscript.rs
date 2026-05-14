@@ -5,11 +5,11 @@
     Licensed under the GNU General Public License Version 2.0
 */
 
+use crate::core::session::Session;
+use log::{error, info};
 use rhai::{Engine, Scope};
 use rustyline::DefaultEditor;
 use std::sync::{Arc, Mutex};
-use crate::core::session::Session;
-use log::{info, error};
 
 pub struct GxScriptEngine {
     engine: Engine,
@@ -56,15 +56,13 @@ impl GxScriptEngine {
             s.extract_all(std::path::PathBuf::from(dir));
         });
 
-        GxScriptEngine {
-            engine,
-            scope,
-        }
+        GxScriptEngine { engine, scope }
     }
 
     pub fn run_file(&mut self, path: &str) -> Result<(), String> {
         info!("[script] Running script: {}", path);
-        self.engine.run_file_with_scope(&mut self.scope, path.into())
+        self.engine
+            .run_file_with_scope(&mut self.scope, path.into())
             .map_err(|e| format!("Script error: {}", e))
     }
 
@@ -84,10 +82,13 @@ impl GxScriptEngine {
                     if trimmed.is_empty() {
                         continue;
                     }
-                    
+
                     let _ = rl.add_history_entry(trimmed);
 
-                    match self.engine.eval_with_scope::<rhai::Dynamic>(&mut self.scope, trimmed) {
+                    match self
+                        .engine
+                        .eval_with_scope::<rhai::Dynamic>(&mut self.scope, trimmed)
+                    {
                         Ok(result) => {
                             if !result.is_unit() {
                                 println!("=> {:?}", result);

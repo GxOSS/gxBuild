@@ -1,5 +1,5 @@
+use super::{CryptoError, ExCryptRsa, Result};
 use std::sync::Mutex;
-use super::{Result, CryptoError, ExCryptRsa};
 
 #[repr(u32)]
 #[derive(Debug, Clone, Copy)]
@@ -70,8 +70,20 @@ extern "C" {
     pub fn ExKeysGetKey(key_idx: u32, output: *mut u8, output_size: *mut u32) -> i32;
     pub fn ExKeysConsolePrivateKeySign(hash: *const u8, output_cert_sig: *mut u8) -> i32;
     pub fn ExKeysPkcs1Verify(hash: *const u8, input_sig: *const u8, key: *const ExCryptRsa) -> i32;
-    pub fn ExKeysObfuscate(roaming: i32, input: *const u8, input_size: u32, output: *mut u8, output_size: *mut u32) -> i32;
-    pub fn ExKeysUnObfuscate(roaming: i32, input: *const u8, input_size: u32, output: *mut u8, output_size: *mut u32) -> i32;
+    pub fn ExKeysObfuscate(
+        roaming: i32,
+        input: *const u8,
+        input_size: u32,
+        output: *mut u8,
+        output_size: *mut u32,
+    ) -> i32;
+    pub fn ExKeysUnObfuscate(
+        roaming: i32,
+        input: *const u8,
+        input_size: u32,
+        output: *mut u8,
+        output_size: *mut u32,
+    ) -> i32;
 }
 
 static EXKEYS_LOCK: Mutex<()> = Mutex::new(());
@@ -118,7 +130,14 @@ impl KeyManager {
         let mut output = vec![0u8; data.len() + 256]; // Buffer room
         let mut size = output.len() as u32;
         unsafe {
-            if ExKeysObfuscate(roaming as i32, data.as_ptr(), data.len() as u32, output.as_mut_ptr(), &mut size) == 0 {
+            if ExKeysObfuscate(
+                roaming as i32,
+                data.as_ptr(),
+                data.len() as u32,
+                output.as_mut_ptr(),
+                &mut size,
+            ) == 0
+            {
                 return Err(CryptoError::FfiError);
             }
         }
@@ -131,7 +150,14 @@ impl KeyManager {
         let mut output = vec![0u8; data.len()];
         let mut size = output.len() as u32;
         unsafe {
-            if ExKeysUnObfuscate(roaming as i32, data.as_ptr(), data.len() as u32, output.as_mut_ptr(), &mut size) == 0 {
+            if ExKeysUnObfuscate(
+                roaming as i32,
+                data.as_ptr(),
+                data.len() as u32,
+                output.as_mut_ptr(),
+                &mut size,
+            ) == 0
+            {
                 return Err(CryptoError::FfiError);
             }
         }

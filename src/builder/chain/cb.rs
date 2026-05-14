@@ -1,7 +1,7 @@
 /*
     cb.rs - Handling for Xbox 360 CB/2BL bootloader stages.
     Copyright 2024 Emma https://ipg.gay/
-    
+
     Modified in 2026 by Exposure / Zach for GGX
 
     This file has been taken from xenon-bltool and modified, and therefore retains the original
@@ -20,16 +20,16 @@
 */
 
 use super::BootloaderHeader;
-use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
-use zerocopy::{FromBytes, IntoBytes};
+use crate::builder::deps::excrypt::{self, ExCryptRsa, Rc4};
 use log::info;
+use zerocopy::{FromBytes, IntoBytes};
 
 #[derive(Clone, Debug)]
 pub struct CbMetadata {
     // Basic / Legacy
     pub ldv: u8,
-    pub b_flags: u16,         
-    
+    pub b_flags: u16,
+
     // PerBoxData (Offset 0x10 in payload)
     pub pairing_data: [u8; 3],
     pub lockdown_value: u8,
@@ -48,7 +48,7 @@ pub struct CbMetadata {
     pub post_output_addr: u64,
     pub sb_flash_addr: u64,
     pub soc_mmio_addr: u64,
-    
+
     // Security/Policy
     pub console_allow: [u8; 4],
 }
@@ -99,8 +99,8 @@ impl BootloaderCb {
     }
 
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload) = BootloaderHeader::read_from_prefix(data)
-            .map_err(|_| "Failed to parse CB header")?;
+        let (header, payload) =
+            BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CB header")?;
         let mut cb = Self {
             header: header.clone(),
             data: payload.to_vec(),
@@ -115,14 +115,18 @@ impl BootloaderCb {
     pub fn populate_metadata(&mut self) {
         // is_decrypted() checks CB_A zero-padding. CB_B never has this, so for
         // post-decrypt_v1 calls use populate_metadata_unchecked directly.
-        if !self.is_decrypted() || self.data.len() < 0x3B0 { return; }
+        if !self.is_decrypted() || self.data.len() < 0x3B0 {
+            return;
+        }
         self.populate_metadata_unchecked();
     }
 
     /// Populates metadata unconditionally (no is_decrypted guard).
     /// Use after decrypt_v1 for CB_B, which lacks CB_A's zero-padding region.
     pub fn populate_metadata_unchecked(&mut self) {
-        if self.data.len() < 0x3B0 { return; }
+        if self.data.len() < 0x3B0 {
+            return;
+        }
 
         // Mappings (+0x10 from RGBuild DecryptedData offsets)
         // Absolute 0x20 = self.data[0x10]
@@ -131,7 +135,7 @@ impl BootloaderCb {
 
         // Absolute 0x23 = self.data[0x13]
         let mut lockdown_value = self.data[0x13];
-        
+
         // J-Runner check: if bootloader starts with specific branch, LDV is 0
         // cb_dec[0x02] and cb_dec[0x03] correspond to the version field in the header.
         if self.header.version.get() == 0x3C48 {
@@ -140,9 +144,9 @@ impl BootloaderCb {
 
         let reserved_per_box: [u8; 0xC] = self.data[0x14..0x20].try_into().unwrap();
         let per_box_digest: [u8; 0x10] = self.data[0x20..0x30].try_into().unwrap();
-        
+
         let mut signature = [0u8; 0x100];
-        signature.copy_from_slice(&self.data[0x30..0x130]); 
+        signature.copy_from_slice(&self.data[0x30..0x130]);
 
         let post_output_addr = u64::from_be_bytes(self.data[0x240..0x248].try_into().unwrap());
         let sb_flash_addr = u64::from_be_bytes(self.data[0x248..0x250].try_into().unwrap());
@@ -168,7 +172,7 @@ impl BootloaderCb {
 
         self.metadata = Some(CbMetadata {
             ldv: lockdown_value,
-            b_flags: self.header.flags.get(), 
+            b_flags: self.header.flags.get(),
             pairing_data,
             lockdown_value,
             reserved_per_box,
@@ -190,17 +194,19 @@ impl BootloaderCb {
     /// This ensures that any edits made to the metadata are carried over to the final image.
     pub fn sync_metadata(&mut self) {
         if let Some(ref meta) = self.metadata {
-            if self.data.len() < 0x3A4 { return; }
+            if self.data.len() < 0x3A4 {
+                return;
+            }
 
             let mut pd_sync = meta.pairing_data;
             pd_sync.reverse(); // Reverse back for storage
             self.data[0x10..0x13].copy_from_slice(&pd_sync);
             self.data[0x13] = meta.lockdown_value;
             self.data[0x3A1] = meta.lockdown_value; // J-Runner display offset
-            
+
             self.data[0x14..0x20].copy_from_slice(&meta.reserved_per_box);
             self.data[0x20..0x30].copy_from_slice(&meta.per_box_digest);
-            
+
             // If this is a combined CB (like CB_6750), it contains an embedded CB_B.
             // External tools like J-Runner-with-Extras will decrypt the payload and read the LDV from CB_B.
             // We must sync the metadata to the embedded CB_B as well.
@@ -244,7 +250,9 @@ impl BootloaderCb {
     }
 
     pub fn is_decrypted(&self) -> bool {
-        if self.data.len() < 0x380 { return false; }
+        if self.data.len() < 0x380 {
+            return false;
+        }
         // Use the zero-padding chunk (CB[0x270:0x390] relative to 0x10 header offset) to verify success
         self.data[0x260..0x380].iter().all(|&b| b == 0)
     }
@@ -254,13 +262,15 @@ impl BootloaderCb {
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = size_aligned as usize - 0x10;
 
-        if self.data.len() < payload_len { return; }
+        if self.data.len() < payload_len {
+            return;
+        }
 
         // rotsum covers first 0x10 bytes (header)
         // and everything from globals (0x130 rel / 0x140 abs) to the end
         if let Ok(hash) = excrypt::rot_sum_sha(
             &IntoBytes::as_bytes(&self.header)[..0x10],
-            &self.data[0x130..payload_len], 
+            &self.data[0x130..payload_len],
         ) {
             sha_out.copy_from_slice(&hash);
         }
@@ -270,7 +280,9 @@ impl BootloaderCb {
         let mut cb_hash = [0u8; 0x14];
         self.calculate_rotsum(&mut cb_hash);
 
-        if self.data.len() < 0x130 { return false; }
+        if self.data.len() < 0x130 {
+            return false;
+        }
         let signature: &[u8; 256] = self.data[0x30..0x130].try_into().unwrap(); // Absolute 0x40
 
         let expected_salt = b"XBOX_ROM_2\0";
@@ -289,12 +301,21 @@ impl BootloaderCb {
             indicator = "CB_A";
         }
 
-        if self.data.len() >= 0x30 && self.data[0x30] == 0 { // absolute 0x40
+        if self.data.len() >= 0x30 && self.data[0x30] == 0 {
+            // absolute 0x40
             indicator = "CB_B";
         }
 
-        info!("[builder] {} version: {}", indicator, self.header.version.get());
-        info!("[builder] {} size: 0x{:x}", indicator, self.header.size.get());
+        info!(
+            "[builder] {} version: {}",
+            indicator,
+            self.header.version.get()
+        );
+        info!(
+            "[builder] {} size: 0x{:x}",
+            indicator,
+            self.header.size.get()
+        );
         info!(
             "[builder] {} entrypoint: 0x{:x}",
             indicator,
@@ -304,20 +325,45 @@ impl BootloaderCb {
         if self.is_decrypted() {
             if let Some(ref meta) = self.metadata {
                 info!("[builder] {} LDV: {}", indicator, meta.ldv);
-                info!("[builder] {} Pairing: {:02x?}", indicator, meta.pairing_data);
-                info!("[builder] {} Post Addr: 0x{:08X}", indicator, meta.post_output_addr);
-                info!("[builder] {} SB Flash: 0x{:08X}", indicator, meta.sb_flash_addr);
-                info!("[builder] {} SOC MMIO: 0x{:08X}", indicator, meta.soc_mmio_addr);
+                info!(
+                    "[builder] {} Pairing: {:02x?}",
+                    indicator, meta.pairing_data
+                );
+                info!(
+                    "[builder] {} Post Addr: 0x{:08X}",
+                    indicator, meta.post_output_addr
+                );
+                info!(
+                    "[builder] {} SB Flash: 0x{:08X}",
+                    indicator, meta.sb_flash_addr
+                );
+                info!(
+                    "[builder] {} SOC MMIO: 0x{:08X}",
+                    indicator, meta.soc_mmio_addr
+                );
                 info!("[builder] {} Nonce 3BL: {:02x?}", indicator, meta.nonce_3bl);
-                info!("[builder] {} Allow Mask: {:02x?}", indicator, meta.console_allow);
-                info!("[builder] {} Next Digest: {:02x?}", indicator, meta.digest_4bl);
+                info!(
+                    "[builder] {} Allow Mask: {:02x?}",
+                    indicator, meta.console_allow
+                );
+                info!(
+                    "[builder] {} Next Digest: {:02x?}",
+                    indicator, meta.digest_4bl
+                );
             } else {
                 // Fallback to raw indexing if metadata wasn't populated
                 info!("[builder] {} LDV: {}", indicator, self.data[0x13]);
-                info!("[builder] {} next hash: {:02x?}", indicator, &self.data[0x38C..0x3A0]);
+                info!(
+                    "[builder] {} next hash: {:02x?}",
+                    indicator,
+                    &self.data[0x38C..0x3A0]
+                );
             }
             if self.data.len() >= 0x30 && self.data[0x30] != 0 {
-                info!("[builder] {} signature: (requires keys to verify)", indicator);
+                info!(
+                    "[builder] {} signature: (requires keys to verify)",
+                    indicator
+                );
             }
         } else {
             info!("[builder] {} is encrypted", indicator);
@@ -329,7 +375,9 @@ impl BootloaderCb {
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = size_aligned as usize - 0x10;
 
-        if self.data.len() < payload_len { return; }
+        if self.data.len() < payload_len {
+            return;
+        }
 
         // Derive RC4 key from 1BL key and the bootloader's key field.
         // Matches xenon-bltool's cb_decrypt: writes derived key back into data[0..16] in-place.
@@ -337,7 +385,10 @@ impl BootloaderCb {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
             self.derived_key = Some(decrypt_key);
-            info!("[builder] Decrypting CB using derived key: {:02x?}", decrypt_key);
+            info!(
+                "[builder] Decrypting CB using derived key: {:02x?}",
+                decrypt_key
+            );
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }
@@ -356,7 +407,9 @@ impl BootloaderCb {
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = size_aligned as usize - 0x10;
 
-        if self.data.len() < payload_len { return; }
+        if self.data.len() < payload_len {
+            return;
+        }
 
         // MFG key is all zeros
         let zero_key = [0u8; 16];
@@ -364,13 +417,16 @@ impl BootloaderCb {
         // Build HMAC input: cb_b_key (0x10) + cb_a_key (0x10)
         let mut hmac_input = [0u8; 0x20];
         hmac_input[..0x10].copy_from_slice(&self.data[0..0x10]); // cb_b_hdr.key
-        hmac_input[0x10..0x20].copy_from_slice(cb_a_key);         // cb_a derived key
+        hmac_input[0x10..0x20].copy_from_slice(cb_a_key); // cb_a derived key
 
         if let Ok(derived_key) = excrypt::hmac_sha(&zero_key, &[&hmac_input]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
             self.derived_key = Some(decrypt_key);
-            info!("[builder] Decrypting CB (MFG zero-key) using derived key: {:02x?}", decrypt_key);
+            info!(
+                "[builder] Decrypting CB (MFG zero-key) using derived key: {:02x?}",
+                decrypt_key
+            );
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }
@@ -385,7 +441,9 @@ impl BootloaderCb {
     /// Note: x360Utils offsets are from the full bootloader start (including 16-byte header).
     /// gxBuild's `data` field is the payload AFTER the header, so we subtract 0x10.
     pub fn verify_decrypted(&self) -> bool {
-        if self.data.len() < 0x380 { return false; }
+        if self.data.len() < 0x380 {
+            return false;
+        }
         self.data[0x260..0x380].iter().all(|&b| b == 0)
     }
 
@@ -394,7 +452,9 @@ impl BootloaderCb {
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = size_aligned as usize - 0x10;
 
-        if self.data.len() < payload_len { return; }
+        if self.data.len() < payload_len {
+            return;
+        }
 
         // C: ExCryptHmacSha(cb_a_key, cb_b_key, cpu_key, ..., cb_b_key) - writes back in-place.
         if let Ok(derived_key) = excrypt::hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key]) {
@@ -408,24 +468,35 @@ impl BootloaderCb {
         // Note: populate_metadata_unchecked is NOT called here intentionally.
     }
 
-    pub fn decrypt_v2(&mut self, cb_a_hdr: &BootloaderHeader, cb_a_key: &[u8; 16], cpu_key: &[u8; 16]) {
+    pub fn decrypt_v2(
+        &mut self,
+        cb_a_hdr: &BootloaderHeader,
+        cb_a_key: &[u8; 16],
+        cpu_key: &[u8; 16],
+    ) {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = size_aligned as usize - 0x10;
 
-        if self.data.len() < payload_len { return; }
+        if self.data.len() < payload_len {
+            return;
+        }
 
         let mut cb_a_hdr_copy = cb_a_hdr.clone();
         cb_a_hdr_copy.flags.set(0);
 
         if let Ok(derived_key) = excrypt::hmac_sha(
-            cb_a_key, 
-            &[&self.data[0..16], cpu_key, &IntoBytes::as_bytes(&cb_a_hdr_copy)[..0x10]]
+            cb_a_key,
+            &[
+                &self.data[0..16],
+                cpu_key,
+                &IntoBytes::as_bytes(&cb_a_hdr_copy)[..0x10],
+            ],
         ) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
             self.derived_key = Some(decrypt_key);
-            
+
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }

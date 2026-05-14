@@ -1,6 +1,13 @@
-
 #[repr(C)]
-#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Default, Copy, Clone)]
+#[derive(
+    zerocopy::FromBytes,
+    zerocopy::IntoBytes,
+    zerocopy::KnownLayout,
+    zerocopy::Immutable,
+    Default,
+    Copy,
+    Clone,
+)]
 pub struct BootloaderDeltaBlock {
     pub old_addr: u32,
     pub new_addr: u32,
@@ -58,11 +65,7 @@ pub fn decompress(
     }
 }
 
-pub fn apply_patch(
-    patch_data: &[u8],
-    window_size: u32,
-    dest_mut: &mut [u8],
-) -> Result<(), i32> {
+pub fn apply_patch(patch_data: &[u8], window_size: u32, dest_mut: &mut [u8]) -> Result<(), i32> {
     let patch_ptr = patch_data.as_ptr() as *const BootloaderDeltaBlock;
     let result = unsafe {
         lzxdelta_apply_patch(

@@ -8,11 +8,11 @@
     Licensed under GPLv2 (inherited from xenon-bltool).
 */
 
-use zerocopy::{FromBytes, IntoBytes};
 use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, ExCryptRsa};
 use crate::core::images::blocks::NandLayout;
 use log::info;
+use zerocopy::{FromBytes, IntoBytes};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SmcType {
@@ -35,7 +35,14 @@ pub struct SmcMetadata {
     pub pairing_data: [u8; 3],
 }
 
-#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
+#[derive(
+    zerocopy::FromBytes,
+    zerocopy::IntoBytes,
+    zerocopy::KnownLayout,
+    zerocopy::Immutable,
+    Clone,
+    Copy,
+)]
 #[repr(C)]
 pub struct SmcHeader {
     pub header: BootloaderHeader,
@@ -51,8 +58,8 @@ pub struct Smc {
 
 impl Smc {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload) = SmcHeader::read_from_prefix(data)
-            .map_err(|_| "Failed to parse SMC header")?;
+        let (header, payload) =
+            SmcHeader::read_from_prefix(data).map_err(|_| "Failed to parse SMC header")?;
         let mut smc = Self {
             header: header.clone(),
             data: payload.to_vec(),
@@ -63,8 +70,10 @@ impl Smc {
     }
 
     pub fn populate_metadata(&mut self) {
-        if self.data.len() < 0x103 { return; }
-        
+        if self.data.len() < 0x103 {
+            return;
+        }
+
         let type_byte = self.data[0x100];
         let major = self.data[0x101];
         let minor = self.data[0x102];
@@ -87,7 +96,10 @@ impl Smc {
         });
 
         if let Some(meta) = &self.metadata {
-            info!("[smc] Metadata: [{:?}] Type 0x{:02X}, Ver {}.{:02}", meta.smc_type, meta.type_byte, meta.major_version, meta.minor_version);
+            info!(
+                "[smc] Metadata: [{:?}] Type 0x{:02X}, Ver {}.{:02}",
+                meta.smc_type, meta.type_byte, meta.major_version, meta.minor_version
+            );
         }
     }
 
@@ -96,17 +108,26 @@ impl Smc {
         let mut glitch_patched = false;
         let mut retail_found = false;
 
-        if self.data.len() < 8 { return identified; }
+        if self.data.len() < 8 {
+            return identified;
+        }
 
         for i in 0..self.data.len() - 6 {
             match self.data[i] {
                 0x05 => {
-                    if self.data[i + 2] == 0xE5 && self.data[i + 4] == 0xB4 && self.data[i + 5] == 0x05 {
+                    if self.data[i + 2] == 0xE5
+                        && self.data[i + 4] == 0xB4
+                        && self.data[i + 5] == 0x05
+                    {
                         retail_found = true;
                     }
                 }
                 0x00 => {
-                    if self.data[i + 1] == 0x00 && self.data[i + 2] == 0xE5 && self.data[i + 4] == 0xB4 && self.data[i + 5] == 0x05 {
+                    if self.data[i + 1] == 0x00
+                        && self.data[i + 2] == 0xE5
+                        && self.data[i + 4] == 0xB4
+                        && self.data[i + 5] == 0x05
+                    {
                         glitch_patched = true;
                     }
                 }
@@ -116,7 +137,10 @@ impl Smc {
                     }
                 }
                 0xD0 => {
-                    if self.data[i + 1] == 0x00 && self.data[i + 2] == 0x00 && self.data[i + 3] == 0x1B {
+                    if self.data[i + 1] == 0x00
+                        && self.data[i + 2] == 0x00
+                        && self.data[i + 3] == 0x1B
+                    {
                         identified = SmcType::Jtag;
                     }
                 }
@@ -154,7 +178,8 @@ impl Smc {
         let mut bl_hash = [0u8; 0x14];
         self.calculate_rotsum(&mut bl_hash);
         let expected_salt = b"XBOX_ROM_S\0";
-        excrypt::verify_signature(&self.header.signature, &bl_hash, expected_salt, pubkey).unwrap_or(false)
+        excrypt::verify_signature(&self.header.signature, &bl_hash, expected_salt, pubkey)
+            .unwrap_or(false)
     }
 
     pub fn decrypt(&mut self) -> &mut Self {
@@ -184,18 +209,23 @@ pub struct RawSmc {
 
 impl RawSmc {
     pub fn new(data: Vec<u8>) -> Self {
-        let mut smc = Self { data, metadata: None };
+        let mut smc = Self {
+            data,
+            metadata: None,
+        };
         smc.populate_metadata();
         smc
     }
 
     pub fn populate_metadata(&mut self) {
-        if self.data.len() < 0x103 { return; }
-        
+        if self.data.len() < 0x103 {
+            return;
+        }
+
         let type_byte = self.data[0x100];
         let major = self.data[0x101];
         let minor = self.data[0x102];
-        
+
         // Use Smc's structural logic for identification if possible
         let identified_type = self.identify_type();
 
@@ -216,10 +246,16 @@ impl RawSmc {
         });
 
         if major != 0 && major != 0xFF {
-            info!("[smc] Identified Version: {}.{:02} (Type: 0x{:02X}, Offset: 0x101)", major, minor, type_byte);
+            info!(
+                "[smc] Identified Version: {}.{:02} (Type: 0x{:02X}, Offset: 0x101)",
+                major, minor, type_byte
+            );
         } else {
             // For debugging garbage versions
-            info!("[smc] Raw Version Bytes at 0x100: {:02X} {:02X} {:02X}", type_byte, major, minor);
+            info!(
+                "[smc] Raw Version Bytes at 0x100: {:02X} {:02X} {:02X}",
+                type_byte, major, minor
+            );
         }
     }
 
@@ -228,17 +264,26 @@ impl RawSmc {
         let mut glitch_patched = false;
         let mut retail_found = false;
 
-        if self.data.len() < 8 { return identified; }
+        if self.data.len() < 8 {
+            return identified;
+        }
 
         for i in 0..self.data.len() - 6 {
             match self.data[i] {
                 0x05 => {
-                    if self.data[i + 2] == 0xE5 && self.data[i + 4] == 0xB4 && self.data[i + 5] == 0x05 {
+                    if self.data[i + 2] == 0xE5
+                        && self.data[i + 4] == 0xB4
+                        && self.data[i + 5] == 0x05
+                    {
                         retail_found = true;
                     }
                 }
                 0x00 => {
-                    if self.data[i + 1] == 0x00 && self.data[i + 2] == 0xE5 && self.data[i + 4] == 0xB4 && self.data[i + 5] == 0x05 {
+                    if self.data[i + 1] == 0x00
+                        && self.data[i + 2] == 0xE5
+                        && self.data[i + 4] == 0xB4
+                        && self.data[i + 5] == 0x05
+                    {
                         glitch_patched = true;
                     }
                 }
@@ -248,7 +293,10 @@ impl RawSmc {
                     }
                 }
                 0xD0 => {
-                    if self.data[i + 1] == 0x00 && self.data[i + 2] == 0x00 && self.data[i + 3] == 0x1B {
+                    if self.data[i + 1] == 0x00
+                        && self.data[i + 2] == 0x00
+                        && self.data[i + 3] == 0x1B
+                    {
                         identified = SmcType::Jtag;
                     }
                 }
@@ -271,7 +319,9 @@ impl RawSmc {
     }
 
     pub fn is_scrambled(&self) -> bool {
-        if self.data.len() < 4 { return false; }
+        if self.data.len() < 4 {
+            return false;
+        }
         self.data[0..4] == [0x04, 0x20, 0x69, 0x69]
     }
 
@@ -287,11 +337,13 @@ impl RawSmc {
         let mut is_retail = false;
         self.populate_metadata();
         if let Some(ref meta) = self.metadata {
-            if meta.smc_type == SmcType::Retail { is_retail = true; }
+            if meta.smc_type == SmcType::Retail {
+                is_retail = true;
+            }
         }
 
         smc_crypt(&mut self.data, true);
-        
+
         // RGH3 scrambling is applied to the ciphertext.
         if !is_retail {
             self.scramble();
@@ -299,29 +351,40 @@ impl RawSmc {
     }
 
     pub fn unscramble(&mut self) {
-        if self.data.len() < 8 { return; }
-        if !self.is_scrambled() { return; }
+        if self.data.len() < 8 {
+            return;
+        }
+        if !self.is_scrambled() {
+            return;
+        }
         let len = self.data.len();
         let mut real_header = [0u8; 4];
         real_header.copy_from_slice(&self.data[len - 8..len - 4]);
         self.data[0..4].copy_from_slice(&real_header);
-        for i in 0..8 { self.data[len - 8 + i] = 0; }
+        for i in 0..8 {
+            self.data[len - 8 + i] = 0;
+        }
         info!("[smc] Unscrambled (RGH3)");
     }
 
     pub fn scramble(&mut self) {
-        if self.data.len() < 8 { return; }
-        if self.is_scrambled() { return; }
+        if self.data.len() < 8 {
+            return;
+        }
+        if self.is_scrambled() {
+            return;
+        }
         let len = self.data.len();
         let mut real_header = [0u8; 4];
         real_header.copy_from_slice(&self.data[0..4]);
         self.data[0..4].copy_from_slice(&[0x04, 0x20, 0x69, 0x69]);
         self.data[len - 8..len - 4].copy_from_slice(&real_header);
-        for i in 0..4 { self.data[len - 4 + i] = 0; }
+        for i in 0..4 {
+            self.data[len - 4 + i] = 0;
+        }
         info!("[smc] Scrambled (RGH3)");
     }
 }
-
 
 /// 64KB SMC Configuration Partition.
 #[derive(Clone)]
@@ -341,8 +404,8 @@ impl SmcConfig {
     pub fn get_scan_address(layout: &NandLayout) -> u32 {
         match layout {
             NandLayout::Emmc => 0x02FFC000,
-            NandLayout::Bb   => 0x3DF0000,
-            _                => 0xF70000,
+            NandLayout::Bb => 0x3DF0000,
+            _ => 0xF70000,
         }
     }
 
@@ -352,20 +415,24 @@ impl SmcConfig {
     pub fn get_logical_address(layout: &NandLayout) -> u32 {
         match layout {
             NandLayout::Emmc => 0x0,
-            NandLayout::Bb   => 0x3DF0000,
-            _                => 0xF70000,
+            NandLayout::Bb => 0x3DF0000,
+            _ => 0xF70000,
         }
     }
 
     pub fn new_empty() -> Self {
-        Self { data: Box::new([0xFF; Self::SIZE]) }
+        Self {
+            data: Box::new([0xFF; Self::SIZE]),
+        }
     }
 
     pub fn parse(data: &[u8]) -> Result<Self, String> {
         if data.len() != Self::SIZE {
             return Err(format!("Invalid SMC Config size"));
         }
-        let mut config = Self { data: Box::new([0; Self::SIZE]) };
+        let mut config = Self {
+            data: Box::new([0; Self::SIZE]),
+        };
         config.data.copy_from_slice(data);
         Ok(config)
     }
@@ -393,16 +460,22 @@ impl SmcConfig {
     pub fn set_fan_speed(&mut self, is_gpu: bool, mode_manual: bool, speed_pct: u8) {
         let offset = if is_gpu { 0x12 } else { 0x11 };
         let mut val = speed_pct & 0x7F;
-        if mode_manual { val |= 0x80; }
+        if mode_manual {
+            val |= 0x80;
+        }
         self.data[offset] = val;
     }
 
     pub fn set_thermal_targets(&mut self, cpu: u8, gpu: u8, ram: u8) {
-        self.data[0x29] = cpu; self.data[0x2A] = gpu; self.data[0x2B] = ram;
+        self.data[0x29] = cpu;
+        self.data[0x2A] = gpu;
+        self.data[0x2B] = ram;
     }
 
     pub fn set_thermal_limits(&mut self, cpu: u8, gpu: u8, ram: u8) {
-        self.data[0x2C] = cpu; self.data[0x2D] = gpu; self.data[0x2E] = ram;
+        self.data[0x2C] = cpu;
+        self.data[0x2D] = gpu;
+        self.data[0x2E] = ram;
     }
 
     pub fn set_mac_address(&mut self, mac: &[u8; 6]) {
@@ -411,9 +484,11 @@ impl SmcConfig {
 
     pub fn set_regions(&mut self, video: u16, game: u16, dvd: u8) {
         let v_bytes = video.to_be_bytes();
-        self.data[0x22A] = v_bytes[0]; self.data[0x22B] = v_bytes[1];
+        self.data[0x22A] = v_bytes[0];
+        self.data[0x22B] = v_bytes[1];
         let g_bytes = game.to_be_bytes();
-        self.data[0x22C] = g_bytes[0]; self.data[0x22D] = g_bytes[1];
+        self.data[0x22C] = g_bytes[0];
+        self.data[0x22D] = g_bytes[1];
         self.data[0x237] = dvd;
     }
 
@@ -426,15 +501,18 @@ fn smc_crypt(data: &mut [u8], encrypt: bool) {
     let mut key: [u32; 4] = [0x42, 0x75, 0x4E, 0x79];
     for i in 0..data.len() {
         let ciphertext_byte;
-        if encrypt { 
+        if encrypt {
             ciphertext_byte = data[i] ^ (key[i & 3] & 0xFF) as u8;
         } else {
             ciphertext_byte = data[i];
         }
         let mod_val = (ciphertext_byte as u32).wrapping_mul(0xFB);
-        if !encrypt { data[i] ^= (key[i & 3] & 0xFF) as u8; }
-        else { data[i] = ciphertext_byte; }
-        key[(i+1)&3] = key[(i+1)&3].wrapping_add(mod_val);
-        key[(i+2)&3] = key[(i+2)&3].wrapping_add(mod_val >> 8);
+        if !encrypt {
+            data[i] ^= (key[i & 3] & 0xFF) as u8;
+        } else {
+            data[i] = ciphertext_byte;
+        }
+        key[(i + 1) & 3] = key[(i + 1) & 3].wrapping_add(mod_val);
+        key[(i + 2) & 3] = key[(i + 2) & 3].wrapping_add(mod_val >> 8);
     }
 }

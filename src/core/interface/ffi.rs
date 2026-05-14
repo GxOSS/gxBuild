@@ -6,19 +6,21 @@
     Licensed under the GNU General Public License Version 2.0
 */
 
-use interoptopus::{ffi_function, ffi_type, Inventory, InventoryBuilder, function};
-use interoptopus::patterns::string::AsciiPointer;
 use crate::core::session::Session;
-use std::sync::{Arc, Mutex};
-use std::path::PathBuf;
+use interoptopus::patterns::string::AsciiPointer;
+use interoptopus::{ffi_function, ffi_type, function, Inventory, InventoryBuilder};
 use std::os::raw::c_char;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 pub type GxLogCallback = extern "C" fn(level: i32, message: *const c_char);
 pub(crate) static mut LOG_CALLBACK: Option<GxLogCallback> = None;
 
 #[no_mangle]
 pub extern "C" fn gx_set_log_callback(callback: GxLogCallback) {
-    unsafe { LOG_CALLBACK = Some(callback); }
+    unsafe {
+        LOG_CALLBACK = Some(callback);
+    }
 }
 
 #[ffi_type]
@@ -53,7 +55,10 @@ pub extern "C" fn gx_session_destroy(_session: GxSession) -> FFIError {
 
 #[ffi_function]
 #[no_mangle]
-pub extern "C" fn gx_session_set_build_type(session: &GxSession, build_type: AsciiPointer) -> FFIError {
+pub extern "C" fn gx_session_set_build_type(
+    session: &GxSession,
+    build_type: AsciiPointer,
+) -> FFIError {
     if let Ok(mut s) = session.inner.lock() {
         if let Ok(bt) = build_type.as_str() {
             s.set_build_type(bt.to_string());
@@ -143,7 +148,11 @@ pub extern "C" fn gx_session_set_output_path(session: &GxSession, path: AsciiPoi
 
 #[ffi_function]
 #[no_mangle]
-pub extern "C" fn gx_session_enqueue_build(session: &GxSession, output: AsciiPointer, target: u8) -> FFIError {
+pub extern "C" fn gx_session_enqueue_build(
+    session: &GxSession,
+    output: AsciiPointer,
+    target: u8,
+) -> FFIError {
     if let Ok(mut s) = session.inner.lock() {
         if let Ok(o) = output.as_str() {
             s.build(PathBuf::from(o), target);

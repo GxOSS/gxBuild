@@ -42,26 +42,24 @@ fn main() {
         format!("{}/excrypt_sha.c", excrypt_path),
         format!("{}/excrypt_sha2.c", excrypt_path),
         format!("{}/rijndael.c", excrypt_path),
-        
         format!("{}/lzxd.c", mspack_path),
         format!("{}/system.c", mspack_path),
-
         format!("{}/lzx-delta.c", xenia_path),
         format!("{}/utility.c", bltool_path),
     ]);
-    
+
     build_c.include(excrypt_path);
     build_c.include(mspack_path);
     build_c.include(xenia_path);
     build_c.include(bltool_path);
-    
+
     if use_maes {
         build_c.flag("-maes");
     }
     if use_neon_crypto {
         build_c.flag("-march=armv8-a+crypto");
     }
-    
+
     build_c.warnings(false);
     build_c.compile("gx_crypto_c");
 
@@ -76,19 +74,19 @@ fn main() {
         format!("{}/excrypt_bn_mod.cpp", excrypt_path),
         format!("{}/excrypt_mem.cpp", excrypt_path),
     ]);
-    
+
     build_cpp.include(excrypt_path);
     build_cpp.include(mspack_path);
     build_cpp.include(xenia_path);
     build_cpp.include(bltool_path);
-    
+
     if use_maes {
         build_cpp.flag("-maes");
     }
     if use_neon_crypto {
         build_cpp.flag("-march=armv8-a+crypto");
     }
-    
+
     build_cpp.warnings(false);
     build_cpp.compile("gx_crypto_cpp");
 
