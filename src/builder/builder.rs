@@ -9,6 +9,7 @@ use log::{error, info, warn};
 use zerocopy::byteorder::{BigEndian, I16, U16, U32};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
+use crate::builder::filesystem::corona::{self, CoronaFsSlots};
 use crate::builder::filesystem::flashfs::FlashFS;
 use crate::builder::filesystem::mobile::MobileStore;
 use crate::builder::chain::*;
@@ -531,6 +532,7 @@ pub struct NandSkeleton {
     pub payloads: Vec<PayloadEntry>,
     pub flashfs: FlashFS,
     pub mobile: MobileStore,
+    pub corona_fs: CoronaFsSlots,
     pub layout: NandLayout,
     pub total_blocks: usize,
     pub input_ldv_cb: Option<u8>,
@@ -615,6 +617,7 @@ impl NandSkeleton {
             payloads: Vec::new(),
             flashfs: FlashFS::new(),
             mobile: MobileStore::new(),
+            corona_fs: [Default::default(), Default::default()],
             layout,
             total_blocks,
             input_ldv_cb: None,
@@ -1048,6 +1051,12 @@ impl NandSkeleton {
             _ => None,
         };
 
+        let corona_fs = if layout == NandLayout::Emmc {
+            corona::load_slots(&image)
+        } else {
+            [Default::default(), Default::default()]
+        };
+
         Ok(NandSkeleton {
             cpukey: Some(cpukey),
             image,
@@ -1079,6 +1088,7 @@ impl NandSkeleton {
             payloads: Vec::new(),
             flashfs: final_flashfs,
             mobile: MobileStore::new(),
+            corona_fs,
             input_ldv_cb,
             input_ldv_cf,
             input_pd,
@@ -2111,6 +2121,15 @@ impl NandSkeleton {
             }
             self.mobile
                 .write_logical(&mut logical_image, layout, &mut self.flashfs.root);
+        }
+
+        if *layout == NandLayout::Emmc {
+            corona::write_back(
+                &mut logical_image,
+                &mut self.corona_fs,
+                &self.flashfs.root,
+                &self.mobile,
+            )?;
         }
 
         Ok(logical_image)

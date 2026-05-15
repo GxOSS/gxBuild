@@ -1800,13 +1800,15 @@ impl Session {
                     path
                 );
                 if let Some(nand) = &mut self.active_nand {
-                    if matches!(nand.layout, crate::core::images::blocks::NandLayout::Emmc) {
-                        return Err("eMMC FlashFS building/injection is not yet implemented (different metadata structure).".to_string());
-                    }
-                    // Use layout-specific defaults for FlashFS start block, not the parsed NAND's root block.
                     let fs_start: u16 = match nand.layout {
                         crate::core::images::blocks::NandLayout::Bb => 0x1E0,
-                        _ => 0x4E, // Small block default: block 78
+                        crate::core::images::blocks::NandLayout::Emmc => {
+                            crate::builder::filesystem::corona::default_emmc_fs_block(
+                                nand.header.fs_addr.get(),
+                                &nand.corona_fs,
+                            )
+                        }
+                        _ => 0x4E,
                     };
                     match crate::builder::filesystem::flashfs::FileSystemRoot::build_from_folder(
                         &mut nand.image,
@@ -1817,6 +1819,24 @@ impl Session {
                     ) {
                         Ok(new_root) => {
                             nand.flashfs.root = new_root;
+                            if matches!(
+                                nand.layout,
+                                crate::core::images::blocks::NandLayout::Emmc
+                            ) {
+                                if let Err(e) = crate::builder::filesystem::corona::write_back(
+                                    &mut nand.image,
+                                    &mut nand.corona_fs,
+                                    &nand.flashfs.root,
+                                    &nand.mobile,
+                                ) {
+                                    return Err(format!("Corona metadata write failed: {}", e));
+                                }
+                                if nand.flashfs.root.block_number >= 0 {
+                                    nand.header.fs_addr.set(
+                                        (nand.flashfs.root.block_number as u32) * 0x200,
+                                    );
+                                }
+                            }
                             info!("[session] FlashFS constructed and injected successfully.");
                         }
                         Err(e) => error!("[session] Failed to build FlashFS from folder: {}", e),
@@ -2124,7 +2144,13 @@ impl Session {
                         // fresh at the standard location.
                         let fs_start: u16 = match nand.layout {
                             crate::core::images::blocks::NandLayout::Bb => 0x1E0,
-                            _ => 0x4E, // Small block default: block 78
+                            crate::core::images::blocks::NandLayout::Emmc => {
+                                crate::builder::filesystem::corona::default_emmc_fs_block(
+                                    nand.header.fs_addr.get(),
+                                    &nand.corona_fs,
+                                )
+                            }
+                            _ => 0x4E,
                         };
                         info!(
                             "[session] FlashFS start block: 0x{:X} ({})",
@@ -2139,6 +2165,23 @@ impl Session {
                         ) {
                             Ok(new_root) => {
                                 nand.flashfs.root = new_root;
+                                if matches!(
+                                    nand.layout,
+                                    crate::core::images::blocks::NandLayout::Emmc
+                                ) {
+                                    crate::builder::filesystem::corona::write_back(
+                                        &mut nand.image,
+                                        &mut nand.corona_fs,
+                                        &nand.flashfs.root,
+                                        &nand.mobile,
+                                    )
+                                    .map_err(|e| format!("Corona metadata write failed: {}", e))?;
+                                    if nand.flashfs.root.block_number >= 0 {
+                                        nand.header.fs_addr.set(
+                                            (nand.flashfs.root.block_number as u32) * 0x200,
+                                        );
+                                    }
+                                }
                                 info!(" -> FlashFS generation complete.");
                             }
                             Err(e) => return Err(format!("FlashFS Build Error: {}", e)),

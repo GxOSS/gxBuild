@@ -875,6 +875,14 @@ impl FlashFS {
         let mut best_main: Option<(usize, u32)> = None;
         let mut best_alt: Option<(usize, u32)> = None;
 
+        if *layout == NandLayout::Emmc {
+            let corona = crate::builder::filesystem::corona::load_slots(image);
+            if let Some((block, ver)) = crate::builder::filesystem::corona::best_fs_from_slots(&corona)
+            {
+                best_main = Some((block, ver));
+            }
+        }
+
         for block in 0..total_blocks {
             if is_bad_block(image, block, layout) {
                 continue;
@@ -917,6 +925,21 @@ impl FlashFS {
         let mut best_alt: Option<(usize, u32)> = None;
 
         if *layout == NandLayout::Emmc {
+            let corona = crate::builder::filesystem::corona::load_slots(image);
+            for entry in corona.iter() {
+                if entry.fs_version > 0 {
+                    let block = entry.fs_block_idx as usize;
+                    let ver = entry.fs_version;
+                    if best_main.map(|(_, v)| ver > v).unwrap_or(true) {
+                        info!(
+                            "[flashfs] Corona slot: block {}, version {}",
+                            block, ver
+                        );
+                        best_main = Some((block, ver));
+                    }
+                }
+            }
+
             for &offset in &EMMC_ANCHOR_OFFSETS {
                 if offset + 0x20 > image.len() {
                     continue;
