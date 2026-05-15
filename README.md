@@ -22,18 +22,15 @@ Based on [x360utils](https://github.com/Swizzy/x360Utils), [xenon-bltool](), and
 | XDKBuild | ✅ | - | ❌ |
 | Glitch3 | ✅ | ❌ | ❌ |
 | SMC Patcher | ✅ | ❌ | ❌ |
-| KV Patcher | ✅ | ❌ | ❌ |
-| RGLP | ✅ | ❌ | ✅ |
+| KV Patcher | ✅ | ✅ | ✅ |
+| RGLP | - | ❌ | ✅ |
 | API | ✅ | ❌ | ❌ |
 | Wireless | ❌ | ✅ | ❌ |
 | UI Editor | ✅ | ❌ | ✅ |
 
 ## Documentation
 
-- [Usage](https://exposuremg.github.io/gxBuild/usage/)  - General Usage
-- [Patches](https://exposuremg.github.io/gxBuild/patches/) - Patch format
-- [Scripting](https://exposuremg.github.io/gxBuild/scripting/) - Python Scripting
-- [Developer](https://exposuremg.github.io/gxBuild/developer/) - FFI Interface
+Coming Soon
 
 ## Info
 
@@ -44,8 +41,6 @@ Based on [x360utils](https://github.com/Swizzy/x360Utils), [xenon-bltool](), and
 - [TODO.md](TODO.md) - TODO List
 
 ## Testing
-
-Any testing is greatly appreciated, as I don't have the funds for every platform.
 
 ✓ = Tested Working
 
@@ -72,8 +67,6 @@ In every folder ive included a README explaining the files and submodules.
 
 The project is fully setup with [Interoptopus](https://github.com/ralfbiedert/interoptopus) for ffi bindings with C# and C.
 
-Documentation is available on [ExposureMG's GitHub Pages](https://exposuremg.github.io/gxBuild/home/)
-
 ### Building
 
 Build gxBuild default (FFI Only)
@@ -86,12 +79,6 @@ Build gxBuild with CLI
 
 ```bash
 cargo build --release --features cli
-```
-
-Build gxBuild with CXX-Qt bindings
-
-```bash
-cargo build --release --features gui
 ```
 
 ## License

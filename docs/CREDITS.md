@@ -26,7 +26,7 @@ All projects used for gxBuild, directly or indirectly.
 
 - [xenon-bltool](https://github.com/InvoxiPlayGames/xenon-bltool) by [InxoviPlayGames](https://github.com/InvoxiPlayGames)
 - [x360utils](https://github.com/Swizzy/x360Utils) by [Swizzy](https://github.com/Swizzy)
-- [RGBuild](https://github.com/RGLoader/RGBuild) by [emoose](https://github.com/emoose) and [tydye81](https://github.com/tydye81)
+- [RGBuild++](https://github.com/emoose/RGBuildPP) by [emoose](https://github.com/emoose)
 
 ### Crypto
 
