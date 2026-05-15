@@ -68,7 +68,9 @@ impl MobileStore {
     }
 
     pub fn latest_entry(&self, slot: usize) -> Option<&MobileData> {
-        self.latest.get(slot).and_then(|&idx| idx.map(|i| &self.entries[i]))
+        self.latest
+            .get(slot)
+            .and_then(|&idx| idx.map(|i| &self.entries[i]))
     }
 
     pub fn latest_mut(&mut self, slot: usize) -> Option<&mut MobileData> {
@@ -189,10 +191,7 @@ impl MobileStore {
             return Err(format!("Invalid mobile type 0x{:02X}", data_type));
         }
         let slot = slot_index(data_type).unwrap();
-        let sequence = self
-            .latest_entry(slot)
-            .map(|e| e.sequence + 1)
-            .unwrap_or(1);
+        let sequence = self.latest_entry(slot).map(|e| e.sequence + 1).unwrap_or(1);
         let idx = self.entries.len();
         self.entries.push(MobileData {
             data_type,
@@ -212,10 +211,10 @@ impl MobileStore {
     }
 
     pub fn add_from_path(&mut self, slot: usize, path: &Path) -> Result<(), String> {
-        let data_type = type_for_slot(slot)
-            .ok_or_else(|| format!("Invalid mobile slot index {}", slot))?;
-        let data = std::fs::read(path)
-            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+        let data_type =
+            type_for_slot(slot).ok_or_else(|| format!("Invalid mobile slot index {}", slot))?;
+        let data =
+            std::fs::read(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
         self.add_entry(data_type, data)
     }
 
@@ -313,10 +312,7 @@ impl MobileStore {
                 continue;
             }
             let name = MOBILE_SLOT_NAMES[slot];
-            let candidates = [
-                data_dir.join(format!("{}.bin", name)),
-                data_dir.join(name),
-            ];
+            let candidates = [data_dir.join(format!("{}.bin", name)), data_dir.join(name)];
             let Some(path) = candidates.iter().find(|p| p.is_file()) else {
                 continue;
             };

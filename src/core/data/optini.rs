@@ -125,56 +125,156 @@ impl OptionsIni {
     }
 
     pub fn merge(&mut self, other: OptionsIni) {
-        if let Some(v) = other.ctype { self.ctype = Some(v); }
-        if let Some(v) = other._1blkey { self._1blkey = Some(v); }
-        if let Some(v) = other.cpukey { self.cpukey = Some(v); }
-        if let Some(v) = other.cfldv { self.cfldv = Some(v); }
-        if let Some(v) = other.dvdkey { self.dvdkey = Some(v); }
-        if let Some(v) = other.xellbutton { self.xellbutton = Some(v); }
-        if let Some(v) = other.xellbutton2 { self.xellbutton2 = Some(v); }
-        if let Some(v) = other.cygnos { self.cygnos = Some(v); }
-        if let Some(v) = other.demon { self.demon = Some(v); }
-        if let Some(v) = other.smcnoeject { self.smcnoeject = Some(v); }
-        if let Some(v) = other.smcnoblink { self.smcnoblink = Some(v); }
-        if let Some(v) = other.patchsmc { self.patchsmc = Some(v); }
-        if let Some(v) = other.olddvd { self.olddvd = Some(v); }
-        if let Some(v) = other.nodvd { self.nodvd = Some(v); }
-        if let Some(v) = other.dualboot { self.dualboot = Some(v); }
-        if let Some(v) = other.nomobile { self.nomobile = Some(v); }
-        if let Some(v) = other.noremap { self.noremap = Some(v); }
-        if let Some(v) = other.noecdremap { self.noecdremap = Some(v); }
-        if let Some(v) = other.nandmu { self.nandmu = Some(v); }
-        if let Some(v) = other.nosecurity { self.nosecurity = Some(v); }
-        if let Some(v) = other.nosusecurity { self.nosusecurity = Some(v); }
-        if let Some(v) = other.noecc { self.noecc = Some(v); }
-        if let Some(v) = other.noflashfs { self.noflashfs = Some(v); }
-        if let Some(v) = other.smcnocheck { self.smcnocheck = Some(v); }
-        if let Some(v) = other.noenter { self.noenter = Some(v); }
-        if let Some(v) = other.nolog { self.nolog = Some(v); }
-        if let Some(v) = other.noinfo { self.noinfo = Some(v); }
-        if let Some(v) = other.gxunsafe { self.gxunsafe = Some(v); }
-        if let Some(v) = other.verbose { self.verbose = Some(v); }
-        if let Some(v) = other.cba { self.cba = Some(v); }
-        if let Some(v) = other.cbb { self.cbb = Some(v); }
-        if let Some(v) = other.cputemp { self.cputemp = Some(v); }
-        if let Some(v) = other.gputemp { self.gputemp = Some(v); }
-        if let Some(v) = other.edramtemp { self.edramtemp = Some(v); }
-        if let Some(v) = other.overcputemp { self.overcputemp = Some(v); }
-        if let Some(v) = other.overgputemp { self.overgputemp = Some(v); }
-        if let Some(v) = other.overedramtemp { self.overedramtemp = Some(v); }
-        if let Some(v) = other.cpufan { self.cpufan = Some(v); }
-        if let Some(v) = other.gpufan { self.gpufan = Some(v); }
-        if let Some(v) = other.avregion { self.avregion = Some(v); }
-        if let Some(v) = other.gameregion { self.gameregion = Some(v); }
-        if let Some(v) = other.dvdregion { self.dvdregion = Some(v); }
-        if let Some(v) = other.macid { self.macid = Some(v); }
-        if let Some(v) = other.full_image { self.full_image = Some(v); }
-        if let Some(v) = other.xsb { self.xsb = Some(v); }
-        if let Some(v) = other.serial { self.serial = Some(v); }
-        if let Some(v) = other.consoleid { self.consoleid = Some(v); }
-        if let Some(v) = other.osig { self.osig = Some(v); }
-        if let Some(v) = other.mfdate { self.mfdate = Some(v); }
-        if let Some(v) = other.fcrt { self.fcrt = Some(v); }
+        if let Some(v) = other.ctype {
+            self.ctype = Some(v);
+        }
+        if let Some(v) = other._1blkey {
+            self._1blkey = Some(v);
+        }
+        if let Some(v) = other.cpukey {
+            self.cpukey = Some(v);
+        }
+        if let Some(v) = other.cfldv {
+            self.cfldv = Some(v);
+        }
+        if let Some(v) = other.dvdkey {
+            self.dvdkey = Some(v);
+        }
+        if let Some(v) = other.xellbutton {
+            self.xellbutton = Some(v);
+        }
+        if let Some(v) = other.xellbutton2 {
+            self.xellbutton2 = Some(v);
+        }
+        if let Some(v) = other.cygnos {
+            self.cygnos = Some(v);
+        }
+        if let Some(v) = other.demon {
+            self.demon = Some(v);
+        }
+        if let Some(v) = other.smcnoeject {
+            self.smcnoeject = Some(v);
+        }
+        if let Some(v) = other.smcnoblink {
+            self.smcnoblink = Some(v);
+        }
+        if let Some(v) = other.patchsmc {
+            self.patchsmc = Some(v);
+        }
+        if let Some(v) = other.olddvd {
+            self.olddvd = Some(v);
+        }
+        if let Some(v) = other.nodvd {
+            self.nodvd = Some(v);
+        }
+        if let Some(v) = other.dualboot {
+            self.dualboot = Some(v);
+        }
+        if let Some(v) = other.nomobile {
+            self.nomobile = Some(v);
+        }
+        if let Some(v) = other.noremap {
+            self.noremap = Some(v);
+        }
+        if let Some(v) = other.noecdremap {
+            self.noecdremap = Some(v);
+        }
+        if let Some(v) = other.nandmu {
+            self.nandmu = Some(v);
+        }
+        if let Some(v) = other.nosecurity {
+            self.nosecurity = Some(v);
+        }
+        if let Some(v) = other.nosusecurity {
+            self.nosusecurity = Some(v);
+        }
+        if let Some(v) = other.noecc {
+            self.noecc = Some(v);
+        }
+        if let Some(v) = other.noflashfs {
+            self.noflashfs = Some(v);
+        }
+        if let Some(v) = other.smcnocheck {
+            self.smcnocheck = Some(v);
+        }
+        if let Some(v) = other.noenter {
+            self.noenter = Some(v);
+        }
+        if let Some(v) = other.nolog {
+            self.nolog = Some(v);
+        }
+        if let Some(v) = other.noinfo {
+            self.noinfo = Some(v);
+        }
+        if let Some(v) = other.gxunsafe {
+            self.gxunsafe = Some(v);
+        }
+        if let Some(v) = other.verbose {
+            self.verbose = Some(v);
+        }
+        if let Some(v) = other.cba {
+            self.cba = Some(v);
+        }
+        if let Some(v) = other.cbb {
+            self.cbb = Some(v);
+        }
+        if let Some(v) = other.cputemp {
+            self.cputemp = Some(v);
+        }
+        if let Some(v) = other.gputemp {
+            self.gputemp = Some(v);
+        }
+        if let Some(v) = other.edramtemp {
+            self.edramtemp = Some(v);
+        }
+        if let Some(v) = other.overcputemp {
+            self.overcputemp = Some(v);
+        }
+        if let Some(v) = other.overgputemp {
+            self.overgputemp = Some(v);
+        }
+        if let Some(v) = other.overedramtemp {
+            self.overedramtemp = Some(v);
+        }
+        if let Some(v) = other.cpufan {
+            self.cpufan = Some(v);
+        }
+        if let Some(v) = other.gpufan {
+            self.gpufan = Some(v);
+        }
+        if let Some(v) = other.avregion {
+            self.avregion = Some(v);
+        }
+        if let Some(v) = other.gameregion {
+            self.gameregion = Some(v);
+        }
+        if let Some(v) = other.dvdregion {
+            self.dvdregion = Some(v);
+        }
+        if let Some(v) = other.macid {
+            self.macid = Some(v);
+        }
+        if let Some(v) = other.full_image {
+            self.full_image = Some(v);
+        }
+        if let Some(v) = other.xsb {
+            self.xsb = Some(v);
+        }
+        if let Some(v) = other.serial {
+            self.serial = Some(v);
+        }
+        if let Some(v) = other.consoleid {
+            self.consoleid = Some(v);
+        }
+        if let Some(v) = other.osig {
+            self.osig = Some(v);
+        }
+        if let Some(v) = other.mfdate {
+            self.mfdate = Some(v);
+        }
+        if let Some(v) = other.fcrt {
+            self.fcrt = Some(v);
+        }
     }
 }
 
@@ -219,14 +319,18 @@ pub fn parse_options_ini(content: &str) -> Result<OptionsIni, OptionsIniError> {
                     "noecdremap" => options.noecdremap = Some(value.eq_ignore_ascii_case("true")),
                     "nandmu" => options.nandmu = Some(value.eq_ignore_ascii_case("true")),
                     "nosecurity" => options.nosecurity = Some(value.eq_ignore_ascii_case("true")),
-                    "nosusecurity" => options.nosusecurity = Some(value.eq_ignore_ascii_case("true")),
+                    "nosusecurity" => {
+                        options.nosusecurity = Some(value.eq_ignore_ascii_case("true"))
+                    }
                     "noecc" => options.noecc = Some(value.eq_ignore_ascii_case("true")),
                     "noflashfs" => options.noflashfs = Some(value.eq_ignore_ascii_case("true")),
                     "smcnocheck" => options.smcnocheck = Some(value.eq_ignore_ascii_case("true")),
                     "noenter" => options.noenter = Some(value.eq_ignore_ascii_case("true")),
                     "nolog" => options.nolog = Some(value.eq_ignore_ascii_case("true")),
                     "noinfo" => options.noinfo = Some(value.eq_ignore_ascii_case("true")),
-                    "gxunsafe" | "unsafe" => options.gxunsafe = Some(value.eq_ignore_ascii_case("true")),
+                    "gxunsafe" | "unsafe" => {
+                        options.gxunsafe = Some(value.eq_ignore_ascii_case("true"))
+                    }
                     "verbose" => options.verbose = Some(value.eq_ignore_ascii_case("true")),
                     "cba" => options.cba = Some(value.clone()),
                     "cbb" => options.cbb = Some(value.clone()),

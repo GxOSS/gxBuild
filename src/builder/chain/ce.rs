@@ -262,58 +262,58 @@ impl BootloaderCe {
     */
 
     /*
-    pub fn decompress(&self) -> Result<Vec<u8>, String> {
-        let _size = self.header.size.get();
-        if self.data.len() < 0x1C {
-            return Err("Payload too small to read decompression size".to_string());
+        pub fn decompress(&self) -> Result<Vec<u8>, String> {
+            let _size = self.header.size.get();
+            if self.data.len() < 0x1C {
+                return Err("Payload too small to read decompression size".to_string());
+            }
+            let uncompressed_size = RealBigEndian::read_u32(&self.data[0x18..0x1C]);
+
+            let data = self.data_ce.as_ref().ok_or("No CE data available")?;
+
+            let consolidated_compressed = self
+                .get_full_compressed_buffer(data, uncompressed_size)
+                .map_err(|e| format!("Decompression structuring failed: {}", e))?;
+
+            let mut decompressed = vec![0u8; uncompressed_size as usize];
+            info!("[builder] Decompressing CE Kernel (LZX)...");
+            xenia::decompress(&consolidated_compressed, &mut decompressed, 0x20000, None)
+                .map_err(|e| format!("lzx_decompress returned error code {}", e))?;
+
+            Ok(decompressed)
         }
-        let uncompressed_size = RealBigEndian::read_u32(&self.data[0x18..0x1C]);
+    */
 
-        let data = self.data_ce.as_ref().ok_or("No CE data available")?;
+    /*
+        pub fn apply_update(&mut self, cf: &BootloaderCf, cg: &BootloaderCg) -> Result<(), String> {
+            let cf_meta = cf.metadata.as_ref().ok_or("CF metadata missing")?;
+            if cf_meta.source_version != self.header.version.get() {
+                return Err(format!(
+                    "Mismatching base kernel version (CE is {}, CF expects {})",
+                    self.header.version.get(),
+                    cf_meta.source_version
+                ));
+            }
 
-        let consolidated_compressed = self
-            .get_full_compressed_buffer(data, uncompressed_size)
-            .map_err(|e| format!("Decompression structuring failed: {}", e))?;
+            info!("[builder] Applying CG kernel delta patch to CE base kernel (base v{} -> target patch)...", self.header.version.get());
 
-        let mut decompressed = vec![0u8; uncompressed_size as usize];
-        info!("[builder] Decompressing CE Kernel (LZX)...");
-        xenia::decompress(&consolidated_compressed, &mut decompressed, 0x20000, None)
-            .map_err(|e| format!("lzx_decompress returned error code {}", e))?;
+            let base_kernel = self
+                .data_kernel
+                .as_ref()
+                .ok_or("CE Base Kernel has not been decompressed yet. Cannot apply patch.")?;
 
-        Ok(decompressed)
-    }
-*/
+            let patched_kernel = cg.apply_patch(base_kernel)?;
 
-/*
-    pub fn apply_update(&mut self, cf: &BootloaderCf, cg: &BootloaderCg) -> Result<(), String> {
-        let cf_meta = cf.metadata.as_ref().ok_or("CF metadata missing")?;
-        if cf_meta.source_version != self.header.version.get() {
-            return Err(format!(
-                "Mismatching base kernel version (CE is {}, CF expects {})",
-                self.header.version.get(),
-                cf_meta.source_version
-            ));
+            self.data_kernel = Some(patched_kernel);
+
+            Ok(())
         }
 
-        info!("[builder] Applying CG kernel delta patch to CE base kernel (base v{} -> target patch)...", self.header.version.get());
-
-        let base_kernel = self
-            .data_kernel
-            .as_ref()
-            .ok_or("CE Base Kernel has not been decompressed yet. Cannot apply patch.")?;
-
-        let patched_kernel = cg.apply_patch(base_kernel)?;
-
-        self.data_kernel = Some(patched_kernel);
-
-        Ok(())
-    }
-
-    pub fn split_into_stages(&self) -> Result<(), String> {
-        // TODO: Implement
-        Ok(())
-    }
-*/
+        pub fn split_into_stages(&self) -> Result<(), String> {
+            // TODO: Implement
+            Ok(())
+        }
+    */
 
     pub fn serialize(&self) -> Vec<u8> {
         // Always serialize the raw payload (self.data).

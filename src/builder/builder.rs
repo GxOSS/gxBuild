@@ -9,10 +9,10 @@ use log::{error, info, warn};
 use zerocopy::byteorder::{BigEndian, I16, U16, U32};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
+use crate::builder::chain::*;
 use crate::builder::filesystem::corona::{self, CoronaFsSlots};
 use crate::builder::filesystem::flashfs::FlashFS;
 use crate::builder::filesystem::mobile::MobileStore;
-use crate::builder::chain::*;
 use crate::core::images::blocks::*;
 use crate::core::images::gxp::{apply_records, GxpBinary, GxpPatchType, PatchRecord};
 

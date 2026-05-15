@@ -871,14 +871,10 @@ pub fn resolve_remapped_blocks(
         let last_page = first_page + pages_per_block - 1;
 
         let id1 = get_page_spare(image, first_page, layout)
-            .map(|s| {
-                crate::builder::filesystem::FsSpareData::parse(&s, layout).block_id as usize
-            })
+            .map(|s| crate::builder::filesystem::FsSpareData::parse(&s, layout).block_id as usize)
             .unwrap_or(usize::MAX);
         let id2 = get_page_spare(image, last_page, layout)
-            .map(|s| {
-                crate::builder::filesystem::FsSpareData::parse(&s, layout).block_id as usize
-            })
+            .map(|s| crate::builder::filesystem::FsSpareData::parse(&s, layout).block_id as usize)
             .unwrap_or(usize::MAX);
 
         for (i, &bad) in bad_blocks.iter().enumerate() {

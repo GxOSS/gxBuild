@@ -9,13 +9,13 @@
 use crate::builder::builder::NandSkeleton;
 use crate::builder::builder::{LayoutCalculator, SouthbridgeType};
 use crate::core::data::filesearch::IniSearch;
+use crate::core::images::blocks::NandLayout;
 use crate::core::images::gxp::parse_patch_binary;
 use log::{error, info, warn};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
-use crate::core::images::blocks::NandLayout;
 
 #[derive(Debug)]
 pub enum InternalCommand {
@@ -1819,10 +1819,8 @@ impl Session {
                     ) {
                         Ok(new_root) => {
                             nand.flashfs.root = new_root;
-                            if matches!(
-                                nand.layout,
-                                crate::core::images::blocks::NandLayout::Emmc
-                            ) {
+                            if matches!(nand.layout, crate::core::images::blocks::NandLayout::Emmc)
+                            {
                                 if let Err(e) = crate::builder::filesystem::corona::write_back(
                                     &mut nand.image,
                                     &mut nand.corona_fs,
@@ -1832,9 +1830,9 @@ impl Session {
                                     return Err(format!("Corona metadata write failed: {}", e));
                                 }
                                 if nand.flashfs.root.block_number >= 0 {
-                                    nand.header.fs_addr.set(
-                                        (nand.flashfs.root.block_number as u32) * 0x200,
-                                    );
+                                    nand.header
+                                        .fs_addr
+                                        .set((nand.flashfs.root.block_number as u32) * 0x200);
                                 }
                             }
                             info!("[session] FlashFS constructed and injected successfully.");
@@ -2177,9 +2175,9 @@ impl Session {
                                     )
                                     .map_err(|e| format!("Corona metadata write failed: {}", e))?;
                                     if nand.flashfs.root.block_number >= 0 {
-                                        nand.header.fs_addr.set(
-                                            (nand.flashfs.root.block_number as u32) * 0x200,
-                                        );
+                                        nand.header
+                                            .fs_addr
+                                            .set((nand.flashfs.root.block_number as u32) * 0x200);
                                     }
                                 }
                                 info!(" -> FlashFS generation complete.");

@@ -74,6 +74,26 @@ The project is fully setup with [Interoptopus](https://github.com/ralfbiedert/in
 
 Documentation is available on [ExposureMG's GitHub Pages](https://exposuremg.github.io/gxBuild/home/)
 
+### Building
+
+Build gxBuild default (FFI Only)
+
+```bash
+cargo build --release
+```
+
+Build gxBuild with CLI
+
+```bash
+cargo build --release --features cli
+```
+
+Build gxBuild with CXX-Qt bindings
+
+```bash
+cargo build --release --features gui
+```
+
 ## License
 
 gxBuild is multi-licensed, distributed under the GPL v2.

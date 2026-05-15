@@ -187,46 +187,46 @@ impl BootloaderCg {
         }
     }
 
-/*
-    pub fn apply_patch(&self, base_data: &[u8]) -> Result<Vec<u8>, String> {
-        if self.data.len() < 0x40 {
-            return Err("CG data too small to read patch header".into());
-        }
-        let original_size = BigEndian::read_u32(&self.data[0x10..0x14]) as usize;
-        let original_hash = &self.data[0x14..0x28];
-        let new_size = BigEndian::read_u32(&self.data[0x28..0x2C]) as usize;
-        let new_hash = &self.data[0x2C..0x40];
-
-        if base_data.len() < original_size {
-            return Err("Base data provided is smaller than original_size".into());
-        }
-
-        if let Ok(base_kernel_hash) = excrypt::sha(&[base_data]) {
-            if base_kernel_hash != original_hash {
-                return Err("Base kernel hash did not match expected".into());
+    /*
+        pub fn apply_patch(&self, base_data: &[u8]) -> Result<Vec<u8>, String> {
+            if self.data.len() < 0x40 {
+                return Err("CG data too small to read patch header".into());
             }
-        }
+            let original_size = BigEndian::read_u32(&self.data[0x10..0x14]) as usize;
+            let original_hash = &self.data[0x14..0x28];
+            let new_size = BigEndian::read_u32(&self.data[0x28..0x2C]) as usize;
+            let new_hash = &self.data[0x2C..0x40];
 
-        let mut output_buf = vec![0u8; new_size];
-        output_buf[..original_size].copy_from_slice(&base_data[..original_size]);
-        // The rest is automatically padded with 0 since vec! initializes with 0
-
-        info!("[builder] Applying LZX delta patch to kernel (base: 0x{:X} bytes -> target: 0x{:X} bytes)...", original_size, new_size);
-        // Skip the 0x40 bytes of CG metadata (key + original_size + original_hash + new_size + new_hash)
-        // The LZX delta patch data starts after this metadata
-        xenia::apply_patch(&self.data[0x40..], 0x8000, &mut output_buf)
-            .map_err(|e| format!("lzxdelta_apply_patch returned error code {}", e))?;
-
-        if let Ok(updated_kernel_hash) = excrypt::sha(&[&output_buf]) {
-            if updated_kernel_hash != new_hash {
-                return Err("Updated kernel hash did not match expected".into());
+            if base_data.len() < original_size {
+                return Err("Base data provided is smaller than original_size".into());
             }
-        }
 
-        info!("[builder] LZX delta patch applied and hash verified OK.");
-        Ok(output_buf)
-    }
-*/
+            if let Ok(base_kernel_hash) = excrypt::sha(&[base_data]) {
+                if base_kernel_hash != original_hash {
+                    return Err("Base kernel hash did not match expected".into());
+                }
+            }
+
+            let mut output_buf = vec![0u8; new_size];
+            output_buf[..original_size].copy_from_slice(&base_data[..original_size]);
+            // The rest is automatically padded with 0 since vec! initializes with 0
+
+            info!("[builder] Applying LZX delta patch to kernel (base: 0x{:X} bytes -> target: 0x{:X} bytes)...", original_size, new_size);
+            // Skip the 0x40 bytes of CG metadata (key + original_size + original_hash + new_size + new_hash)
+            // The LZX delta patch data starts after this metadata
+            xenia::apply_patch(&self.data[0x40..], 0x8000, &mut output_buf)
+                .map_err(|e| format!("lzxdelta_apply_patch returned error code {}", e))?;
+
+            if let Ok(updated_kernel_hash) = excrypt::sha(&[&output_buf]) {
+                if updated_kernel_hash != new_hash {
+                    return Err("Updated kernel hash did not match expected".into());
+                }
+            }
+
+            info!("[builder] LZX delta patch applied and hash verified OK.");
+            Ok(output_buf)
+        }
+    */
 
     pub fn serialize(&self) -> Vec<u8> {
         let mut out = IntoBytes::as_bytes(&self.header).to_vec();

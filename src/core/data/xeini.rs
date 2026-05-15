@@ -575,7 +575,7 @@ pub fn apply_xe_ini(
 
     nand.bootloaders.khvpatch = ini.patch.khv.clone();
 
-    // 1f with JTAG ini 
+    // 1f with JTAG ini
     if nand.options.image_profile == "onef" {
         info!("[ini] Enforcing Onef profile: Clearing second-chain kernel and FlashFS");
         nand.update = crate::builder::builder::NandUpdate::default();

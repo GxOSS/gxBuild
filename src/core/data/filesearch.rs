@@ -722,7 +722,6 @@ impl IniSearch {
                     }
                 }
 
-
                 // Need to add rebooter patching
                 if let Some(mut c) = found_content {
                     // Apply Patch after confirmation

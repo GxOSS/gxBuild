@@ -221,66 +221,86 @@ impl FileSystemRoot {
     pub fn read(&mut self, image: &[u8], layout: &NandLayout) {
         self.entries.clear();
         let pages_per_block = layout.logical_pages_per_block();
-        let start_page = self.block_number as usize * pages_per_block;
-
-        let mut block_map_pages = Vec::new();
-        let mut file_name_pages = Vec::new();
-        for i in 0..pages_per_block {
-            if i % 2 == 0 {
-                block_map_pages.push(start_page + i);
-            } else {
-                file_name_pages.push(start_page + i);
-            }
-        }
-
-        let mut break_files = false;
-        for page in file_name_pages {
-            if break_files {
-                break;
-            }
-            let page_offset = page * layout.page_size();
-            if page_offset + layout.page_size() > image.len() {
-                break;
-            }
-            for i in 0..(layout.page_size() / 0x20) {
-                let entry_offset = page_offset + (i * 0x20);
-                let mut entry = FileSystemEntry::new(page as i32);
-                entry.read_from(&image[entry_offset..entry_offset + 0x20]);
-                if entry.file_name.is_empty() {
-                    break_files = true;
-                    break;
-                }
-                if !self.entries.iter().any(|e| e.file_name == entry.file_name) {
-                    self.entries.push(entry);
-                }
-            }
-        }
-
         let logical_block_size = pages_per_block * 0x200;
         let total_blocks = image.len() / logical_block_size;
+        
         self.block_map = vec![0; total_blocks];
-        let mut j = 0;
-        for page in block_map_pages {
-            let offset = page * 0x200;
-            if offset + 0x200 > image.len() {
-                break;
+        let mut current_block = self.block_number as usize;
+        let mut loop_count = 0;
+
+        loop {
+            if current_block >= total_blocks { break; }
+            let start_page = current_block * pages_per_block;
+
+            let mut block_map_pages = Vec::new();
+            let mut file_name_pages = Vec::new();
+            for i in 0..pages_per_block {
+                if i % 2 == 0 {
+                    block_map_pages.push(start_page + i);
+                } else {
+                    file_name_pages.push(start_page + i);
+                }
             }
-            let mut cursor = Cursor::new(&image[offset..offset + 0x200]);
-            for _ in 0..128 {
-                if j >= total_blocks {
+
+            let mut break_files = false;
+            for page in file_name_pages {
+                if break_files {
                     break;
                 }
-                if let Ok(val) = cursor.read_u16::<BigEndian>() {
-                    self.block_map[j] = val;
-                    j += 1;
+                let page_offset = page * layout.page_size();
+                if page_offset + layout.page_size() > image.len() {
+                    break;
+                }
+                for i in 0..(layout.page_size() / 0x20) {
+                    let entry_offset = page_offset + (i * 0x20);
+                    let mut entry = FileSystemEntry::new(page as i32);
+                    entry.read_from(&image[entry_offset..entry_offset + 0x20]);
+                    if entry.file_name.is_empty() {
+                        break_files = true;
+                        break;
+                    }
+                    if !self.entries.iter().any(|e| e.file_name == entry.file_name) {
+                        self.entries.push(entry);
+                    }
                 }
             }
-            if j >= total_blocks {
+
+            let mut j = 0;
+            for page in block_map_pages {
+                let offset = page * 0x200;
+                if offset + 0x200 > image.len() {
+                    break;
+                }
+                let mut cursor = Cursor::new(&image[offset..offset + 0x200]);
+                for _ in 0..256 {
+                    let global_j = loop_count * (pages_per_block / 2 * 256) + j;
+                    if global_j >= total_blocks {
+                        break;
+                    }
+                    if let Ok(val) = cursor.read_u16::<BigEndian>() {
+                        self.block_map[global_j] = val;
+                        j += 1;
+                    }
+                }
+            }
+
+            let bmap_val = self.block_map[current_block];
+            if (bmap_val & 0x7FFF) < 0x1FFB && (bmap_val & 0x7FFF) > 0 {
+                current_block = (bmap_val & 0x7FFF) as usize;
+                loop_count += 1;
+                if loop_count > 1000 {
+                    error!("[flashfs] Chained FS root loop limit exceeded!");
+                    break;
+                }
+            } else {
                 break;
             }
         }
+
         if self.block_number >= 0 && (self.block_number as usize) < self.block_map.len() {
-            self.block_map[self.block_number as usize] = 0x1FFF;
+            if current_block < self.block_map.len() {
+                self.block_map[current_block] = 0x1FFF;
+            }
         }
 
         // Calibrate BlockOffset for Big-Block NANDs by searching for .xex headers
@@ -713,29 +733,16 @@ impl FileSystemRoot {
         let pages_per_block = layout.logical_pages_per_block();
         let logical_block_size = pages_per_block * page_size;
 
-        // 1. Create a temporary logical buffer for the root block content (e.g. 0x4000 bytes)
-        let mut root_buffer = vec![0x00u8; logical_block_size];
-
-        // 3. Setup relative page lists (Even for Block Map, Odd for Entries)
-        let mut bm_pages = Vec::new();
-        let mut fn_pages = Vec::new();
-        for i in 0..pages_per_block {
-            if i % 2 == 0 {
-                bm_pages.push(i);
-            } else {
-                fn_pages.push(i);
-            }
-        }
-
-        // 3. Serialize non-deleted entries into the odd logical pages
+        let bm_count = page_size / 2;
         let fn_count = page_size / 0x20;
-        let mut j = 0;
+
+        let mut non_deleted_count = 0;
         for i in 0..self.entries.len() {
             if self.entries[i].deleted {
                 continue;
             }
-
-            // Allocate physical data blocks for files if not yet assigned
+            non_deleted_count += 1;
+            
             if self.entries[i].block_number == 0 {
                 let chunk_size = pages_per_block * page_size;
                 let data_len = self.entries[i].data.len();
@@ -747,30 +754,92 @@ impl FileSystemRoot {
             let blk_num = self.entries[i].block_number;
             let entry_data = self.entries[i].data.clone();
             self.set_chain_data(image, layout, blk_num, &entry_data);
+        }
 
-            let fn_p_idx = j / fn_count;
-            if fn_p_idx < fn_pages.len() {
-                let off = fn_pages[fn_p_idx] * page_size + (j % fn_count) * 0x20;
+        let max_entries_per_root_block = ((pages_per_block + 1) / 2) * fn_count;
+        let max_bmap_per_root_block = (pages_per_block / 2) * bm_count;
+
+        let root_blocks_needed_for_entries = (non_deleted_count + max_entries_per_root_block - 1) / max_entries_per_root_block.max(1);
+        let root_blocks_needed_for_bmap = (self.block_map.len() + max_bmap_per_root_block - 1) / max_bmap_per_root_block.max(1);
+        let root_blocks_needed = root_blocks_needed_for_entries.max(root_blocks_needed_for_bmap).max(1);
+
+        if self.block_number != -1 {
+            self.free_block_chain(self.block_number as u16);
+        }
+
+        let mut new_root_chain = Vec::new();
+        for _ in 0..root_blocks_needed {
+            let blk = self.allocate_new_block(image, layout, 1, 0);
+            new_root_chain.push(blk);
+        }
+
+        for i in 0..new_root_chain.len().saturating_sub(1) {
+            self.block_map[new_root_chain[i] as usize] = new_root_chain[i + 1];
+        }
+        if let Some(&last) = new_root_chain.last() {
+            self.block_map[last as usize] = 0x1FFF;
+        }
+
+        self.block_number = new_root_chain[0] as i32;
+        self.version += 1;
+
+        let mut entry_idx = 0;
+        let mut bmap_idx = 0;
+
+        for &root_block in &new_root_chain {
+            let mut root_buffer = vec![0x00u8; logical_block_size];
+            let mut bm_pages = Vec::new();
+            let mut fn_pages = Vec::new();
+            for i in 0..pages_per_block {
+                if i % 2 == 0 {
+                    bm_pages.push(i);
+                } else {
+                    fn_pages.push(i);
+                }
+            }
+
+            let mut fn_p_idx = 0;
+            let mut fn_in_page = 0;
+            while entry_idx < self.entries.len() {
+                if self.entries[entry_idx].deleted {
+                    entry_idx += 1;
+                    continue;
+                }
+                
+                if fn_p_idx >= fn_pages.len() { break; }
+                
+                let off = fn_pages[fn_p_idx] * page_size + fn_in_page * 0x20;
                 let mut chunk = [0u8; 0x20];
-                self.entries[i].write_into(&mut chunk);
+                self.entries[entry_idx].write_into(&mut chunk);
                 root_buffer[off..off + 0x20].copy_from_slice(&chunk);
+                
+                fn_in_page += 1;
+                if fn_in_page >= fn_count {
+                    fn_in_page = 0;
+                    fn_p_idx += 1;
+                }
+                entry_idx += 1;
             }
-            j += 1;
-        }
 
-        // 4. Serialize Block Map into even logical pages
-        let bm_count = page_size / 2;
-        for (idx, &block) in self.block_map.iter().enumerate() {
-            let bm_p_idx = idx / bm_count;
-            if bm_p_idx < bm_pages.len() {
-                let off = bm_pages[bm_p_idx] * page_size + (idx % bm_count) * 2;
-                root_buffer[off..off + 2].copy_from_slice(&block.to_be_bytes());
+            let mut bm_p_idx = 0;
+            let mut bm_in_page = 0;
+            while bmap_idx < self.block_map.len() {
+                if bm_p_idx >= bm_pages.len() { break; }
+                
+                let off = bm_pages[bm_p_idx] * page_size + bm_in_page * 2;
+                root_buffer[off..off + 2].copy_from_slice(&self.block_map[bmap_idx].to_be_bytes());
+                
+                bm_in_page += 1;
+                if bm_in_page >= bm_count {
+                    bm_in_page = 0;
+                    bm_p_idx += 1;
+                }
+                bmap_idx += 1;
             }
-        }
 
-        // 6. Final Write
-        let logical_start = self.block_number as usize * pages_per_block * page_size;
-        Self::write_data_hybrid(image, logical_start, &root_buffer, layout);
+            let logical_start = root_block as usize * pages_per_block * page_size;
+            Self::write_data_hybrid(image, logical_start, &root_buffer, layout);
+        }
     }
 
     fn write_data_hybrid(
@@ -877,7 +946,8 @@ impl FlashFS {
 
         if *layout == NandLayout::Emmc {
             let corona = crate::builder::filesystem::corona::load_slots(image);
-            if let Some((block, ver)) = crate::builder::filesystem::corona::best_fs_from_slots(&corona)
+            if let Some((block, ver)) =
+                crate::builder::filesystem::corona::best_fs_from_slots(&corona)
             {
                 best_main = Some((block, ver));
             }
@@ -931,10 +1001,7 @@ impl FlashFS {
                     let block = entry.fs_block_idx as usize;
                     let ver = entry.fs_version;
                     if best_main.map(|(_, v)| ver > v).unwrap_or(true) {
-                        info!(
-                            "[flashfs] Corona slot: block {}, version {}",
-                            block, ver
-                        );
+                        info!("[flashfs] Corona slot: block {}, version {}", block, ver);
                         best_main = Some((block, ver));
                     }
                 }
