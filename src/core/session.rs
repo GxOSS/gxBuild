@@ -15,6 +15,7 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use crate::core::images::blocks::NandLayout;
 
 #[derive(Debug)]
 pub enum InternalCommand {
@@ -1079,7 +1080,7 @@ impl Session {
         if let Some(nand) = &mut self.active_nand {
             info!("[session] Syncing merged options to NAND components...");
 
-            //  Standard/Core Overrides 
+            //  Standard/Core Overrides
             if let Some(noremap) = self.options.noremap {
                 nand.options.noremap = noremap;
             }
@@ -1093,7 +1094,7 @@ impl Session {
             nand.options.gxunsafe = self.options.gxunsafe.unwrap_or(false);
             nand.options.verbose = self.options.verbose.unwrap_or(false);
 
-            //  CPU Key 
+            //  CPU Key
             if let Some(key_str) = &self.options.cpukey {
                 if let Ok(key_bytes) = crate::builder::builder::hex_to_bytes(key_str) {
                     if key_bytes.len() == 16 {
@@ -1106,13 +1107,13 @@ impl Session {
 
             let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
 
-            //  Per-box LDV / Pairing Sync for CB + CF (independent) 
+            //  Per-box LDV / Pairing Sync for CB + CF (independent)
             let pairing = Self::resolve_pairing(&self.options, nand);
             let cb_ldv = Self::resolve_cb_ldv(&self.options, nand)?;
             let cf_ldv = Self::resolve_cf_ldv(&self.options, nand)?;
             Self::sync_per_box_settings(nand, pairing, cb_ldv, cf_ldv);
 
-            //  Keyvault Overrides (Region, DVD Key) 
+            //  Keyvault Overrides (Region, DVD Key)
             if let Some(ref mut kv) = nand.kv {
                 // Decrypt with current session key if possible
                 if !kv.is_decrypted {
@@ -1172,7 +1173,7 @@ impl Session {
                 }
             }
 
-            // SMC Configuration Patching 
+            // SMC Configuration Patching
             let mut smc_config = if nand.extra.smc_config.is_empty() {
                 info!("[session] No SMC Config found in skeleton, initializing clean defaults.");
                 crate::builder::chain::smc::SmcConfig::new_empty()
@@ -1266,7 +1267,7 @@ impl Session {
             // Finalize and store SMC Config
             nand.extra.smc_config = smc_config.serialize().clone().to_vec();
 
-            // SMC image 
+            // SMC image
             let mut smc = crate::builder::chain::smc::RawSmc::new(nand.extra.smc.clone());
             smc.decrypt(); // Decrypt using "BuNy"
 
@@ -1373,7 +1374,7 @@ impl Session {
             let priority = queued_cmd.command.priority_score();
             match &queued_cmd.command {
                 InternalCommand::ParseIni { path, target, .. } => {
-                    info!("[session] Executing (PriorityScore: {}, Seq: {}): ParseIni {{ path: {:?}, target: {:?} }}", 
+                    info!("[session] Executing (PriorityScore: {}, Seq: {}): ParseIni {{ path: {:?}, target: {:?} }}",
                              priority, queued_cmd.sequence_id, path, target);
                 }
                 cmd => {

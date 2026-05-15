@@ -284,7 +284,7 @@ impl Keyvault {
             rc4.crypt(&mut self.data[0x10..])
                 .map_err(|e| format!("Encryption failed: {}", e))?;
         }
-
+        self.metadata = None;
         self.is_decrypted = false;
         Ok(())
     }
