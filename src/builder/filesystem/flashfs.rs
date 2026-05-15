@@ -459,7 +459,6 @@ impl FileSystemRoot {
     }
 
     /// Sets every block in the chain starting at `start_block` back to 0x1FFE (free).
-    /// Equivalent to RGBuild's FreeBlockChain. Required by set_chain_data shrink path.
     pub fn free_block_chain(&mut self, start_block: u16) {
         let chain = self.get_block_chain(start_block, self.block_map.len());
         for block in chain {
@@ -619,7 +618,6 @@ impl FileSystemRoot {
                 // Loop repeats with updated block_map.
             } else {
                 // Too long - shrink: free tail blocks after [needed-1], then re-run for exact fit.
-                // This matches RGBuild SetChainData's shrink branch.
                 let tail_start = chain[needed]; // first excess block
                 self.free_block_chain(tail_start);
                 self.block_map[chain[needed - 1] as usize] = 0x1FFF; // re-mark end of chain

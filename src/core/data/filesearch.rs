@@ -787,6 +787,11 @@ impl IniSearch {
             let mut flashfs = FlashFS::new();
             for entry in &ini.flashfs {
                 let filename = &entry.filename;
+                let lower_filename = filename.to_lowercase();
+                if lower_filename == "sysupdate.xexp1" || lower_filename == "sysupdate.xexp2" {
+                    info!("[ini] Unconditionally bypassing file discovery for {}", filename);
+                    continue;
+                }
                 let mut found_content: Option<Vec<u8>> = None;
 
                 // NAND Image

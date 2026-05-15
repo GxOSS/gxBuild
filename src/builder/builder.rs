@@ -819,6 +819,73 @@ impl NandSkeleton {
             }
         }
 
+        // Resize image so FlashFS block allocation succeeds
+        let expected_size = self.total_blocks * self.layout.logical_pages_per_block() * 0x200;
+        if self.image.len() != expected_size {
+            self.image.resize(expected_size, 0);
+        }
+
+        // Handle CG splitting for FlashFS
+        let patch_slot_len = 0x10000;
+        
+        let cf_size_0 = self.update.cf_0.as_ref().map(|cf| cf.header.size.get() as usize).unwrap_or(0);
+        let aligned_cf_0 = (cf_size_0 + 0xF) & !0xF;
+        if let Some(cg) = self.update.cg_0.as_ref() {
+            let cg_size = cg.header.size.get() as usize; // This is the total serialized size including header
+            if aligned_cf_0 + cg_size > patch_slot_len {
+                let overflow = aligned_cf_0 + cg_size - patch_slot_len;
+                let cg_to_slot = cg_size - overflow;
+                
+                if cg_to_slot >= 0x10 {
+                    let cg_ser = cg.serialize();
+                    let overflow_data = cg_ser[cg_to_slot..].to_vec();
+                    
+                    let mut entry = crate::builder::filesystem::flashfs::FileSystemEntry::new(0);
+                    entry.file_name = "sysupdate.xexp1".to_string();
+                    self.flashfs.root.set_entry_data(&mut self.image, &self.layout, &mut entry, &overflow_data);
+                    self.flashfs.root.entries.push(entry.clone());
+                    
+                    if let Some(cf) = self.update.cf_0.as_mut() {
+                        if let Some(meta) = cf.metadata.as_mut() {
+                            let chain = self.flashfs.root.get_block_chain(entry.block_number, 223);
+                            meta.cg_blocks_used = chain.len() as u16;
+                            meta.cg_block_numbers = chain;
+                            info!("[pfa] Split CG0: {} blocks overflowed to sysupdate.xexp1", meta.cg_blocks_used);
+                        }
+                    }
+                }
+            }
+        }
+
+        let cf_size_1 = self.update.cf_1.as_ref().map(|cf| cf.header.size.get() as usize).unwrap_or(0);
+        let aligned_cf_1 = (cf_size_1 + 0xF) & !0xF;
+        if let Some(cg) = self.update.cg_1.as_ref() {
+            let cg_size = cg.header.size.get() as usize;
+            if aligned_cf_1 + cg_size > patch_slot_len {
+                let overflow = aligned_cf_1 + cg_size - patch_slot_len;
+                let cg_to_slot = cg_size - overflow;
+                
+                if cg_to_slot >= 0x10 {
+                    let cg_ser = cg.serialize();
+                    let overflow_data = cg_ser[cg_to_slot..].to_vec();
+                    
+                    let mut entry = crate::builder::filesystem::flashfs::FileSystemEntry::new(0);
+                    entry.file_name = "sysupdate.xexp2".to_string();
+                    self.flashfs.root.set_entry_data(&mut self.image, &self.layout, &mut entry, &overflow_data);
+                    self.flashfs.root.entries.push(entry.clone());
+                    
+                    if let Some(cf) = self.update.cf_1.as_mut() {
+                        if let Some(meta) = cf.metadata.as_mut() {
+                            let chain = self.flashfs.root.get_block_chain(entry.block_number, 223);
+                            meta.cg_blocks_used = chain.len() as u16;
+                            meta.cg_block_numbers = chain;
+                            info!("[pfa] Split CG1: {} blocks overflowed to sysupdate.xexp2", meta.cg_blocks_used);
+                        }
+                    }
+                }
+            }
+        }
+
         // 4. Sync metadata back to raw bytes
         if let Some(ref mut cb) = self.bootloaders.cb {
             cb.sync_metadata();
@@ -963,6 +1030,7 @@ impl NandSkeleton {
             &image,
             header.cb_offset() as usize,
             header.cf_offset.get() as usize,
+            &flashfs,
         )?;
 
         info!("[builder] Decrypting bootloader chain...");
@@ -1099,6 +1167,7 @@ impl NandSkeleton {
         image: &[u8],
         cb_offset: usize,
         cf_ptr: usize,
+        flashfs: &crate::builder::filesystem::flashfs::FlashFS,
     ) -> Result<(NandBootloaders, NandUpdate), String> {
         let mut bl = NandBootloaders {
             cb: None,
@@ -1122,6 +1191,36 @@ impl NandSkeleton {
         let mut cf_count = 0;
         let mut cg_count = 0;
         let mut cb_seen = 0;
+        let mut cf0_offset = 0;
+        let mut cf1_offset = 0;
+
+        let fetch_cg_data = |off: usize, bl_size: usize, cg_count: usize, cf0_offset: usize, cf1_offset: usize, image: &[u8], flashfs: &FlashFS| -> Vec<u8> {
+            let slot_start = if cg_count == 0 { cf0_offset } else { cf1_offset };
+            let mut read_size = bl_size;
+            if slot_start > 0 {
+                let max_slot_end = slot_start + 0x10000;
+                if off + read_size > max_slot_end {
+                    read_size = max_slot_end - off;
+                }
+            }
+            if off + read_size > image.len() {
+                return vec![];
+            }
+            let mut data = image[off..off + read_size].to_vec();
+            if data.len() < bl_size {
+                let sysupdate_name = if cg_count == 0 { "sysupdate.xexp1" } else { "sysupdate.xexp2" };
+                if let Some(entry) = flashfs.root.entries.iter().find(|e| e.file_name.to_lowercase() == sysupdate_name) {
+                    let needed = bl_size - data.len();
+                    data.extend_from_slice(&entry.data[..std::cmp::min(needed, entry.data.len())]);
+                } else {
+                    warn!("[builder] CG{} overflows patch slot but {} not found in FlashFS!", cg_count + 1, sysupdate_name);
+                    if off + bl_size <= image.len() {
+                        data = image[off..off + bl_size].to_vec();
+                    }
+                }
+            }
+            data
+        };
 
         // Primary chain walk
         let mut iteration = 0;
@@ -1161,7 +1260,7 @@ impl NandSkeleton {
                 break;
             }
 
-            let bl_data = image[off..off + bl_size].to_vec();
+            let mut bl_data = image[off..off + bl_size].to_vec();
             let aligned_size = (bl_size + 0xF) & 0xFFFFFFF0;
 
             match bl_header.get_type() {
@@ -1235,30 +1334,37 @@ impl NandSkeleton {
                     bl.ce = Some(BootloaderCe::parse(&bl_data)?);
                 }
                 XenonBlType::CF => {
-                    cf_count += 1;
                     info!(
                         "[builder] CF_{} at 0x{:08X} (v{}, 0x{:X} bytes)",
-                        cf_count, off, bl_version, bl_size
+                        cf_count + 1, off, bl_version, bl_size
                     );
                     let cf = BootloaderCf::parse(&bl_data)?;
-                    if cf_count == 1 {
+                    if cf_count == 0 {
                         update.cf_0 = Some(cf);
+                        cf0_offset = off;
                     } else {
                         update.cf_1 = Some(cf);
+                        cf1_offset = off;
                     }
+                    cf_count += 1;
                 }
                 XenonBlType::CG => {
-                    cg_count += 1;
                     info!(
                         "[builder] CG_{} at 0x{:08X} (v{}, 0x{:X} bytes)",
-                        cg_count, off, bl_version, bl_size
+                        cg_count + 1, off, bl_version, bl_size
                     );
-                    let cg = BootloaderCg::parse(&bl_data)?;
-                    if cg_count == 1 {
+                    let actual_data = fetch_cg_data(off, bl_size, cg_count, cf0_offset, cf1_offset, image, &flashfs);
+                    if actual_data.is_empty() {
+                        info!("[builder] Failed to fetch complete CG data, stopping chain walk");
+                        break;
+                    }
+                    let cg = BootloaderCg::parse(&actual_data)?;
+                    if cg_count == 0 {
                         update.cg_0 = Some(cg);
                     } else {
                         update.cg_1 = Some(cg);
                     }
+                    cg_count += 1;
                 }
                 _ => {
                     // Try discovery as a diagnostic — handles devkit (all-zero 1BL key)
@@ -1317,36 +1423,43 @@ impl NandSkeleton {
 
                 match bl_header.get_type() {
                     XenonBlType::CF => {
-                        cf_count += 1;
                         info!(
                             "[builder] CF_{} at 0x{:08X} (v{}, 0x{:X} bytes)",
-                            cf_count,
+                            cf_count + 1,
                             off,
                             bl_header.version.get(),
                             bl_size
                         );
                         let cf = BootloaderCf::parse(&bl_data)?;
-                        if cf_count == 1 {
+                        if cf_count == 0 {
                             update.cf_0 = Some(cf);
+                            cf0_offset = off;
                         } else {
                             update.cf_1 = Some(cf);
+                            cf1_offset = off;
                         }
+                        cf_count += 1;
                     }
                     XenonBlType::CG => {
-                        cg_count += 1;
                         info!(
                             "[builder] CG_{} at 0x{:08X} (v{}, 0x{:X} bytes)",
-                            cg_count,
+                            cg_count + 1,
                             off,
                             bl_header.version.get(),
                             bl_size
                         );
-                        let cg = BootloaderCg::parse(&bl_data)?;
-                        if cg_count == 1 {
+                        let actual_data = fetch_cg_data(off, bl_size, cg_count, cf0_offset, cf1_offset, image, &flashfs);
+                        if actual_data.is_empty() {
+                            info!("[builder] Failed to fetch complete CG data, stopping CF_Ptr chain walk");
+                            break;
+                        }
+                        let cg = BootloaderCg::parse(&actual_data)?;
+                        if cg_count == 0 {
                             update.cg_0 = Some(cg);
                         } else {
                             update.cg_1 = Some(cg);
                         }
+                        cg_count += 1;
                     }
                     _ => break,
                 }
@@ -1392,36 +1505,43 @@ impl NandSkeleton {
                         let aligned_size = (bl_size + 0xF) & 0xFFFFFFF0;
                         match bl_header.get_type() {
                             XenonBlType::CF => {
-                                cf_count += 1;
                                 info!(
                                     "[builder] CF_{} at 0x{:08X} (v{}, 0x{:X} bytes) [discovery]",
-                                    cf_count,
+                                    cf_count + 1,
                                     off,
                                     bl_header.version.get(),
                                     bl_size
                                 );
                                 let cf = BootloaderCf::parse(&bl_data)?;
-                                if cf_count == 1 {
+                                if cf_count == 0 {
                                     update.cf_0 = Some(cf);
+                                    cf0_offset = off;
                                 } else {
                                     update.cf_1 = Some(cf);
+                                    cf1_offset = off;
                                 }
+                                cf_count += 1;
                             }
                             XenonBlType::CG => {
-                                cg_count += 1;
                                 info!(
                                     "[builder] CG_{} at 0x{:08X} (v{}, 0x{:X} bytes) [discovery]",
-                                    cg_count,
+                                    cg_count + 1,
                                     off,
                                     bl_header.version.get(),
                                     bl_size
                                 );
-                                let cg = BootloaderCg::parse(&bl_data)?;
-                                if cg_count == 1 {
+                                let actual_data = fetch_cg_data(off, bl_size, cg_count, cf0_offset, cf1_offset, image, &flashfs);
+                                if actual_data.is_empty() {
+                                    info!("[builder] Failed to fetch complete CG data, stopping discovery scan");
+                                    break;
+                                }
+                                let cg = BootloaderCg::parse(&actual_data)?;
+                                if cg_count == 0 {
                                     update.cg_0 = Some(cg);
                                 } else {
                                     update.cg_1 = Some(cg);
                                 }
+                                cg_count += 1;
                             }
                             _ => break,
                         }
@@ -1909,15 +2029,22 @@ impl NandSkeleton {
             if let Some(cg0d) = cg0 {
                 // 16-byte align CG after CF
                 let cg0_offset = (next_offset + 0xF) & !0xF;
-                if cg0_offset + cg0d.len() > logical_image.len() {
+                let max_slot_end = target_cf_offset + 0x10000;
+                let mut cg_to_slot = cg0d.len();
+                if cg0_offset + cg_to_slot > max_slot_end {
+                    cg_to_slot = max_slot_end - cg0_offset;
+                }
+
+                if cg0_offset + cg_to_slot > logical_image.len() {
                     return Err(format!(
                         "CG0 overflow at 0x{:X}: need 0x{:X} bytes",
                         cg0_offset,
-                        cg0d.len()
+                        cg_to_slot
                     ));
                 }
-                logical_image[cg0_offset..cg0_offset + cg0d.len()].copy_from_slice(&cg0d);
-                next_offset = cg0_offset + cg0d.len();
+                logical_image[cg0_offset..cg0_offset + cg_to_slot]
+                    .copy_from_slice(&cg0d[0..cg_to_slot]);
+                next_offset = cg0_offset + cg_to_slot;
             }
 
             if let Some(cf1d) = cf1 {
@@ -1931,18 +2058,26 @@ impl NandSkeleton {
                     ));
                 }
                 logical_image[cf1_offset..cf1_offset + cf1d.len()].copy_from_slice(&cf1d);
+
                 next_offset = cf1_offset + cf1d.len();
 
                 if let Some(cg1d) = cg1 {
                     let cg1_offset = (next_offset + 0xF) & !0xF;
-                    if cg1_offset + cg1d.len() > logical_image.len() {
+                    let max_slot_end = cf1_offset + 0x10000;
+                    let mut cg_to_slot = cg1d.len();
+                    if cg1_offset + cg_to_slot > max_slot_end {
+                        cg_to_slot = max_slot_end - cg1_offset;
+                    }
+
+                    if cg1_offset + cg_to_slot > logical_image.len() {
                         return Err(format!(
                             "CG1 overflow at 0x{:X}: need 0x{:X} bytes",
                             cg1_offset,
-                            cg1d.len()
+                            cg_to_slot
                         ));
                     }
-                    logical_image[cg1_offset..cg1_offset + cg1d.len()].copy_from_slice(&cg1d);
+                    logical_image[cg1_offset..cg1_offset + cg_to_slot]
+                        .copy_from_slice(&cg1d[0..cg_to_slot]);
                 }
             }
         }
