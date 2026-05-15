@@ -22,7 +22,7 @@ fn main() {
     // Determine SIMD flags
     let is_msvc = target_env == "msvc";
     let is_x86 = target_arch == "x86" || target_arch == "x86_64";
-    let is_arm64 = target_arch == "aarch64" || target_arch == "arm64";
+    let is_arm64 = target_arch == "aarch64";
 
     let use_maes = !is_msvc && is_x86;
     let use_neon_crypto = !is_msvc && is_arm64;
