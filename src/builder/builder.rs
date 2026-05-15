@@ -9,7 +9,8 @@ use log::{error, info, warn};
 use zerocopy::byteorder::{BigEndian, I16, U16, U32};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
-use crate::builder::chain::flashfs::FlashFS;
+use crate::builder::filesystem::flashfs::FlashFS;
+use crate::builder::filesystem::mobile::MobileStore;
 use crate::builder::chain::*;
 use crate::core::images::blocks::*;
 use crate::core::images::gxp::{apply_records, GxpBinary, GxpPatchType, PatchRecord};
@@ -484,6 +485,7 @@ pub struct BuildOptions {
     pub cbb: Option<String>,
     pub full_image: bool,
     pub xsb: bool,
+    pub nomobile: bool,
 }
 
 impl Default for BuildOptions {
@@ -508,6 +510,7 @@ impl Default for BuildOptions {
             verbose: false,
             cba: None,
             cbb: None,
+            nomobile: false,
         }
     }
 }
@@ -527,6 +530,7 @@ pub struct NandSkeleton {
     pub rebooter_update: Option<NandUpdate>,
     pub payloads: Vec<PayloadEntry>,
     pub flashfs: FlashFS,
+    pub mobile: MobileStore,
     pub layout: NandLayout,
     pub total_blocks: usize,
     pub input_ldv_cb: Option<u8>,
@@ -610,6 +614,7 @@ impl NandSkeleton {
             rebooter_update: None,
             payloads: Vec::new(),
             flashfs: FlashFS::new(),
+            mobile: MobileStore::new(),
             layout,
             total_blocks,
             input_ldv_cb: None,
@@ -1073,6 +1078,7 @@ impl NandSkeleton {
             rebooter_update: None,
             payloads: Vec::new(),
             flashfs: final_flashfs,
+            mobile: MobileStore::new(),
             input_ldv_cb,
             input_ldv_cf,
             input_pd,
@@ -2091,6 +2097,20 @@ impl NandSkeleton {
             } else {
                 error!("[builder] FlashFS partition 0x{:02X} root block exceeds image bounds at block {}", btype, fs_block);
             }
+        }
+
+        if !self.options.nomobile && self.mobile.latest.iter().any(|s| s.is_some()) {
+            let fs_start: u16 = match layout {
+                NandLayout::Bb => 0x1E0,
+                _ => 0x4E,
+            };
+            if self.flashfs.root.block_map.is_empty() {
+                self.flashfs
+                    .root
+                    .create_defaults(logical_image.len(), layout, fs_start);
+            }
+            self.mobile
+                .write_logical(&mut logical_image, layout, &mut self.flashfs.root);
         }
 
         Ok(logical_image)

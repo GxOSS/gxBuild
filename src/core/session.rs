@@ -73,6 +73,7 @@ pub enum InternalCommand {
         target: u8,
     },
     FinalizeFlashfs,
+    FinalizeMobile,
     SessionInit {
         base: Option<PathBuf>,
         common: Option<PathBuf>,
@@ -226,6 +227,7 @@ impl InternalCommand {
             Self::ParsePatch { .. } => 100,
             // Self::Decompress => 99,
             Self::FinalizeFlashfs => 90,
+            Self::FinalizeMobile => 89,
             Self::Extract { .. } => 89,
             Self::ExtractAll { .. } => 88,
             Self::Replace { .. } => 87,
@@ -860,8 +862,9 @@ impl Session {
             ini_dir, data_dir, common_dir
         );
 
-        // Enqueue FinalizeFlashfs early (priority ordering handles sequencing)
+        // Enqueue FinalizeFlashfs / FinalizeMobile early (priority ordering handles sequencing)
         self.enqueue(InternalCommand::FinalizeFlashfs);
+        self.enqueue(InternalCommand::FinalizeMobile);
 
         // Build the search path list: ini â†’ ini/flashfs â†’ ini/data â†’ common
         let ini_flashfs = ini_dir.join("flashfs");
@@ -1093,6 +1096,7 @@ impl Session {
 
             nand.options.gxunsafe = self.options.gxunsafe.unwrap_or(false);
             nand.options.verbose = self.options.verbose.unwrap_or(false);
+            nand.options.nomobile = self.options.nomobile.unwrap_or(false);
 
             //  CPU Key
             if let Some(key_str) = &self.options.cpukey {
@@ -1588,12 +1592,22 @@ impl Session {
                                 .active_nand
                                 .as_ref()
                                 .and_then(|n| n.options.jtag_syscall);
+                            let mobile_meta = if nand.options.nomobile {
+                                std::collections::HashMap::new()
+                            } else {
+                                nand.mobile.collect_spare_meta()
+                            };
                             let finalized_bytes =
                                 crate::core::images::blocks::NandProcessor::finalize_nand(
                                     &clean_bytes,
                                     layout,
                                     meta_type,
                                     Some(&fs_meta),
+                                    if mobile_meta.is_empty() {
+                                        None
+                                    } else {
+                                        Some(&mobile_meta)
+                                    },
                                     jtag_syscall,
                                 );
                             let final_size = finalized_bytes.len();
@@ -1691,13 +1705,21 @@ impl Session {
 
                                 // Scan FlashFS with LBA map for accurate block mapping
                                 let flashfs =
-                                    crate::builder::chain::flashfs::FlashFS::scan_physical_with_lba(
+                                    crate::builder::filesystem::flashfs::FlashFS::scan_physical_with_lba(
                                         &raw_data, &layout, &lba_map,
                                     );
+                                let mobile = if self.options.nomobile.unwrap_or(false) {
+                                    crate::builder::filesystem::mobile::MobileStore::new()
+                                } else {
+                                    crate::builder::filesystem::mobile::MobileStore::scan_physical(
+                                        &raw_data, &layout,
+                                    )
+                                };
                                 match NandSkeleton::parse_clean(
                                     clean_data, layout, active_key, flashfs,
                                 ) {
-                                    Ok(nand) => {
+                                    Ok(mut nand) => {
+                                        nand.mobile = mobile;
                                         // Verify bootloader decryption using zero-region checks
                                         if let Some(cb) = &nand.bootloaders.cb_a {
                                             if cb.verify_decrypted() {
@@ -1786,7 +1808,7 @@ impl Session {
                         crate::core::images::blocks::NandLayout::Bb => 0x1E0,
                         _ => 0x4E, // Small block default: block 78
                     };
-                    match crate::builder::chain::flashfs::FileSystemRoot::build_from_folder(
+                    match crate::builder::filesystem::flashfs::FileSystemRoot::build_from_folder(
                         &mut nand.image,
                         &nand.layout,
                         &path,
@@ -2077,6 +2099,18 @@ impl Session {
                     Err(e) => return Err(format!("Failed to read asset at {:?}: {}", path, e)),
                 }
             }
+            InternalCommand::FinalizeMobile => {
+                if self.options.nomobile.unwrap_or(false) {
+                    return Ok(());
+                }
+                let data_dir = self
+                    .data_dir
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from("data"));
+                if let Some(nand) = &mut self.active_nand {
+                    nand.mobile.apply_data_folder_tier(&data_dir);
+                }
+            }
             InternalCommand::FinalizeFlashfs => {
                 if !self.flashfs_assets.is_empty() {
                     info!(
@@ -2096,7 +2130,7 @@ impl Session {
                             "[session] FlashFS start block: 0x{:X} ({})",
                             fs_start, fs_start
                         );
-                        match crate::builder::chain::flashfs::FileSystemRoot::build_from_memory(
+                        match crate::builder::filesystem::flashfs::FileSystemRoot::build_from_memory(
                             &mut nand.image,
                             &nand.layout,
                             &self.flashfs_assets,

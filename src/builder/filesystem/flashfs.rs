@@ -13,50 +13,6 @@ use log::{error, info};
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 
-/// Calculates the base block offset for MetaType2 NANDs.
-pub fn get_fs_base_block_for_meta2(
-    image: &[u8],
-    layout: &NandLayout,
-    fs_root_spare_page: usize,
-) -> u16 {
-    if *layout != NandLayout::Bb {
-        return 0;
-    }
-
-    // Read the spare data from the FS root block's first page
-    let spare_offset = fs_root_spare_page * layout.physical_page_size() + layout.page_size();
-    if spare_offset + 16 > image.len() {
-        return 0;
-    }
-
-    let spare = &image[spare_offset..spare_offset + 16];
-    let parsed = FsSpareData::parse(spare, layout);
-
-    let reserved = 0x1E0u32
-        .saturating_sub(parsed.fs_page_count as u32)
-        .saturating_sub(((parsed.fs_size >> 8) as u32) << 2);
-
-    (reserved * 8) as u16
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-#[repr(u8)]
-pub enum FileSystemExEntries {
-    FsRootEntryAlt = 0x2c,
-    FsRootEntry = 0x30,
-    MobileB = 0x31,
-    MobileC = 0x32,
-    MobileD = 0x33,
-    MobileE = 0x34,
-    MobileF = 0x35,
-    MobileG = 0x36,
-    MobileH = 0x37,
-    MobileI = 0x38,
-    MobileJ = 0x39,
-    InvalidMobileJ = 0x40,
-    InUseMobileJ = 0x80,
-}
-
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FsSpareData {
     pub block_id: u16,
@@ -81,16 +37,15 @@ impl FsSpareData {
             };
         }
 
-        // Determine MetaType from layout
         let meta_type = match layout {
-            NandLayout::Xsb => crate::core::images::blocks::SpareMetaType::MetaType0,
-            NandLayout::Sb => crate::core::images::blocks::SpareMetaType::MetaType1,
-            NandLayout::Bb => crate::core::images::blocks::SpareMetaType::MetaType2,
-            NandLayout::Emmc => crate::core::images::blocks::SpareMetaType::MetaTypeNone,
+            NandLayout::Xsb => SpareMetaType::MetaType0,
+            NandLayout::Sb => SpareMetaType::MetaType1,
+            NandLayout::Bb => SpareMetaType::MetaType2,
+            NandLayout::Emmc => SpareMetaType::MetaTypeNone,
         };
 
         match meta_type {
-            crate::core::images::blocks::SpareMetaType::MetaType0 => {
+            SpareMetaType::MetaType0 => {
                 let block_id = u16::from_le_bytes([data[0], data[1] & 0xF]);
                 let fs_sequence =
                     (data[2] as u32) | ((data[3] as u32) << 8) | ((data[4] as u32) << 16);
@@ -107,7 +62,7 @@ impl FsSpareData {
                     bad_block,
                 }
             }
-            crate::core::images::blocks::SpareMetaType::MetaType1 => {
+            SpareMetaType::MetaType1 => {
                 let block_id = u16::from_le_bytes([data[1], data[2] & 0xF]);
                 let fs_sequence =
                     (data[0] as u32) | ((data[3] as u32) << 8) | ((data[4] as u32) << 16);
@@ -124,7 +79,7 @@ impl FsSpareData {
                     bad_block,
                 }
             }
-            crate::core::images::blocks::SpareMetaType::MetaType2 => {
+            SpareMetaType::MetaType2 => {
                 let block_id = u16::from_le_bytes([data[1], data[2] & 0xF]);
                 let fs_sequence =
                     (data[5] as u32) | ((data[4] as u32) << 8) | ((data[3] as u32) << 16);
@@ -141,7 +96,7 @@ impl FsSpareData {
                     bad_block,
                 }
             }
-            crate::core::images::blocks::SpareMetaType::MetaTypeNone => FsSpareData {
+            SpareMetaType::MetaTypeNone => FsSpareData {
                 block_id: 0,
                 fs_sequence: 0,
                 fs_size: 0,
@@ -151,6 +106,32 @@ impl FsSpareData {
             },
         }
     }
+}
+
+/// Calculates the base block offset for MetaType2 NANDs.
+pub fn get_fs_base_block_for_meta2(
+    image: &[u8],
+    layout: &NandLayout,
+    fs_root_spare_page: usize,
+) -> u16 {
+    if *layout != NandLayout::Bb {
+        return 0;
+    }
+
+    // Read the spare data from the FS root block's first page
+    let spare_offset = fs_root_spare_page * layout.physical_page_size() + layout.page_size();
+    if spare_offset + 16 > image.len() {
+        return 0;
+    }
+
+    let spare = &image[spare_offset..spare_offset + 16];
+    let parsed = FsSpareData::parse(spare, layout);
+
+    let reserved = 0x1E0u32
+        .saturating_sub(parsed.fs_page_count as u32)
+        .saturating_sub(((parsed.fs_size >> 8) as u32) << 2);
+
+    (reserved * 8) as u16
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -379,6 +360,9 @@ impl FileSystemRoot {
             let path = entry.path();
             if path.is_file() {
                 let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("Mobile") {
+                    continue;
+                }
                 let content = std::fs::read(&path).map_err(|e| e.to_string())?;
                 let mut new_entry = FileSystemEntry::new(0);
                 new_entry.file_name = name;
@@ -844,7 +828,7 @@ impl FileSystemRoot {
             if bm_p_idx < bm_pages.len() {
                 let off = bm_pages[bm_p_idx] * page_size + (idx % bm_count) * 2;
                 if off + 2 <= image.len() {
-                    image[off..off + 2].copy_from_slice(&block.to_le_bytes());
+                    image[off..off + 2].copy_from_slice(&block.to_be_bytes());
                 }
             }
         }
@@ -855,15 +839,32 @@ impl FileSystemRoot {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct FlashFS {
     pub root: FileSystemRoot,
-    pub partitions: std::collections::HashMap<u8, FileSystemRoot>,
 }
 
 impl FlashFS {
     pub fn new() -> Self {
         FlashFS {
             root: FileSystemRoot::new(-1, 0, 0x30),
-            partitions: std::collections::HashMap::new(),
         }
+    }
+
+    fn pick_fs_root(
+        best_main: Option<(usize, u32)>,
+        best_alt: Option<(usize, u32)>,
+        logical: &[u8],
+        layout: &NandLayout,
+    ) -> FileSystemRoot {
+        if let Some((block, seq)) = best_main {
+            let mut root = FileSystemRoot::new(block as i32, seq as i32, 0x30);
+            root.read(logical, layout);
+            return root;
+        }
+        if let Some((block, seq)) = best_alt {
+            let mut root = FileSystemRoot::new(block as i32, seq as i32, 0x2C);
+            root.read(logical, layout);
+            return root;
+        }
+        FileSystemRoot::new(-1, 0, 0x30)
     }
 
     /// Scans physical image for FlashFS signatures.
@@ -871,10 +872,9 @@ impl FlashFS {
         let mut fs = FlashFS::new();
         let total_blocks = layout.total_blocks(image.len());
         let pages_per_block = layout.logical_pages_per_block();
-        let mut best: std::collections::HashMap<u8, (usize, u32)> =
-            std::collections::HashMap::new();
+        let mut best_main: Option<(usize, u32)> = None;
+        let mut best_alt: Option<(usize, u32)> = None;
 
-        // Phase 1: walk spare data in the physical image to locate FS root blocks.
         for block in 0..total_blocks {
             if is_bad_block(image, block, layout) {
                 continue;
@@ -882,30 +882,25 @@ impl FlashFS {
             if let Some(spare) = get_page_spare(image, block * pages_per_block, layout) {
                 let parsed = FsSpareData::parse(&spare, layout);
                 let btype = parsed.fs_block_type;
-                if btype == 0x30 || btype == 0x2C || (0x31..=0x39).contains(&btype) {
-                    let seq = parsed.fs_sequence;
-                    let newer = match best.get(&btype) {
-                        Some(&(_, b_seq)) => seq > b_seq,
-                        None => true,
-                    };
-                    if newer {
-                        best.insert(btype, (block, seq));
+                let seq = parsed.fs_sequence;
+                match btype {
+                    0x30 => {
+                        if best_main.map(|(_, s)| seq > s).unwrap_or(true) {
+                            best_main = Some((block, seq));
+                        }
                     }
+                    0x2C => {
+                        if best_alt.map(|(_, s)| seq > s).unwrap_or(true) {
+                            best_alt = Some((block, seq));
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
 
-        // Phase 2: strip spare so root.read() uses correct 0x200-byte page stride.
-        let logical = crate::core::images::blocks::remove_spare(image);
-
-        for (btype, (block, seq)) in best {
-            let mut root = FileSystemRoot::new(block as i32, seq as i32, btype);
-            root.read(&logical, layout);
-            if btype == 0x30 || btype == 0x2C {
-                fs.root = root.clone();
-            }
-            fs.partitions.insert(btype, root);
-        }
+        let logical = remove_spare(image);
+        fs.root = Self::pick_fs_root(best_main, best_alt, &logical, layout);
         fs
     }
 
@@ -918,34 +913,24 @@ impl FlashFS {
         let mut fs = FlashFS::new();
         let total_blocks = layout.total_blocks(image.len());
         let pages_per_block = layout.logical_pages_per_block();
-        let mut best: std::collections::HashMap<u8, (usize, u32)> =
-            std::collections::HashMap::new();
+        let mut best_main: Option<(usize, u32)> = None;
+        let mut best_alt: Option<(usize, u32)> = None;
 
-        // Phase 1: EMMC Anchor Discovery
         if *layout == NandLayout::Emmc {
             for &offset in &EMMC_ANCHOR_OFFSETS {
                 if offset + 0x20 > image.len() {
                     continue;
                 }
-                let sig = &image[offset..offset + 4];
-                if sig == b"ANCH" {
+                if &image[offset..offset + 4] == b"ANCH" {
                     let mut cursor = Cursor::new(&image[offset + 4..offset + 20]);
-
                     let version = cursor.read_u32::<BigEndian>().unwrap_or(0);
                     let block = cursor.read_u32::<BigEndian>().unwrap_or(0) as usize;
-                    let _seq = cursor.read_u32::<BigEndian>().unwrap_or(0);
-
-                    // best stores (block, version) - compare by version
-                    let newer = match best.get(&0x30) {
-                        Some(&(_, b_ver)) => version > b_ver,
-                        None => true,
-                    };
-                    if newer {
+                    if best_main.map(|(_, v)| version > v).unwrap_or(true) {
                         info!(
                             "[flashfs] EMMC Anchor v{} found at 0x{:X}: block {}",
                             version, offset, block
                         );
-                        best.insert(0x30, (block, version));
+                        best_main = Some((block, version));
                     }
                 }
             }
@@ -957,44 +942,33 @@ impl FlashFS {
             lba_map.bad_blocks.len()
         );
 
-        // Phase 1.5: walk spare data (Small Block / Big Block only), skipping known bad blocks from LBA map
         if *layout != NandLayout::Emmc {
             for block in 0..total_blocks {
-                // Skip blocks known to be bad
-                if lba_map.is_bad(block) {
-                    continue;
-                }
-                if is_bad_block(image, block, layout) {
+                if lba_map.is_bad(block) || is_bad_block(image, block, layout) {
                     continue;
                 }
                 if let Some(spare) = get_page_spare(image, block * pages_per_block, layout) {
                     let parsed = FsSpareData::parse(&spare, layout);
-                    let btype = parsed.fs_block_type;
-                    if btype == 0x30 || btype == 0x2C || (0x31..=0x39).contains(&btype) {
-                        let seq = parsed.fs_sequence;
-                        let newer = match best.get(&btype) {
-                            Some(&(_, b_seq)) => seq > b_seq,
-                            None => true,
-                        };
-                        if newer {
-                            best.insert(btype, (block, seq));
+                    let seq = parsed.fs_sequence;
+                    match parsed.fs_block_type {
+                        0x30 => {
+                            if best_main.map(|(_, s)| seq > s).unwrap_or(true) {
+                                best_main = Some((block, seq));
+                            }
                         }
+                        0x2C => {
+                            if best_alt.map(|(_, s)| seq > s).unwrap_or(true) {
+                                best_alt = Some((block, seq));
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
         }
 
-        // Phase 2: strip spare so root.read() uses correct 0x200-byte page stride.
-        let logical = crate::core::images::blocks::remove_spare(image);
-
-        for (btype, (block, seq)) in best {
-            let mut root = FileSystemRoot::new(block as i32, seq as i32, btype);
-            root.read(&logical, layout);
-            if btype == 0x30 || btype == 0x2C {
-                fs.root = root.clone();
-            }
-            fs.partitions.insert(btype, root);
-        }
+        let logical = remove_spare(image);
+        fs.root = Self::pick_fs_root(best_main, best_alt, &logical, layout);
 
         if fs.root.block_number >= 0 {
             info!(

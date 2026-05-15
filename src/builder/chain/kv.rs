@@ -5,14 +5,11 @@
 */
 
 use crate::builder::deps::excrypt::{self, Rc4};
-use log::info;
+use log::{info, warn};
 use zerocopy::byteorder::{BigEndian, U16};
 use zerocopy::FromBytes;
 
-/// Keyvault record header - covers the first 0x110 bytes.
-/// All offsets confirmed against J-Runner Nand.cs lines 674-682.
-/// Fields beyond 0x110 (console_id @ 0x9CA, osig @ 0xC92, mfdate @ 0x9E4)
-/// live far outside this struct and are accessed via sparse accessors below.
+/// Keyvault record header
 #[derive(
     zerocopy::FromBytes,
     zerocopy::IntoBytes,
@@ -24,13 +21,13 @@ use zerocopy::FromBytes;
 )]
 #[repr(C)]
 pub struct KeyvaultRecord {
-    pub hmac: [u8; 0x10],        // 0x000 - HMAC-SHA1 nonce (RC4 seed)
-    pub unused0: [u8; 0x0C],     // 0x010
-    pub version: U16<BigEndian>, // 0x01C
-    pub unused1: [u8; 0x92],     // 0x01E..0x0B0
-    pub serial: [u8; 12],        // 0x0B0 - Console serial number (ASCII)
-    pub unused2: [u8; 0x50],     // 0x0BC..0x10C
-    pub dvd_key: [u8; 16],       // 0x100 - DVD encryption key
+    pub hmac: [u8; 0x10], // HMAC-SHA1 nonce (RC4 seed)
+    pub unused0: [u8; 0x0C],
+    pub version: U16<BigEndian>,
+    pub unused1: [u8; 0x92],
+    pub serial: [u8; 12], // Console serial number (ASCII)
+    pub unused2: [u8; 0x50],
+    pub dvd_key: [u8; 16], // DVD encryption key
 }
 
 #[derive(Clone, Debug)]
@@ -164,7 +161,7 @@ impl Keyvault {
 
         let original_data = self.data.clone();
 
-        // Try KV1 Decryption
+        // 1. Try KV1 Decryption
         self.hashed = false;
         let mut kv1_data = self.data.clone();
 
@@ -180,7 +177,7 @@ impl Keyvault {
         rc4.crypt(&mut kv1_data[0x10..])
             .map_err(|e| format!("Decryption failed: {}", e))?;
 
-        // Check if KV1 was correct and use it if so
+        // 2. Check if KV1 was correct
         let kv1_valid = {
             let temp_kv = Keyvault {
                 data: kv1_data.clone(),
@@ -188,15 +185,6 @@ impl Keyvault {
             };
             temp_kv.check_decrypted_signatures()
         };
-
-        if kv1_valid {
-            info!("[builder] Keyvault decrypted as Type 1");
-            self.data = kv1_data;
-            self.is_decrypted = true;
-            self.hashed = false;
-            let _ = self.refresh_metadata();
-            return Ok(());
-        }
 
         let kv1_looks_like_type2 = if kv1_valid {
             let sig_region = &kv1_data[0x1DF8..0x1E00];
@@ -208,7 +196,7 @@ impl Keyvault {
         };
 
         if kv1_valid && !kv1_looks_like_type2 {
-            info!("[builder] Keyvault decrypted as Type 1 (Retail)");
+            info!("[builder] Keyvault decrypted as Type 1 (Retail).");
             self.data = kv1_data;
             self.is_decrypted = true;
             self.hashed = false;
@@ -245,7 +233,15 @@ impl Keyvault {
             return Ok(());
         }
 
-
+        // 4. Final Fallback: Use KV1 if it was valid
+        if kv1_valid {
+            warn!("[builder] KV2 decryption failed but KV1 was valid. Falling back to Type 1.");
+            self.data = kv1_data;
+            self.is_decrypted = true;
+            self.hashed = false;
+            let _ = self.refresh_metadata();
+            return Ok(());
+        }
 
         Err("Keyvault decryption failed: Invalid signatures for both KV1 and KV2".to_string())
     }
@@ -284,7 +280,7 @@ impl Keyvault {
             rc4.crypt(&mut self.data[0x10..])
                 .map_err(|e| format!("Encryption failed: {}", e))?;
         }
-        self.metadata = None;
+
         self.is_decrypted = false;
         Ok(())
     }

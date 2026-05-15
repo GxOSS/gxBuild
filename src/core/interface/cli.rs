@@ -460,8 +460,9 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     info!("[cli]   INI File:  {:?}", ini_path);
 
     // Discovery Phase
-    // Enqueue FinalizeFlashfs to run after all asset discovery
+    // Enqueue FinalizeFlashfs / FinalizeMobile to run after all asset discovery
     session.enqueue(InternalCommand::FinalizeFlashfs);
+    session.enqueue(InternalCommand::FinalizeMobile);
 
     // Try to find and enqueue a file by name across search paths
     let enqueue_if_found =

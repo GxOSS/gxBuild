@@ -295,6 +295,7 @@ pub fn add_spare(
     meta_type: SpareMetaType,
     blockstart: usize,
     fs_meta: Option<&std::collections::HashMap<usize, FsSpareInfo>>,
+    mobile_meta: Option<&std::collections::HashMap<usize, FsSpareInfo>>,
     jtag_syscall: Option<u16>,
 ) -> Vec<u8> {
     let page_size = layout.page_size();
@@ -340,8 +341,11 @@ pub fn add_spare(
                     spare[0] = 0xFF; // Big-block bad-block marker
                     let val = (page_idx / 256) + block_number_base;
 
-                    if let Some(fs) = fs_meta.and_then(|m| m.get(&val)) {
-                        // MetaType2 Encoding for FlashFS
+                    if let Some(fs) = mobile_meta
+                        .and_then(|m| m.get(&page_idx))
+                        .or_else(|| fs_meta.and_then(|m| m.get(&val)))
+                    {
+                        // MetaType2 Encoding for FlashFS / mobile spare
                         spare[1] = (val & 0xFF) as u8;
                         spare[2] = ((val >> 8) & 0xFF) as u8;
                         spare[5] = (fs.sequence & 0xFF) as u8;
@@ -411,7 +415,10 @@ pub fn add_spare(
                     }
                 }
 
-                if let Some(fs) = fs_meta.and_then(|m| m.get(&val)) {
+                if let Some(fs) = mobile_meta
+                    .and_then(|m| m.get(&i))
+                    .or_else(|| fs_meta.and_then(|m| m.get(&val)))
+                {
                     spare[5] = 0xFF;
                     spare[7] = (fs.size & 0xFF) as u8;
                     spare[8] = ((fs.size >> 8) & 0xFF) as u8;
@@ -865,12 +872,12 @@ pub fn resolve_remapped_blocks(
 
         let id1 = get_page_spare(image, first_page, layout)
             .map(|s| {
-                crate::builder::chain::flashfs::FsSpareData::parse(&s, layout).block_id as usize
+                crate::builder::filesystem::FsSpareData::parse(&s, layout).block_id as usize
             })
             .unwrap_or(usize::MAX);
         let id2 = get_page_spare(image, last_page, layout)
             .map(|s| {
-                crate::builder::chain::flashfs::FsSpareData::parse(&s, layout).block_id as usize
+                crate::builder::filesystem::FsSpareData::parse(&s, layout).block_id as usize
             })
             .unwrap_or(usize::MAX);
 
@@ -1076,11 +1083,20 @@ impl NandProcessor {
         layout: NandLayout,
         meta_type: SpareMetaType,
         fs_meta: Option<&std::collections::HashMap<usize, FsSpareInfo>>,
+        mobile_meta: Option<&std::collections::HashMap<usize, FsSpareInfo>>,
         jtag_syscall: Option<u16>,
     ) -> Vec<u8> {
         if layout == NandLayout::Emmc {
             return clean_data.to_vec();
         }
-        add_spare(clean_data, layout, meta_type, 0, fs_meta, jtag_syscall)
+        add_spare(
+            clean_data,
+            layout,
+            meta_type,
+            0,
+            fs_meta,
+            mobile_meta,
+            jtag_syscall,
+        )
     }
 }

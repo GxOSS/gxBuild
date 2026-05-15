@@ -6,7 +6,7 @@
     Licensed under the GNU General Public License Version 2.0
 */
 use crate::builder::builder::NandSkeleton;
-use crate::builder::chain::flashfs::{FileSystemEntry, FlashFS};
+use crate::builder::filesystem::flashfs::{FileSystemEntry, FlashFS};
 use crate::core::data::xeini::XeBuildIni;
 use log::{info, warn};
 use std::collections::HashMap;

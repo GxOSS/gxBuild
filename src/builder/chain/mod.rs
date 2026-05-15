@@ -3,7 +3,6 @@ pub mod cd;
 pub mod ce;
 pub mod cf;
 pub mod cg;
-pub mod flashfs;
 pub mod kv;
 pub mod sc;
 pub mod smc;
