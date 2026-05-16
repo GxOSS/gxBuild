@@ -39,12 +39,10 @@ impl Signature {
         })
     }
 
-    /// Parses a simple JSON-like map of "pattern": "replacement" and applies it to the data.
-    /// Does not require serde_json.
+    /// Parses a simple JSON-like map of "pattern": "replacement" and applies it to the data
     pub fn apply_batch(data: &mut [u8], json_str: &str) -> Result<usize, String> {
         let mut total_matches = 0;
 
-        // Very basic JSON-subset parser for { "key": "value", ... }
         let content = json_str
             .trim()
             .trim_start_matches('{')
@@ -96,8 +94,7 @@ impl Signature {
         Ok(out)
     }
 
-    /// Scans the data and applies the patch to ALL matches.
-    /// Returns the number of matches found and patched.
+    /// Scans the data and applies the patch to ALL matches
     pub fn apply(&self, data: &mut [u8]) -> usize {
         if data.len() < self.pattern.len() {
             return 0;
@@ -117,7 +114,6 @@ impl Signature {
                     log_name, i
                 );
 
-                // Move ahead to avoid overlapping matches of the same signature
                 i += self.pattern.len();
             } else {
                 i += 1;

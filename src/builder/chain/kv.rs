@@ -282,6 +282,7 @@ impl Keyvault {
         }
 
         self.is_decrypted = false;
+        self.metadata = None;
         Ok(())
     }
 

@@ -1,6 +1,6 @@
 [package]
 name = "gxbuild"
-version = "1.22.50"
+version = "1.22.60"
 edition = "2021"
 
 [lib]
