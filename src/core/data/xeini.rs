@@ -93,7 +93,7 @@ pub fn parse_xe_ini(
     target_section: &str,
 ) -> Result<XeBuildIni, IniError> {
     let ini_path = ini_path.as_ref();
-    let content = fs::read_to_string(ini_path).map_err(|e| IniError::IoError(e))?;
+    let content = fs::read_to_string(ini_path).map_err(IniError::IoError)?;
     let filename_hint = ini_path.file_name().and_then(|s| s.to_str());
 
     parse_xe_ini_str(&content, target_section, filename_hint)
@@ -510,7 +510,9 @@ pub fn apply_xe_ini(
                                 "Invalid XeLL for build profile",
                             )));
                         }
-                        nand.rebooter.as_mut().map(|r| r.xell = Some(xell));
+                        if let Some(rebooter) = nand.rebooter.as_mut() {
+                            rebooter.xell = Some(xell);
+                        }
                         info!("[ini] Assigned xell-2f to Full Rebooter secondary slot");
                     }
                     _ => {

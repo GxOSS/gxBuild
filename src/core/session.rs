@@ -9,7 +9,6 @@
 use crate::builder::builder::NandSkeleton;
 use crate::builder::builder::{LayoutCalculator, SouthbridgeType};
 use crate::core::data::filesearch::IniSearch;
-use crate::core::images::blocks::NandLayout;
 use crate::core::images::gxp::parse_patch_binary;
 use log::{error, info, warn};
 use std::cmp::Ordering;

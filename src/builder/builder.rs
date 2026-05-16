@@ -1260,7 +1260,7 @@ impl NandSkeleton {
                 break;
             }
 
-            let mut bl_data = image[off..off + bl_size].to_vec();
+            let bl_data = image[off..off + bl_size].to_vec();
             let aligned_size = (bl_size + 0xF) & 0xFFFFFFF0;
 
             match bl_header.get_type() {
