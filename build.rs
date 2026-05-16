@@ -2,8 +2,6 @@ fn main() {
     let excrypt_path = "src/builder/deps/excrypt/src";
     // let mspack_path = "src/builder/deps/mspack";
     // let xenia_path = "src/builder/deps/xenia";
-    let bltool_path = "src/builder/deps/xenon_bltool";
-
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
@@ -37,9 +35,6 @@ fn main() {
         format!("{}/excrypt_ecc.c", excrypt_path),
         format!("{}/excrypt_md5.c", excrypt_path),
         format!("{}/excrypt_parve.c", excrypt_path),
-        format!("{}/excrypt_rc4.c", excrypt_path),
-        format!("{}/excrypt_rotsum.c", excrypt_path),
-        format!("{}/excrypt_sha.c", excrypt_path),
         format!("{}/excrypt_sha2.c", excrypt_path),
         format!("{}/rijndael.c", excrypt_path),
         /*
@@ -47,7 +42,6 @@ fn main() {
         format!("{}/system.c", mspack_path),
         format!("{}/lzx-delta.c", xenia_path),
         */
-        format!("{}/utility.c", bltool_path),
     ]);
 
     build_c.include(excrypt_path);
@@ -55,7 +49,6 @@ fn main() {
     build_c.include(mspack_path);
     build_c.include(xenia_path);
     */
-    build_c.include(bltool_path);
 
     if use_maes {
         build_c.flag("-maes");
@@ -84,7 +77,6 @@ fn main() {
     build_cpp.include(mspack_path);
     build_cpp.include(xenia_path);
     */
-    build_cpp.include(bltool_path);
 
     if use_maes {
         build_cpp.flag("-maes");
