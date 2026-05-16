@@ -469,7 +469,8 @@ pub fn apply_xe_ini(
 
         if let Some(data) = pending.bootloaders.get(&lower) {
             if lower.contains("xell") {
-                let xell = crate::builder::chain::xell::Xell::parse(data, Some(filename));
+                let xell = crate::builder::chain::xell::Xell::parse(data, Some(filename))
+                    .map_err(|e| IniError::BootloaderError(e.to_string()))?;
                 let x_type = xell.identify();
 
                 let is_unsafe = nand.options.gxunsafe;

@@ -107,6 +107,7 @@ mod tests {
     use crate::builder::chain::cb::{BootloaderCb, CbMetadata};
     use crate::builder::chain::cf::{BootloaderCf, CfMetadata};
     use crate::builder::chain::BootloaderHeader;
+    use crate::core::images::blocks::NandLayout;
     use zerocopy::byteorder::{U16, U32};
 
     fn test_header(magic: u16, size: u32) -> BootloaderHeader {

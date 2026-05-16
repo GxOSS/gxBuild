@@ -1813,11 +1813,9 @@ impl NandSkeleton {
         // 6. XeLL Injection
         if self.options.image_profile == "onef" {
             if let Some(xell) = self.bootloaders.xell.as_ref() {
-                let x_type = xell.identify();
-                let xell_offset = crate::builder::chain::xell::Xell::get_target_offset(
-                    x_type,
-                    &self.options.image_profile,
-                ) as usize;
+                let xell_offset = xell
+                    .get_target_offset(&self.options.image_profile)
+                    .map_err(|e| e.to_string())? as usize;
                 info!(
                     "[builder] JTAG Chain 1: Injecting XeLL-1F payload at 0x{:08X}",
                     xell_offset
@@ -1827,11 +1825,9 @@ impl NandSkeleton {
             }
         } else if let Some(rebooter) = &self.rebooter {
             if let Some(xell) = rebooter.xell.as_ref() {
-                let x_type = xell.identify();
-                let xell_offset = crate::builder::chain::xell::Xell::get_target_offset(
-                    x_type,
-                    &self.options.image_profile,
-                ) as usize;
+                let xell_offset = xell
+                    .get_target_offset(&self.options.image_profile)
+                    .map_err(|e| e.to_string())? as usize;
                 info!(
                     "[builder] JTAG Chain 1: Injecting XeLL-2F payload at 0x{:08X}",
                     xell_offset
@@ -2091,10 +2087,9 @@ impl NandSkeleton {
         for (xell_opt, _is_rebooter) in xell_payloads {
             if let Some(xell) = xell_opt {
                 let x_type = xell.identify();
-                let xell_offset = crate::builder::chain::xell::Xell::get_target_offset(
-                    x_type,
-                    &self.options.image_profile,
-                ) as usize;
+                let xell_offset = xell
+                    .get_target_offset(&self.options.image_profile)
+                    .map_err(|e| e.to_string())? as usize;
                 if xell_offset + xell.data.len() > logical_image.len() {
                     return Err(format!(
                         "XeLL ({:?}) overflow at 0x{:X}: need 0x{:X} bytes",
