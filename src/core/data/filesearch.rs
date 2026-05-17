@@ -61,15 +61,7 @@ pub struct DiscoveredBootloaders {
 
 impl DiscoveredBootloaders {
     pub fn new() -> Self {
-        Self {
-            cb: None,
-            cb_a: None,
-            cb_b: None,
-            cb_x: None,
-            sc: None,
-            cd: None,
-            ce: None,
-        }
+        Self { cb: None, cb_a: None, cb_b: None, cb_x: None, sc: None, cd: None, ce: None }
     }
 }
 
@@ -82,12 +74,7 @@ pub struct DiscoveredUpdate {
 
 impl DiscoveredUpdate {
     pub fn new() -> Self {
-        Self {
-            cf_0: None,
-            cg_0: None,
-            cf_1: None,
-            cg_1: None,
-        }
+        Self { cf_0: None, cg_0: None, cf_1: None, cg_1: None }
     }
 }
 
@@ -202,12 +189,7 @@ impl IniSearch {
         let flashfs_folder = build.join("flashfs");
         // Auto Patcher
         // Patches Priority: 1. Build/bin Folder, 2. Build/../bin Folder
-        let platform = ini
-            .name
-            .split('_')
-            .next()
-            .unwrap_or(&ini.name)
-            .to_lowercase();
+        let platform = ini.name.split('_').next().unwrap_or(&ini.name).to_lowercase();
         let mut patch_path: Option<PathBuf> = None;
 
         let find_patch = |name: &str| -> Option<PathBuf> {
@@ -227,8 +209,7 @@ impl IniSearch {
             "retail" => {
                 info!("[ini] Retail build type selected");
             }
-            "glitch1" | "glitch2" | "glitch2m" | "glitch3" | "jtag" | "1f" | "2f" | "devgl"
-            | "devkit" | "xdkbuild" | "rgbuild" => {
+            "glitch1" | "glitch2" | "glitch2m" | "glitch3" | "jtag" | "1f" | "2f" | "devgl" | "devkit" | "xdkbuild" | "rgbuild" => {
                 info!("[ini] {} build type selected", ini.buildtype);
                 match ini.buildtype.as_str() {
                     "glitch1" => {
@@ -239,109 +220,60 @@ impl IniSearch {
                         };
                         if let Some(n) = name {
                             if let Some(p) = find_patch(n) {
-                                info!(
-                                    "[ini] Glitch1 Patches for platform {} found at path: {}",
-                                    platform,
-                                    p.display()
-                                );
+                                info!("[ini] Glitch1 Patches for platform {} found at path: {}", platform, p.display());
                                 patch_path = Some(p);
                             } else {
-                                return Err(FilesearchError::NoAutoPatches(
-                                    "Glitch1".to_string(),
-                                    ini.name.clone(),
-                                    format!("<build>/bin/{}", n),
-                                ));
+                                return Err(FilesearchError::NoAutoPatches("Glitch1".to_string(), ini.name.clone(), format!("<build>/bin/{}", n)));
                             }
                         }
                     }
                     "glitch2" => {
                         let n = format!("patches_g2{}.bin", platform);
                         if let Some(p) = find_patch(&n) {
-                            info!(
-                                "[ini] Glitch2 Patches for platform {} found at path: {}",
-                                platform,
-                                p.display()
-                            );
+                            info!("[ini] Glitch2 Patches for platform {} found at path: {}", platform, p.display());
                             patch_path = Some(p);
                         } else {
-                            return Err(FilesearchError::NoAutoPatches(
-                                "Glitch2".to_string(),
-                                ini.name.clone(),
-                                format!("<build>/bin/{}", n),
-                            ));
+                            return Err(FilesearchError::NoAutoPatches("Glitch2".to_string(), ini.name.clone(), format!("<build>/bin/{}", n)));
                         }
                     }
                     "glitch2m" | "devgl" | "xdkbuild" => {
                         let n = format!("patches_g2m{}.bin", platform);
                         if let Some(p) = find_patch(&n) {
-                            info!(
-                                "[ini] {} Patches for platform {} found at path: {}",
-                                ini.buildtype,
-                                platform,
-                                p.display()
-                            );
+                            info!("[ini] {} Patches for platform {} found at path: {}", ini.buildtype, platform, p.display());
                             patch_path = Some(p);
                         } else {
-                            return Err(FilesearchError::NoAutoPatches(
-                                ini.buildtype.clone(),
-                                ini.name.clone(),
-                                format!("<build>/bin/{}", n),
-                            ));
+                            return Err(FilesearchError::NoAutoPatches(ini.buildtype.clone(), ini.name.clone(), format!("<build>/bin/{}", n)));
                         }
                     }
                     "glitch3" => {
                         let n3 = format!("patches_g3{}.bin", platform);
                         let n2 = format!("patches_g2{}.bin", platform);
                         if let Some(p3) = find_patch(&n3) {
-                            info!(
-                                "[ini] Glitch3 Patches for platform {} found at path: {}",
-                                platform,
-                                p3.display()
-                            );
+                            info!("[ini] Glitch3 Patches for platform {} found at path: {}", platform, p3.display());
                             patch_path = Some(p3);
                         } else if let Some(p2) = find_patch(&n2) {
                             warn!("[ini] Glitch3 Patches for platform {} not found, using fallback: {}", platform, p2.display());
                             patch_path = Some(p2);
                         } else {
-                            return Err(FilesearchError::NoAutoPatches(
-                                "Glitch3".to_string(),
-                                ini.name.clone(),
-                                format!("<build>/bin/{}", n3),
-                            ));
+                            return Err(FilesearchError::NoAutoPatches("Glitch3".to_string(), ini.name.clone(), format!("<build>/bin/{}", n3)));
                         }
                     }
                     "devkit" => {
                         let n = format!("patches_dev{}.bin", platform);
                         if let Some(p) = find_patch(&n) {
-                            info!(
-                                "[ini] Devkit Patches for platform {} found at path: {}",
-                                platform,
-                                p.display()
-                            );
+                            info!("[ini] Devkit Patches for platform {} found at path: {}", platform, p.display());
                             patch_path = Some(p);
                         } else {
-                            return Err(FilesearchError::NoAutoPatches(
-                                "Devkit".to_string(),
-                                ini.name.clone(),
-                                format!("<build>/bin/{}", n),
-                            ));
+                            return Err(FilesearchError::NoAutoPatches("Devkit".to_string(), ini.name.clone(), format!("<build>/bin/{}", n)));
                         }
                     }
                     "rgbuild" => {
                         let n = format!("patches_rg{}.bin", platform);
                         if let Some(p) = find_patch(&n) {
-                            info!(
-                                "[ini] RGBuild Patches for platform {} found at path: {}",
-                                platform,
-                                p.display()
-                            );
+                            info!("[ini] RGBuild Patches for platform {} found at path: {}", platform, p.display());
                             patch_path = Some(p);
                         } else {
-                            return Err(FilesearchError::NoAutoPatches(
-                                "RGBuild".to_string(),
-                                ini.name.clone(),
-                                format!("<build>/bin/{}", n),
-                            ));
+                            return Err(FilesearchError::NoAutoPatches("RGBuild".to_string(), ini.name.clone(), format!("<build>/bin/{}", n)));
                         }
                     }
                     _ => {}
@@ -432,7 +364,10 @@ impl IniSearch {
                                 found_content = Some(c);
                                 found_path = Some(cand);
                             } else if unsafe_mode {
-                                warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Common Folder Tier). Continuing...", filename, expected, actual);
+                                warn!(
+                                    "[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Common Folder Tier). Continuing...",
+                                    filename, expected, actual
+                                );
                                 found_content = Some(c);
                                 found_path = Some(cand);
                             } else {
@@ -506,10 +441,7 @@ impl IniSearch {
                                 return Err(FilesearchError::HashMismatch(filename.to_string()));
                             }
                         } else {
-                            info!(
-                                "[ini] Discovered payload in data folder: {}",
-                                cand.display()
-                            );
+                            info!("[ini] Discovered payload in data folder: {}", cand.display());
                             info!("[ini] Payload {} passed CRC32: {}", filename, actual);
                             result.bootloader_assets.insert(lower_name, c);
                         }
@@ -543,9 +475,7 @@ impl IniSearch {
 
                 if lower.starts_with("cbb_") {
                     target_cb = Some(lower.clone());
-                } else if target_cb.is_none()
-                    && (lower.starts_with("cb_") || lower.starts_with("sb_"))
-                {
+                } else if target_cb.is_none() && (lower.starts_with("cb_") || lower.starts_with("sb_")) {
                     target_cb = Some(lower.clone());
                 }
             }
@@ -570,18 +500,16 @@ impl IniSearch {
                 let mut found_content: Option<Vec<u8>> = None;
                 let mut found_path: Option<PathBuf> = None;
 
-                let is_update = lower_name.starts_with("cf_")
-                    || lower_name.starts_with("sf_")
-                    || lower_name.starts_with("cg_")
-                    || lower_name.starts_with("sg_");
+                let is_update = lower_name.starts_with("cf_") || lower_name.starts_with("sf_") || lower_name.starts_with("cg_") || lower_name.starts_with("sg_");
 
                 // crc32
                 macro_rules! check_hash {
                     ($c:expr, $name:expr, $tier:expr) => {
                         if let Some(expected) = &entry.hash {
                             let actual = get_xebuild_crc32(&$c, $name);
-                            if actual.to_lowercase() == expected.to_lowercase() { true }
-                            else {
+                            if actual.to_lowercase() == expected.to_lowercase() {
+                                true
+                            } else {
                                 if unsafe_mode {
                                     warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in {} Tier). Continuing...", $name, expected, actual, $tier);
                                     true
@@ -589,7 +517,9 @@ impl IniSearch {
                                     return Err(FilesearchError::HashMismatch($name.to_string()));
                                 }
                             }
-                        } else { true }
+                        } else {
+                            true
+                        }
                     };
                 }
 
@@ -655,17 +585,10 @@ impl IniSearch {
                     let p_xboxupd = build.join("xboxupd.bin");
                     if p_xboxupd.exists() {
                         if let Ok(data_upd) = std::fs::read(&p_xboxupd) {
-                            if let Ok((cf, cg)) =
-                                crate::core::images::stfs::parse_xboxupd(&data_upd)
-                            {
-                                result
-                                    .bootloader_assets
-                                    .insert(expected_cf.clone(), cf.serialize());
-                                result
-                                    .bootloader_assets
-                                    .insert(expected_cg.clone(), cg.serialize());
-                                if let Some(c) = result.bootloader_assets.get(&lower_name).cloned()
-                                {
+                            if let Ok((cf, cg)) = crate::core::images::stfs::parse_xboxupd(&data_upd) {
+                                result.bootloader_assets.insert(expected_cf.clone(), cf.serialize());
+                                result.bootloader_assets.insert(expected_cg.clone(), cg.serialize());
+                                if let Some(c) = result.bootloader_assets.get(&lower_name).cloned() {
                                     if check_hash!(c, filename, "xboxupd.bin") {
                                         found_content = Some(c);
                                         found_path = Some(p_xboxupd);
@@ -681,33 +604,20 @@ impl IniSearch {
                                 if let Some(name) = stfs_entry.file_name().to_str() {
                                     if name.starts_with("su") && !name.contains('.') {
                                         if let Ok(data_stfs) = std::fs::read(stfs_entry.path()) {
-                                            if let Ok(stfs) =
-                                                crate::core::images::stfs::StfsContainer::new(
-                                                    &data_stfs,
-                                                )
-                                            {
+                                            if let Ok(stfs) = crate::core::images::stfs::StfsContainer::new(&data_stfs) {
                                                 if let Ok(mem) = stfs.extract_to_memory() {
                                                     for (k, v) in mem {
                                                         let k_lower = k.to_lowercase();
-                                                        if k_lower == "xboxupd.bin"
-                                                            || (k_lower.starts_with("su")
-                                                                && !k_lower.contains('.'))
-                                                        {
+                                                        if k_lower == "xboxupd.bin" || (k_lower.starts_with("su") && !k_lower.contains('.')) {
                                                             if let Ok((cf, cg)) = crate::core::images::stfs::parse_xboxupd(&v) {
                                                                 result.bootloader_assets.insert(expected_cf.clone(), cf.serialize());
                                                                 result.bootloader_assets.insert(expected_cg.clone(), cg.serialize());
                                                             }
                                                         } else {
-                                                            result
-                                                                .flashfs_assets
-                                                                .insert(k_lower, v);
+                                                            result.flashfs_assets.insert(k_lower, v);
                                                         }
                                                     }
-                                                    if let Some(c) = result
-                                                        .bootloader_assets
-                                                        .get(&lower_name)
-                                                        .cloned()
-                                                    {
+                                                    if let Some(c) = result.bootloader_assets.get(&lower_name).cloned() {
                                                         if check_hash!(c, filename, "STFS") {
                                                             found_content = Some(c);
                                                             found_path = Some(stfs_entry.path());
@@ -732,32 +642,20 @@ impl IniSearch {
                     if let Some(ref parsed_patch) = xe_patch {
                         if Some(&lower_name) == target_cb.as_ref() {
                             if let Some(ref cb_patch) = parsed_patch.cb {
-                                let _ = crate::core::images::gxp::apply_records(
-                                    &cb_patch.records,
-                                    &mut c,
-                                );
+                                let _ = crate::core::images::gxp::apply_records(&cb_patch.records, &mut c);
                             } else if let Some(ref cbb_patch) = parsed_patch.cb_b {
-                                let _ = crate::core::images::gxp::apply_records(
-                                    &cbb_patch.records,
-                                    &mut c,
-                                );
+                                let _ = crate::core::images::gxp::apply_records(&cbb_patch.records, &mut c);
                             }
                         } else if lower_name.starts_with("cd_") || lower_name.starts_with("sd_") {
                             if let Some(ref cd_patch) = parsed_patch.cd {
-                                let _ = crate::core::images::gxp::apply_records(
-                                    &cd_patch.records,
-                                    &mut c,
-                                );
+                                let _ = crate::core::images::gxp::apply_records(&cd_patch.records, &mut c);
                             }
                         }
                     }
 
                     result.bootloader_assets.insert(lower_name.clone(), c);
                     let target_bl = if entry.chain > 0 {
-                        result
-                            .rebooter
-                            .as_mut()
-                            .ok_or(FilesearchError::RebooterNotInitialized)?
+                        result.rebooter.as_mut().ok_or(FilesearchError::RebooterNotInitialized)?
                     } else {
                         result.bootloaders.as_mut().unwrap()
                     };
@@ -800,13 +698,7 @@ impl IniSearch {
 
                 // NAND Image
                 if let Some(n) = nand {
-                    if let Some(n_entry) = n
-                        .flashfs
-                        .root
-                        .entries
-                        .iter()
-                        .find(|e| e.file_name.to_lowercase() == filename.to_lowercase())
-                    {
+                    if let Some(n_entry) = n.flashfs.root.entries.iter().find(|e| e.file_name.to_lowercase() == filename.to_lowercase()) {
                         let c = n_entry.data.clone();
                         if let Some(expected) = &entry.hash {
                             let mut hasher = crc32fast::Hasher::new();
@@ -828,11 +720,7 @@ impl IniSearch {
 
                 // Local Folder
                 if found_content.is_none() {
-                    let candidates = [
-                        filename.clone(),
-                        format!("{}1", filename),
-                        format!("{}2", filename),
-                    ];
+                    let candidates = [filename.clone(), format!("{}1", filename), format!("{}2", filename)];
                     let paths = [flashfs_folder.clone(), build.clone(), data.clone()];
                     for p_base in &paths {
                         for cand in &candidates {
@@ -847,14 +735,14 @@ impl IniSearch {
                                         found_content = Some(c);
                                         break;
                                     } else if unsafe_mode {
-                                        warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Folder Tier). Continuing...", filename, expected, actual);
+                                        warn!(
+                                            "[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Folder Tier). Continuing...",
+                                            filename, expected, actual
+                                        );
                                         found_content = Some(c);
                                         break;
                                     } else {
-                                        info!(
-                                            "[ini] Hash mismatch for {} ({}) in Folder Tier",
-                                            filename, cand
-                                        );
+                                        info!("[ini] Hash mismatch for {} ({}) in Folder Tier", filename, cand);
                                     }
                                 } else {
                                     found_content = Some(c);
@@ -885,14 +773,14 @@ impl IniSearch {
                                     found_content = Some(c);
                                     break;
                                 } else if unsafe_mode {
-                                    warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Memory/STFS Tier). Continuing...", filename, expected, actual);
+                                    warn!(
+                                        "[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Memory/STFS Tier). Continuing...",
+                                        filename, expected, actual
+                                    );
                                     found_content = Some(c);
                                     break;
                                 } else {
-                                    info!(
-                                        "[ini] Hash mismatch for {} in Memory/STFS Tier",
-                                        filename
-                                    );
+                                    info!("[ini] Hash mismatch for {} in Memory/STFS Tier", filename);
                                 }
                             } else {
                                 found_content = Some(c);
@@ -918,14 +806,7 @@ impl IniSearch {
             result.flashfs = Some(flashfs);
         }
 
-        Ok(IniSearch {
-            ini,
-            build,
-            common,
-            data,
-            unsafe_mode: Some(unsafe_mode),
-            result,
-        })
+        Ok(IniSearch { ini, build, common, data, unsafe_mode: Some(unsafe_mode), result })
     }
 }
 
@@ -948,13 +829,7 @@ impl ImageSearch {
         let nand = nand.as_ref().to_path_buf();
         let nand = nand.canonicalize().unwrap_or_else(|_| nand.clone());
 
-        let result = ImageSearchResult {
-            nand: Some(nand),
-            key_string: None,
-            key_bin: None,
-            keyvault: None,
-            smc: None,
-        };
+        let result = ImageSearchResult { nand: Some(nand), key_string: None, key_bin: None, keyvault: None, smc: None };
 
         ImageSearch { result }
     }
@@ -978,11 +853,7 @@ impl PatchSearch {
         let build = Some(build.as_ref().to_path_buf());
         let data = data.map(|p| p.as_ref().to_path_buf());
 
-        PatchSearch {
-            build,
-            data,
-            result: Vec::new(),
-        }
+        PatchSearch { build, data, result: Vec::new() }
     }
 }
 
@@ -1001,9 +872,7 @@ mod tests {
     #[test]
     #[ignore = "requires GXBUILD_TEST_CF env var pointing to a CF binary"]
     fn test_cf_crc32_matches_xebuild() {
-        let cf_path = std::path::PathBuf::from(
-            std::env::var("GXBUILD_TEST_CF").expect("GXBUILD_TEST_CF must be set"),
-        );
+        let cf_path = std::path::PathBuf::from(std::env::var("GXBUILD_TEST_CF").expect("GXBUILD_TEST_CF must be set"));
 
         let expected = std::env::var("GXBUILD_TEST_CF_HASH")
             .expect("GXBUILD_TEST_CF_HASH must be set to the CRC32 from the xeBuild INI")
@@ -1011,10 +880,6 @@ mod tests {
 
         let data = std::fs::read(&cf_path).expect("Failed to read CF binary");
         let actual = get_xebuild_crc32(&data, &cf_path.file_name().unwrap().to_string_lossy());
-        assert_eq!(
-            actual, expected,
-            "CF CRC32 mismatch: got {}, expected {}",
-            actual, expected
-        );
+        assert_eq!(actual, expected, "CF CRC32 mismatch: got {}, expected {}", actual, expected);
     }
 }

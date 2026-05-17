@@ -92,8 +92,7 @@ impl CoronaFsData {
     /// SHA-1 over payload starting at `dwUnknown` (RGBuildPP `XeCryptSha` on struct tail).
     pub fn refresh_digest(&mut self) -> Result<(), String> {
         let mut raw = self.to_bytes();
-        let hash = excrypt::sha(&[&raw[0x14..CORONA_FS_DATA_SIZE]])
-            .map_err(|e| format!("Corona digest SHA failed: {}", e))?;
+        let hash = excrypt::sha(&[&raw[0x14..CORONA_FS_DATA_SIZE]]).map_err(|e| format!("Corona digest SHA failed: {}", e))?;
         raw[0..0x14].copy_from_slice(&hash[..0x14]);
         self.section_digest.copy_from_slice(&hash[..0x14]);
         Ok(())
@@ -126,10 +125,7 @@ pub fn load_slots(image: &[u8]) -> CoronaFsSlots {
         if offset + CORONA_FS_DATA_SIZE <= image.len() {
             *slot = CoronaFsData::from_bytes(&image[offset..offset + CORONA_FS_DATA_SIZE]);
             if slot.fs_version > 0 {
-                info!(
-                    "[corona] Slot {}: FS block {}, version {}",
-                    i, slot.fs_block_idx, slot.fs_version
-                );
+                info!("[corona] Slot {}: FS block {}, version {}", i, slot.fs_block_idx, slot.fs_version);
             }
         }
     }
@@ -164,12 +160,7 @@ pub fn default_emmc_fs_block(header_fs_addr: u32, slots: &CoronaFsSlots) -> u16 
 }
 
 /// Write Corona metadata slots after FlashFS (and optional mobile) are placed.
-pub fn write_back(
-    image: &mut [u8],
-    slots: &mut CoronaFsSlots,
-    root: &FileSystemRoot,
-    mobile: &MobileStore,
-) -> Result<(), String> {
+pub fn write_back(image: &mut [u8], slots: &mut CoronaFsSlots, root: &FileSystemRoot, mobile: &MobileStore) -> Result<(), String> {
     if root.block_number < 0 && root.entries.is_empty() {
         return Ok(());
     }
@@ -188,18 +179,12 @@ pub fn write_back(
 
         let offset = CORONA_FS_DATA_BASE + i * CORONA_FS_DATA_STRIDE;
         if offset + CORONA_FS_DATA_SIZE > image.len() {
-            return Err(format!(
-                "Corona slot {} write out of bounds (0x{:X})",
-                i, offset
-            ));
+            return Err(format!("Corona slot {} write out of bounds (0x{:X})", i, offset));
         }
 
         let raw = slot.to_bytes();
         image[offset..offset + CORONA_FS_DATA_SIZE].copy_from_slice(&raw);
-        info!(
-            "[corona] Wrote slot {} @ 0x{:X}: block {}, version {}",
-            i, offset, slot.fs_block_idx, slot.fs_version
-        );
+        info!("[corona] Wrote slot {} @ 0x{:X}: block {}, version {}", i, offset, slot.fs_block_idx, slot.fs_version);
     }
 
     Ok(())

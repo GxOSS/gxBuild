@@ -23,14 +23,7 @@ use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, ExCryptRsa, Rc4};
 use zerocopy::{FromBytes, IntoBytes};
 
-#[derive(
-    zerocopy::FromBytes,
-    zerocopy::IntoBytes,
-    zerocopy::KnownLayout,
-    zerocopy::Immutable,
-    Clone,
-    Copy,
-)]
+#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
 #[repr(C)]
 pub struct BootloaderScHeader {
     pub header: BootloaderHeader,
@@ -45,12 +38,8 @@ pub struct BootloaderSc {
 
 impl BootloaderSc {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload) =
-            BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse SC header")?;
-        Ok(Self {
-            header: header.clone(),
-            data: payload.to_vec(),
-        })
+        let (header, payload) = BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse SC header")?;
+        Ok(Self { header: header.clone(), data: payload.to_vec() })
     }
 
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {

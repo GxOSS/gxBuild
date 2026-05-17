@@ -16,37 +16,22 @@ pub struct Signature {
 
 impl Signature {
     /// Creates Signature from hex strings.
-    pub fn from_hex(
-        name: Option<&str>,
-        pattern_hex: &str,
-        replacement_hex: &str,
-    ) -> Result<Self, String> {
+    pub fn from_hex(name: Option<&str>, pattern_hex: &str, replacement_hex: &str) -> Result<Self, String> {
         let pattern = Self::parse_hex(pattern_hex)?;
         let replacement = Self::parse_hex(replacement_hex)?;
 
         if pattern.len() != replacement.len() {
-            return Err(format!(
-                "Pattern and replacement lengths must match ({} vs {})",
-                pattern.len(),
-                replacement.len()
-            ));
+            return Err(format!("Pattern and replacement lengths must match ({} vs {})", pattern.len(), replacement.len()));
         }
 
-        Ok(Self {
-            name: name.map(|s| s.to_string()),
-            pattern,
-            replacement,
-        })
+        Ok(Self { name: name.map(|s| s.to_string()), pattern, replacement })
     }
 
     /// Parses a simple JSON-like map of "pattern": "replacement" and applies it to the data
     pub fn apply_batch(data: &mut [u8], json_str: &str) -> Result<usize, String> {
         let mut total_matches = 0;
 
-        let content = json_str
-            .trim()
-            .trim_start_matches('{')
-            .trim_end_matches('}');
+        let content = json_str.trim().trim_start_matches('{').trim_end_matches('}');
         for pair in content.split(',') {
             let parts: Vec<&str> = pair.split(':').collect();
             if parts.len() == 2 {
@@ -62,10 +47,7 @@ impl Signature {
                         total_matches += sig.apply(data);
                     }
                     Err(e) => {
-                        warn!(
-                            "[signature] Skipping invalid signature pair in batch: {}",
-                            e
-                        );
+                        warn!("[signature] Skipping invalid signature pair in batch: {}", e);
                     }
                 }
             }
@@ -86,8 +68,7 @@ impl Signature {
             if chunk == "??" || chunk == ".." {
                 out.push(None);
             } else {
-                let byte = u8::from_str_radix(chunk, 16)
-                    .map_err(|e| format!("Invalid hex byte '{}': {}", chunk, e))?;
+                let byte = u8::from_str_radix(chunk, 16).map_err(|e| format!("Invalid hex byte '{}': {}", chunk, e))?;
                 out.push(Some(byte));
             }
         }
@@ -109,10 +90,7 @@ impl Signature {
                 matches += 1;
 
                 let log_name = self.name.as_deref().unwrap_or("unnamed");
-                info!(
-                    "[signature] Applied patch '{}' at offset 0x{:04X}",
-                    log_name, i
-                );
+                info!("[signature] Applied patch '{}' at offset 0x{:04X}", log_name, i);
 
                 i += self.pattern.len();
             } else {

@@ -78,35 +78,19 @@ impl BootloaderCb {
                     entrypoint: zerocopy::byteorder::U32::new(0),
                     size: zerocopy::byteorder::U32::new(0),
                 };
-                return Self {
-                    header: empty_header,
-                    data: bytes.to_vec(),
-                    metadata: None,
-                    derived_key: None,
-                };
+                return Self { header: empty_header, data: bytes.to_vec(), metadata: None, derived_key: None };
             }
         };
 
-        let mut cb = Self {
-            header: header.clone(),
-            data: payload.to_vec(),
-            metadata: None,
-            derived_key: None,
-        };
+        let mut cb = Self { header: header.clone(), data: payload.to_vec(), metadata: None, derived_key: None };
         // Attempt to populate metadata if the size looks like a decrypted or valid CB
         cb.populate_metadata();
         cb
     }
 
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload) =
-            BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CB header")?;
-        let mut cb = Self {
-            header: header.clone(),
-            data: payload.to_vec(),
-            metadata: None,
-            derived_key: None,
-        };
+        let (header, payload) = BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CB header")?;
+        let mut cb = Self { header: header.clone(), data: payload.to_vec(), metadata: None, derived_key: None };
         // Attempt to populate metadata if the size looks like a decrypted or valid CB
         cb.populate_metadata();
         Ok(cb)
@@ -268,10 +252,7 @@ impl BootloaderCb {
 
         // rotsum covers first 0x10 bytes (header)
         // and everything from globals (0x130 rel / 0x140 abs) to the end
-        if let Ok(hash) = excrypt::rot_sum_sha(
-            &IntoBytes::as_bytes(&self.header)[..0x10],
-            &self.data[0x130..payload_len],
-        ) {
+        if let Ok(hash) = excrypt::rot_sum_sha(&IntoBytes::as_bytes(&self.header)[..0x10], &self.data[0x130..payload_len]) {
             sha_out.copy_from_slice(&hash);
         }
     }
@@ -291,11 +272,7 @@ impl BootloaderCb {
 
     pub fn print_info(&self) {
         let magic = self.header.magic.get();
-        let mut indicator = if (magic & 0xF000) == 0x5000 {
-            "SB"
-        } else {
-            "CB"
-        };
+        let mut indicator = if (magic & 0xF000) == 0x5000 { "SB" } else { "CB" };
 
         if (self.header.flags.get() & 0x800) == 0x800 {
             indicator = "CB_A";
@@ -306,64 +283,27 @@ impl BootloaderCb {
             indicator = "CB_B";
         }
 
-        info!(
-            "[builder] {} version: {}",
-            indicator,
-            self.header.version.get()
-        );
-        info!(
-            "[builder] {} size: 0x{:x}",
-            indicator,
-            self.header.size.get()
-        );
-        info!(
-            "[builder] {} entrypoint: 0x{:x}",
-            indicator,
-            self.header.entrypoint.get()
-        );
+        info!("[builder] {} version: {}", indicator, self.header.version.get());
+        info!("[builder] {} size: 0x{:x}", indicator, self.header.size.get());
+        info!("[builder] {} entrypoint: 0x{:x}", indicator, self.header.entrypoint.get());
 
         if self.is_decrypted() {
             if let Some(ref meta) = self.metadata {
                 info!("[builder] {} LDV: {}", indicator, meta.ldv);
-                info!(
-                    "[builder] {} Pairing: {:02x?}",
-                    indicator, meta.pairing_data
-                );
-                info!(
-                    "[builder] {} Post Addr: 0x{:08X}",
-                    indicator, meta.post_output_addr
-                );
-                info!(
-                    "[builder] {} SB Flash: 0x{:08X}",
-                    indicator, meta.sb_flash_addr
-                );
-                info!(
-                    "[builder] {} SOC MMIO: 0x{:08X}",
-                    indicator, meta.soc_mmio_addr
-                );
+                info!("[builder] {} Pairing: {:02x?}", indicator, meta.pairing_data);
+                info!("[builder] {} Post Addr: 0x{:08X}", indicator, meta.post_output_addr);
+                info!("[builder] {} SB Flash: 0x{:08X}", indicator, meta.sb_flash_addr);
+                info!("[builder] {} SOC MMIO: 0x{:08X}", indicator, meta.soc_mmio_addr);
                 info!("[builder] {} Nonce 3BL: {:02x?}", indicator, meta.nonce_3bl);
-                info!(
-                    "[builder] {} Allow Mask: {:02x?}",
-                    indicator, meta.console_allow
-                );
-                info!(
-                    "[builder] {} Next Digest: {:02x?}",
-                    indicator, meta.digest_4bl
-                );
+                info!("[builder] {} Allow Mask: {:02x?}", indicator, meta.console_allow);
+                info!("[builder] {} Next Digest: {:02x?}", indicator, meta.digest_4bl);
             } else {
                 // Fallback to raw indexing if metadata wasn't populated
                 info!("[builder] {} LDV: {}", indicator, self.data[0x13]);
-                info!(
-                    "[builder] {} next hash: {:02x?}",
-                    indicator,
-                    &self.data[0x38C..0x3A0]
-                );
+                info!("[builder] {} next hash: {:02x?}", indicator, &self.data[0x38C..0x3A0]);
             }
             if self.data.len() >= 0x30 && self.data[0x30] != 0 {
-                info!(
-                    "[builder] {} signature: (requires keys to verify)",
-                    indicator
-                );
+                info!("[builder] {} signature: (requires keys to verify)", indicator);
             }
         } else {
             info!("[builder] {} is encrypted", indicator);
@@ -385,10 +325,7 @@ impl BootloaderCb {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
             self.derived_key = Some(decrypt_key);
-            info!(
-                "[builder] Decrypting CB using derived key: {:02x?}",
-                decrypt_key
-            );
+            info!("[builder] Decrypting CB using derived key: {:02x?}", decrypt_key);
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }
@@ -423,10 +360,7 @@ impl BootloaderCb {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
             self.derived_key = Some(decrypt_key);
-            info!(
-                "[builder] Decrypting CB (MFG zero-key) using derived key: {:02x?}",
-                decrypt_key
-            );
+            info!("[builder] Decrypting CB (MFG zero-key) using derived key: {:02x?}", decrypt_key);
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
                 let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
             }
@@ -468,12 +402,7 @@ impl BootloaderCb {
         // Note: populate_metadata_unchecked is NOT called here intentionally.
     }
 
-    pub fn decrypt_v2(
-        &mut self,
-        cb_a_hdr: &BootloaderHeader,
-        cb_a_key: &[u8; 16],
-        cpu_key: &[u8; 16],
-    ) {
+    pub fn decrypt_v2(&mut self, cb_a_hdr: &BootloaderHeader, cb_a_key: &[u8; 16], cpu_key: &[u8; 16]) {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = size_aligned as usize - 0x10;
@@ -485,14 +414,7 @@ impl BootloaderCb {
         let mut cb_a_hdr_copy = cb_a_hdr.clone();
         cb_a_hdr_copy.flags.set(0);
 
-        if let Ok(derived_key) = excrypt::hmac_sha(
-            cb_a_key,
-            &[
-                &self.data[0..16],
-                cpu_key,
-                &IntoBytes::as_bytes(&cb_a_hdr_copy)[..0x10],
-            ],
-        ) {
+        if let Ok(derived_key) = excrypt::hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key, &IntoBytes::as_bytes(&cb_a_hdr_copy)[..0x10]]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
             self.derived_key = Some(decrypt_key);

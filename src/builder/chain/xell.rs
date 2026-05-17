@@ -93,20 +93,13 @@ impl Xell {
             let len = data.len();
 
             xell_type = match magic {
-                m if m == constants::MAGIC_XELL_LOWER && len == constants::SIZE_XELLOUS => {
-                    XellType::Xellous
-                }
-                m if m == constants::MAGIC_XELL_UPPER
-                    && (len == constants::SIZE_RELOADED || len == constants::SIZE_LEGACY_GG) =>
-                    XellType::XellReloaded,
+                m if m == constants::MAGIC_XELL_LOWER && len == constants::SIZE_XELLOUS => XellType::Xellous,
+                m if m == constants::MAGIC_XELL_UPPER && (len == constants::SIZE_RELOADED || len == constants::SIZE_LEGACY_GG) => XellType::XellReloaded,
                 _ => XellType::XellUnknown,
             };
         }
 
-        Ok(Self {
-            data: data.to_vec(),
-            xell_type,
-        })
+        Ok(Self { data: data.to_vec(), xell_type })
     }
 
     #[inline]
@@ -120,15 +113,11 @@ impl Xell {
             XellType::Xell1f => Ok(constants::OFFSET_XELL_1F),
             XellType::Xell2f => Ok(constants::OFFSET_XELL_2F),
             XellType::XellGg => Ok(constants::OFFSET_XELL_GG),
-            XellType::Xellous | XellType::XellReloaded => Ok(
-                if image_profile.eq_ignore_ascii_case("bigblock")
-                    || image_profile.eq_ignore_ascii_case("bb")
-                {
-                    constants::OFFSET_XELL_2F
-                } else {
-                    constants::OFFSET_XELL_GG
-                },
-            ),
+            XellType::Xellous | XellType::XellReloaded => Ok(if image_profile.eq_ignore_ascii_case("bigblock") || image_profile.eq_ignore_ascii_case("bb") {
+                constants::OFFSET_XELL_2F
+            } else {
+                constants::OFFSET_XELL_GG
+            }),
             XellType::XellUnknown => Err(XellError::UnknownType),
         }
     }

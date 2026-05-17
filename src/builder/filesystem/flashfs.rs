@@ -27,14 +27,7 @@ impl FsSpareData {
     /// Parses spare metadata from a 16-byte spare area.
     pub fn parse(data: &[u8], layout: &NandLayout) -> Self {
         if data.len() < 16 {
-            return FsSpareData {
-                block_id: 0,
-                fs_sequence: 0,
-                fs_size: 0,
-                fs_page_count: 0,
-                fs_block_type: 0,
-                bad_block: false,
-            };
+            return FsSpareData { block_id: 0, fs_sequence: 0, fs_size: 0, fs_page_count: 0, fs_block_type: 0, bad_block: false };
         }
 
         let meta_type = match layout {
@@ -47,73 +40,38 @@ impl FsSpareData {
         match meta_type {
             SpareMetaType::MetaType0 => {
                 let block_id = u16::from_le_bytes([data[0], data[1] & 0xF]);
-                let fs_sequence =
-                    (data[2] as u32) | ((data[3] as u32) << 8) | ((data[4] as u32) << 16);
+                let fs_sequence = (data[2] as u32) | ((data[3] as u32) << 8) | ((data[4] as u32) << 16);
                 let bad_block = data[5] != 0xFF;
                 let fs_size = u16::from_be_bytes([data[8], data[7]]);
                 let fs_page_count = data[9];
                 let fs_block_type = data[12] & 0x3F;
-                FsSpareData {
-                    block_id,
-                    fs_sequence,
-                    fs_size,
-                    fs_page_count,
-                    fs_block_type,
-                    bad_block,
-                }
+                FsSpareData { block_id, fs_sequence, fs_size, fs_page_count, fs_block_type, bad_block }
             }
             SpareMetaType::MetaType1 => {
                 let block_id = u16::from_le_bytes([data[1], data[2] & 0xF]);
-                let fs_sequence =
-                    (data[0] as u32) | ((data[3] as u32) << 8) | ((data[4] as u32) << 16);
+                let fs_sequence = (data[0] as u32) | ((data[3] as u32) << 8) | ((data[4] as u32) << 16);
                 let bad_block = data[5] != 0xFF;
                 let fs_size = u16::from_be_bytes([data[8], data[7]]);
                 let fs_page_count = data[9];
                 let fs_block_type = data[12] & 0x3F;
-                FsSpareData {
-                    block_id,
-                    fs_sequence,
-                    fs_size,
-                    fs_page_count,
-                    fs_block_type,
-                    bad_block,
-                }
+                FsSpareData { block_id, fs_sequence, fs_size, fs_page_count, fs_block_type, bad_block }
             }
             SpareMetaType::MetaType2 => {
                 let block_id = u16::from_le_bytes([data[1], data[2] & 0xF]);
-                let fs_sequence =
-                    (data[5] as u32) | ((data[4] as u32) << 8) | ((data[3] as u32) << 16);
+                let fs_sequence = (data[5] as u32) | ((data[4] as u32) << 8) | ((data[3] as u32) << 16);
                 let bad_block = data[0] != 0xFF;
                 let fs_size = u16::from_be_bytes([data[8], data[7]]);
                 let fs_page_count = data[9] * 4;
                 let fs_block_type = data[12] & 0x3F;
-                FsSpareData {
-                    block_id,
-                    fs_sequence,
-                    fs_size,
-                    fs_page_count,
-                    fs_block_type,
-                    bad_block,
-                }
+                FsSpareData { block_id, fs_sequence, fs_size, fs_page_count, fs_block_type, bad_block }
             }
-            SpareMetaType::MetaTypeNone => FsSpareData {
-                block_id: 0,
-                fs_sequence: 0,
-                fs_size: 0,
-                fs_page_count: 0,
-                fs_block_type: 0,
-                bad_block: false,
-            },
+            SpareMetaType::MetaTypeNone => FsSpareData { block_id: 0, fs_sequence: 0, fs_size: 0, fs_page_count: 0, fs_block_type: 0, bad_block: false },
         }
     }
 }
 
 /// Calculates the base block offset for MetaType2 NANDs.
-pub fn get_fs_base_block_for_meta2(
-    image: &[u8],
-    layout: &NandLayout,
-    fs_root_spare_page: usize,
-) -> u16 {
+pub fn get_fs_base_block_for_meta2(image: &[u8], layout: &NandLayout, fs_root_spare_page: usize) -> u16 {
     if *layout != NandLayout::Bb {
         return 0;
     }
@@ -147,15 +105,7 @@ pub struct FileSystemEntry {
 
 impl FileSystemEntry {
     pub fn new(page_number: i32) -> Self {
-        FileSystemEntry {
-            page_number,
-            file_name: String::new(),
-            block_number: 0,
-            size: 0,
-            timestamp: 0,
-            deleted: false,
-            data: Vec::new(),
-        }
+        FileSystemEntry { page_number, file_name: String::new(), block_number: 0, size: 0, timestamp: 0, deleted: false, data: Vec::new() }
     }
 
     pub fn read_from(&mut self, chunk: &[u8]) {
@@ -207,14 +157,7 @@ pub struct FileSystemRoot {
 impl FileSystemRoot {
     pub fn new(block_number: i32, version: i32, partition_type: u8) -> Self {
         let actual_version = if version == 0 { 3 } else { version };
-        FileSystemRoot {
-            block_number,
-            version: actual_version,
-            entries: Vec::new(),
-            block_map: Vec::new(),
-            block_offset: 0,
-            partition_type,
-        }
+        FileSystemRoot { block_number, version: actual_version, entries: Vec::new(), block_map: Vec::new(), block_offset: 0, partition_type }
     }
 
     /// Reads FlashFS from a logical clean buffer.
@@ -223,13 +166,15 @@ impl FileSystemRoot {
         let pages_per_block = layout.logical_pages_per_block();
         let logical_block_size = pages_per_block * 0x200;
         let total_blocks = image.len() / logical_block_size;
-        
+
         self.block_map = vec![0; total_blocks];
         let mut current_block = self.block_number as usize;
         let mut loop_count = 0;
 
         loop {
-            if current_block >= total_blocks { break; }
+            if current_block >= total_blocks {
+                break;
+            }
             let start_page = current_block * pages_per_block;
 
             let mut block_map_pages = Vec::new();
@@ -318,11 +263,7 @@ impl FileSystemRoot {
         let pages_per_block = layout.logical_pages_per_block();
         let logical_block_size = pages_per_block * 0x200;
 
-        for entry in self
-            .entries
-            .iter()
-            .filter(|e| !e.deleted && e.file_name.to_lowercase().ends_with(".xex"))
-        {
+        for entry in self.entries.iter().filter(|e| !e.deleted && e.file_name.to_lowercase().ends_with(".xex")) {
             let base_block = entry.block_number;
 
             for &offset in &[0xAE0u16, 0x2E0u16, 0x0u16] {
@@ -332,8 +273,7 @@ impl FileSystemRoot {
                 if page_offset + 4 <= image.len() {
                     let sig = &image[page_offset..page_offset + 4];
                     if sig == b"XEX2" || sig == b"XEX1" {
-                        info!("[flashfs] Calibrated BlockOffset: 0x{:X} (Found {} signature at block {})", 
-                               offset, String::from_utf8_lossy(sig), physical_block);
+                        info!("[flashfs] Calibrated BlockOffset: 0x{:X} (Found {} signature at block {})", offset, String::from_utf8_lossy(sig), physical_block);
                         self.block_offset = offset;
                         return;
                     }
@@ -366,13 +306,7 @@ impl FileSystemRoot {
         }
     }
 
-    pub fn build_from_folder(
-        image: &mut [u8],
-        layout: &NandLayout,
-        folder_path: &std::path::Path,
-        fs_start_block: u16,
-        partition_type: u8,
-    ) -> Result<Self, String> {
+    pub fn build_from_folder(image: &mut [u8], layout: &NandLayout, folder_path: &std::path::Path, fs_start_block: u16, partition_type: u8) -> Result<Self, String> {
         let mut root = FileSystemRoot::new(fs_start_block as i32, 3, partition_type);
         root.create_defaults(image.len(), layout, fs_start_block);
         for entry in std::fs::read_dir(folder_path).map_err(|e| e.to_string())? {
@@ -397,25 +331,12 @@ impl FileSystemRoot {
         Ok(root)
     }
 
-    pub fn build_from_memory(
-        image: &mut [u8],
-        layout: &NandLayout,
-        files: &HashMap<String, Vec<u8>>,
-        fs_start_block: u16,
-        partition_type: u8,
-    ) -> Result<Self, String> {
+    pub fn build_from_memory(image: &mut [u8], layout: &NandLayout, files: &HashMap<String, Vec<u8>>, fs_start_block: u16, partition_type: u8) -> Result<Self, String> {
         let mut root = FileSystemRoot::new(fs_start_block as i32, 3, partition_type);
         root.create_defaults(image.len(), layout, fs_start_block);
-        info!(
-            "[flashfs] Building FlashFS from memory with {} assets...",
-            files.len()
-        );
+        info!("[flashfs] Building FlashFS from memory with {} assets...", files.len());
         for (name, content) in files {
-            info!(
-                "[flashfs]   * Processing asset: {} (Size: 0x{:X})",
-                name,
-                content.len()
-            );
+            info!("[flashfs]   * Processing asset: {} (Size: 0x{:X})", name, content.len());
             let mut new_entry = FileSystemEntry::new(0);
             new_entry.file_name = name.clone();
             root.set_entry_data(image, layout, &mut new_entry, content);
@@ -435,10 +356,7 @@ impl FileSystemRoot {
         let mut i = 0;
         loop {
             if !visited.insert(current) {
-                error!(
-                    "[flashfs] Cycle detected in block chain at block {}!",
-                    current
-                );
+                error!("[flashfs] Cycle detected in block chain at block {}!", current);
                 break;
             }
             list.push(current);
@@ -447,11 +365,7 @@ impl FileSystemRoot {
             }
             current = self.block_map[current as usize] & 0x7FFF;
             i += 1;
-            if current == 0
-                || (current & 0x1FFE) == 0x1FFE
-                || current as usize >= self.block_map.len()
-                || i >= limit
-            {
+            if current == 0 || (current & 0x1FFE) == 0x1FFE || current as usize >= self.block_map.len() || i >= limit {
                 break;
             }
         }
@@ -487,37 +401,25 @@ impl FileSystemRoot {
         for cluster in chain {
             // Add base block offset for big-block NANDs
             let adjusted_cluster = cluster.wrapping_add(base_block_offset);
-            let logical_block_offset =
-                (adjusted_cluster + self.block_offset) as usize * pages_per_block * page_size;
+            let logical_block_offset = (adjusted_cluster + self.block_offset) as usize * pages_per_block * page_size;
 
             if crate::core::images::blocks::has_spare(image) {
-                if let Some(blk_data) = crate::core::images::blocks::read_logical_from_physical(
-                    image,
-                    logical_block_offset / page_size,
-                    pages_per_block * page_size,
-                    *layout,
-                ) {
+                if let Some(blk_data) =
+                    crate::core::images::blocks::read_logical_from_physical(image, logical_block_offset / page_size, pages_per_block * page_size, *layout)
+                {
                     data.extend_from_slice(&blk_data);
                 }
             } else {
                 let blk_size = pages_per_block * page_size;
                 if logical_block_offset + blk_size <= image.len() {
-                    data.extend_from_slice(
-                        &image[logical_block_offset..logical_block_offset + blk_size],
-                    );
+                    data.extend_from_slice(&image[logical_block_offset..logical_block_offset + blk_size]);
                 }
             }
         }
         data
     }
 
-    pub fn allocate_new_block(
-        &mut self,
-        image: &mut [u8],
-        layout: &NandLayout,
-        blocks_needed: usize,
-        minimum_block: u16,
-    ) -> u16 {
+    pub fn allocate_new_block(&mut self, image: &mut [u8], layout: &NandLayout, blocks_needed: usize, minimum_block: u16) -> u16 {
         let page_size = layout.page_size();
         let pages_per_block = layout.logical_pages_per_block();
         let logical_block_size = pages_per_block * page_size;
@@ -559,8 +461,13 @@ impl FileSystemRoot {
                 _ => protected_count += 1,
             }
         }
-        error!("[flashfs] ALLOCATION FAILURE: No free blocks found! (Free: {}, Protected: {}, In-Use: {}, Total: {})", 
-               free_count, protected_count, in_use_count, self.block_map.len());
+        error!(
+            "[flashfs] ALLOCATION FAILURE: No free blocks found! (Free: {}, Protected: {}, In-Use: {}, Total: {})",
+            free_count,
+            protected_count,
+            in_use_count,
+            self.block_map.len()
+        );
         0
     }
 
@@ -573,13 +480,7 @@ impl FileSystemRoot {
         Self::write_data_hybrid(image, block_offset, data, layout);
     }
 
-    pub fn set_chain_data(
-        &mut self,
-        image: &mut [u8],
-        layout: &NandLayout,
-        start_block: u16,
-        data: &[u8],
-    ) {
+    pub fn set_chain_data(&mut self, image: &mut [u8], layout: &NandLayout, start_block: u16, data: &[u8]) {
         let placeholder;
         let data: &[u8] = if data.is_empty() {
             placeholder = [0u8; 1];
@@ -626,13 +527,7 @@ impl FileSystemRoot {
         }
     }
 
-    pub fn set_entry_data(
-        &mut self,
-        image: &mut [u8],
-        layout: &NandLayout,
-        entry: &mut FileSystemEntry,
-        data: &[u8],
-    ) {
+    pub fn set_entry_data(&mut self, image: &mut [u8], layout: &NandLayout, entry: &mut FileSystemEntry, data: &[u8]) {
         if entry.block_number == 0 {
             let chunk_size = layout.logical_pages_per_block() * 0x200;
             let needed = (data.len() + chunk_size - 1) / chunk_size;
@@ -643,13 +538,7 @@ impl FileSystemRoot {
         entry.data = data.to_vec();
     }
 
-    pub fn replace_file(
-        &mut self,
-        image: &mut [u8],
-        layout: &NandLayout,
-        name: &str,
-        data: &[u8],
-    ) -> Result<(), String> {
+    pub fn replace_file(&mut self, image: &mut [u8], layout: &NandLayout, name: &str, data: &[u8]) -> Result<(), String> {
         let entry_idx = self
             .entries
             .iter()
@@ -661,30 +550,13 @@ impl FileSystemRoot {
         self.set_entry_data(image, layout, &mut entry, data);
         self.entries[entry_idx] = entry;
 
-        info!(
-            "[flashfs] Replaced asset: {} (New Size: 0x{:X})",
-            name,
-            data.len()
-        );
+        info!("[flashfs] Replaced asset: {} (New Size: 0x{:X})", name, data.len());
         Ok(())
     }
 
-    pub fn inject_file(
-        &mut self,
-        image: &mut [u8],
-        layout: &NandLayout,
-        name: &str,
-        data: &[u8],
-    ) -> Result<(), String> {
-        if self
-            .entries
-            .iter()
-            .any(|e| e.file_name == name && !e.deleted)
-        {
-            return Err(format!(
-                "File already exists: {}. Use replace instead.",
-                name
-            ));
+    pub fn inject_file(&mut self, image: &mut [u8], layout: &NandLayout, name: &str, data: &[u8]) -> Result<(), String> {
+        if self.entries.iter().any(|e| e.file_name == name && !e.deleted) {
+            return Err(format!("File already exists: {}. Use replace instead.", name));
         }
 
         let mut new_entry = FileSystemEntry::new(0);
@@ -692,11 +564,7 @@ impl FileSystemRoot {
         self.set_entry_data(image, layout, &mut new_entry, data);
         self.entries.push(new_entry);
 
-        info!(
-            "[flashfs] Injected new asset: {} (Size: 0x{:X})",
-            name,
-            data.len()
-        );
+        info!("[flashfs] Injected new asset: {} (Size: 0x{:X})", name, data.len());
         Ok(())
     }
 
@@ -720,10 +588,7 @@ impl FileSystemRoot {
     }
 
     pub fn extract_asset(&self, name: &str) -> Option<Vec<u8>> {
-        self.entries
-            .iter()
-            .find(|e| e.file_name == name && !e.deleted)
-            .map(|e| e.data.clone())
+        self.entries.iter().find(|e| e.file_name == name && !e.deleted).map(|e| e.data.clone())
     }
 
     pub fn write_logical(&mut self, image: &mut [u8], layout: &NandLayout) {
@@ -740,7 +605,7 @@ impl FileSystemRoot {
                 continue;
             }
             non_deleted_count += 1;
-            
+
             if self.entries[i].block_number == 0 {
                 let chunk_size = pages_per_block * page_size;
                 let data_len = self.entries[i].data.len();
@@ -803,14 +668,16 @@ impl FileSystemRoot {
                     entry_idx += 1;
                     continue;
                 }
-                
-                if fn_p_idx >= fn_pages.len() { break; }
-                
+
+                if fn_p_idx >= fn_pages.len() {
+                    break;
+                }
+
                 let off = fn_pages[fn_p_idx] * page_size + fn_in_page * 0x20;
                 let mut chunk = [0u8; 0x20];
                 self.entries[entry_idx].write_into(&mut chunk);
                 root_buffer[off..off + 0x20].copy_from_slice(&chunk);
-                
+
                 fn_in_page += 1;
                 if fn_in_page >= fn_count {
                     fn_in_page = 0;
@@ -822,11 +689,13 @@ impl FileSystemRoot {
             let mut bm_p_idx = 0;
             let mut bm_in_page = 0;
             while bmap_idx < self.block_map.len() {
-                if bm_p_idx >= bm_pages.len() { break; }
-                
+                if bm_p_idx >= bm_pages.len() {
+                    break;
+                }
+
                 let off = bm_pages[bm_p_idx] * page_size + bm_in_page * 2;
                 root_buffer[off..off + 2].copy_from_slice(&self.block_map[bmap_idx].to_be_bytes());
-                
+
                 bm_in_page += 1;
                 if bm_in_page >= bm_count {
                     bm_in_page = 0;
@@ -840,12 +709,7 @@ impl FileSystemRoot {
         }
     }
 
-    fn write_data_hybrid(
-        image: &mut [u8],
-        logical_offset: usize,
-        data: &[u8],
-        layout: &NandLayout,
-    ) {
+    fn write_data_hybrid(image: &mut [u8], logical_offset: usize, data: &[u8], layout: &NandLayout) {
         if crate::core::images::blocks::has_spare(image) {
             crate::core::images::blocks::write_logical_data(image, logical_offset, data, *layout);
         } else {
@@ -910,17 +774,10 @@ pub struct FlashFS {
 
 impl FlashFS {
     pub fn new() -> Self {
-        FlashFS {
-            root: FileSystemRoot::new(-1, 0, 0x30),
-        }
+        FlashFS { root: FileSystemRoot::new(-1, 0, 0x30) }
     }
 
-    fn pick_fs_root(
-        best_main: Option<(usize, u32)>,
-        best_alt: Option<(usize, u32)>,
-        logical: &[u8],
-        layout: &NandLayout,
-    ) -> FileSystemRoot {
+    fn pick_fs_root(best_main: Option<(usize, u32)>, best_alt: Option<(usize, u32)>, logical: &[u8], layout: &NandLayout) -> FileSystemRoot {
         if let Some((block, seq)) = best_main {
             let mut root = FileSystemRoot::new(block as i32, seq as i32, 0x30);
             root.read(logical, layout);
@@ -944,9 +801,7 @@ impl FlashFS {
 
         if *layout == NandLayout::Emmc {
             let corona = crate::builder::filesystem::corona::load_slots(image);
-            if let Some((block, ver)) =
-                crate::builder::filesystem::corona::best_fs_from_slots(&corona)
-            {
+            if let Some((block, ver)) = crate::builder::filesystem::corona::best_fs_from_slots(&corona) {
                 best_main = Some((block, ver));
             }
         }
@@ -981,11 +836,7 @@ impl FlashFS {
     }
 
     /// Scans physical image for FlashFS signatures with LBA map awareness.
-    pub fn scan_physical_with_lba(
-        image: &[u8],
-        layout: &NandLayout,
-        lba_map: &crate::core::images::blocks::LbaMap,
-    ) -> Self {
+    pub fn scan_physical_with_lba(image: &[u8], layout: &NandLayout, lba_map: &crate::core::images::blocks::LbaMap) -> Self {
         let mut fs = FlashFS::new();
         let total_blocks = layout.total_blocks(image.len());
         let pages_per_block = layout.logical_pages_per_block();
@@ -1014,21 +865,14 @@ impl FlashFS {
                     let version = cursor.read_u32::<BigEndian>().unwrap_or(0);
                     let block = cursor.read_u32::<BigEndian>().unwrap_or(0) as usize;
                     if best_main.map(|(_, v)| version > v).unwrap_or(true) {
-                        info!(
-                            "[flashfs] EMMC Anchor v{} found at 0x{:X}: block {}",
-                            version, offset, block
-                        );
+                        info!("[flashfs] EMMC Anchor v{} found at 0x{:X}: block {}", version, offset, block);
                         best_main = Some((block, version));
                     }
                 }
             }
         }
 
-        info!(
-            "[flashfs] FlashFS scan: {} blocks to examine, {} known bad blocks",
-            total_blocks,
-            lba_map.bad_blocks.len()
-        );
+        info!("[flashfs] FlashFS scan: {} blocks to examine, {} known bad blocks", total_blocks, lba_map.bad_blocks.len());
 
         if *layout != NandLayout::Emmc {
             for block in 0..total_blocks {
@@ -1059,10 +903,7 @@ impl FlashFS {
         fs.root = Self::pick_fs_root(best_main, best_alt, &logical, layout);
 
         if fs.root.block_number >= 0 {
-            info!(
-                "[flashfs] Root found: block {}, version {}",
-                fs.root.block_number, fs.root.version
-            );
+            info!("[flashfs] Root found: block {}, version {}", fs.root.block_number, fs.root.version);
         } else {
             info!("[flashfs] No FlashFS root detected in image.");
         }

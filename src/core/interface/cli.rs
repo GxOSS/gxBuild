@@ -17,12 +17,7 @@ use std::sync::{Arc, Mutex};
 
 /// xeBuild v1.21.810 clone - System image builder
 #[derive(Parser, Debug)]
-#[command(
-    name = "gxBuild",
-    about = "Rust Xbox 360 Nand Manipulation Utility",
-    version,
-    disable_help_flag = true
-)]
+#[command(name = "gxBuild", about = "Rust Xbox 360 Nand Manipulation Utility", version, disable_help_flag = true)]
 pub struct GgxArgs {
     /// Operation mode (defaults to build)
     #[command(subcommand)]
@@ -247,11 +242,7 @@ pub fn ggx_cli() {
             }
         }
         Some(GgxMode::Extract) => {
-            session.extract_all(
-                args.output_dir
-                    .clone()
-                    .unwrap_or_else(|| std::path::PathBuf::from(".")),
-            );
+            session.extract_all(args.output_dir.clone().unwrap_or_else(|| std::path::PathBuf::from(".")));
         }
         Some(GgxMode::Client) => {
             info!("[cli] Client mode selected.");
@@ -281,18 +272,14 @@ pub fn ggx_cli() {
             error!("[cli] Session failed: {}", e);
         } else if let Some(GgxMode::Build { .. }) | None = args.mode {
             // Build succeeded, calculate SHA-1 if requested
-            let output_path = args.output.clone().unwrap_or_else(|| {
-                args.output_dir
-                    .clone()
-                    .unwrap_or_else(|| PathBuf::from("updflash.bin"))
-            });
+            let output_path = args
+                .output
+                .clone()
+                .unwrap_or_else(|| args.output_dir.clone().unwrap_or_else(|| PathBuf::from("updflash.bin")));
             if output_path.exists() {
                 if let Ok(data) = std::fs::read(&output_path) {
                     if let Ok(hash) = crate::builder::deps::excrypt::sha(&[&data]) {
-                        let sha_str = hash
-                            .iter()
-                            .map(|b| format!("{:02x}", b))
-                            .collect::<String>();
+                        let sha_str = hash.iter().map(|b| format!("{:02x}", b)).collect::<String>();
                         info!("[cli] Image SHA-1: {}", sha_str);
 
                         if let Some(sha_p) = args.sha_file.clone() {
@@ -316,14 +303,8 @@ pub fn ggx_cli() {
 }
 
 fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
-    let build_type = args
-        .build_type
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Missing required argument: --type (-t)"))?;
-    let console_type = args
-        .console
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Missing required argument: --console (-c)"))?;
+    let build_type = args.build_type.as_ref().ok_or_else(|| anyhow::anyhow!("Missing required argument: --type (-t)"))?;
+    let console_type = args.console.as_ref().ok_or_else(|| anyhow::anyhow!("Missing required argument: --console (-c)"))?;
 
     // --- Path Resolution ---
     // -d = INI directory (contains _retail.ini, bootloaders, flashfs/)
@@ -333,10 +314,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     let data_dir = args.fw_dir.clone().unwrap_or_else(|| PathBuf::from("data"));
 
     // -m = common directory (shared bootloaders, defaults to <ini_dir>/../common)
-    let resolved_common_dir = args
-        .common_dir
-        .clone()
-        .unwrap_or_else(|| ini_dir.join("../common"));
+    let resolved_common_dir = args.common_dir.clone().unwrap_or_else(|| ini_dir.join("../common"));
 
     // --- Options INI Loading (<data>/options.ini) ---
     let options_path = data_dir.join("options.ini");
@@ -420,11 +398,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
 
     // Resolve INI file path: <ini_dir>/_<type>.ini
     let build_type_str = format!("{:?}", build_type).to_lowercase();
-    let ini_suffix = args
-        .ini_ext
-        .as_ref()
-        .map(|ext| format!("_{}", ext))
-        .unwrap_or_default();
+    let ini_suffix = args.ini_ext.as_ref().map(|ext| format!("_{}", ext)).unwrap_or_default();
     let ini_filename = format!("_{}{}.ini", build_type_str, ini_suffix);
     let ini_path = ini_dir.join(&ini_filename);
 
@@ -466,26 +440,23 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     session.enqueue(InternalCommand::FinalizeMobile);
 
     // Try to find and enqueue a file by name across search paths
-    let enqueue_if_found =
-        |session: &mut Session, name: &str, search_paths: &[&std::path::PathBuf]| {
-            let lower = name.to_lowercase();
-            for dir in search_paths {
-                let candidate = dir.join(name);
-                if candidate.exists() {
-                    session.enqueue(InternalCommand::Update { path: candidate });
-                    return true;
-                }
-                // Also try lowercase variant
-                let candidate_lower = dir.join(&lower);
-                if candidate_lower.exists() {
-                    session.enqueue(InternalCommand::Update {
-                        path: candidate_lower,
-                    });
-                    return true;
-                }
+    let enqueue_if_found = |session: &mut Session, name: &str, search_paths: &[&std::path::PathBuf]| {
+        let lower = name.to_lowercase();
+        for dir in search_paths {
+            let candidate = dir.join(name);
+            if candidate.exists() {
+                session.enqueue(InternalCommand::Update { path: candidate });
+                return true;
             }
-            false
-        };
+            // Also try lowercase variant
+            let candidate_lower = dir.join(&lower);
+            if candidate_lower.exists() {
+                session.enqueue(InternalCommand::Update { path: candidate_lower });
+                return true;
+            }
+        }
+        false
+    };
 
     // Build search path list: INI dir, INI subfolders, common
     let ini_flashfs = ini_dir.join("flashfs");
@@ -504,10 +475,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     // Enqueue files from INI target filenames, track which CF/CG were actually found
     let mut cf_on_disk = false;
     let mut cg_on_disk = false;
-    info!(
-        "[cli] Discovering {} assets from INI targets...",
-        target_filenames.len()
-    );
+    info!("[cli] Discovering {} assets from INI targets...", target_filenames.len());
     for filename in &target_filenames {
         let found = enqueue_if_found(session, filename, &search_paths);
         if filename.starts_with("cf_") && filename.ends_with(".bin") && found {
@@ -533,11 +501,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.is_file() {
-                        let name = path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_lowercase();
+                        let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
                         if name.starts_with("su") {
                             info!("[cli] Found STFS container in INI dir: {:?}", path);
                             session.enqueue(InternalCommand::Update { path });
@@ -549,10 +513,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     }
 
     // Data Dir Discovery (-f) - NAND, CPU Key, Security, SMC, FCRT, KV
-    info!(
-        "[cli] Scanning Data Dir (nand/key/smc/fcrt/kv): {:?}",
-        data_dir
-    );
+    info!("[cli] Scanning Data Dir (nand/key/smc/fcrt/kv): {:?}", data_dir);
 
     // NAND Image Discovery (data dir only)
     let mut nand_found = false;
@@ -589,24 +550,16 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         info!("[cli] Attempting Donor Image");
         let layout = match console_type {
             CliConsoleType::xenon => crate::core::images::blocks::NandLayout::Xsb,
-            CliConsoleType::zephyr | CliConsoleType::falcon | CliConsoleType::jasper => {
-                crate::core::images::blocks::NandLayout::Sb
+            CliConsoleType::zephyr | CliConsoleType::falcon | CliConsoleType::jasper => crate::core::images::blocks::NandLayout::Sb,
+            CliConsoleType::jasper256 | CliConsoleType::jasper512 | CliConsoleType::jasperbb | CliConsoleType::jasperbigffs => {
+                crate::core::images::blocks::NandLayout::Bb
             }
-            CliConsoleType::jasper256
-            | CliConsoleType::jasper512
-            | CliConsoleType::jasperbb
-            | CliConsoleType::jasperbigffs => crate::core::images::blocks::NandLayout::Bb,
             CliConsoleType::trinity => crate::core::images::blocks::NandLayout::Sb,
             CliConsoleType::trinitybigffs => crate::core::images::blocks::NandLayout::Bb,
             CliConsoleType::corona => crate::core::images::blocks::NandLayout::Sb,
-            CliConsoleType::corona4g | CliConsoleType::winchester => {
-                crate::core::images::blocks::NandLayout::Emmc
-            }
+            CliConsoleType::corona4g | CliConsoleType::winchester => crate::core::images::blocks::NandLayout::Emmc,
         };
-        info!(
-            "[cli] Synthesizing blank image from scratch (Layout: {:?}).",
-            layout
-        );
+        info!("[cli] Synthesizing blank image from scratch (Layout: {:?}).", layout);
         session.enqueue(InternalCommand::CreateImage { layout });
     }
 
@@ -615,10 +568,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         session.set_cpukey(key.clone());
     } else {
         let mut key_found = false;
-        let key_candidates = [
-            (data_dir.join("cpukey.bin"), true),
-            (data_dir.join("cpukey.txt"), false),
-        ];
+        let key_candidates = [(data_dir.join("cpukey.bin"), true), (data_dir.join("cpukey.txt"), false)];
 
         for (p, is_bin) in &key_candidates {
             if p.exists() {
@@ -664,34 +614,20 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     let nofcrt_enabled = session.options.nofcrt.unwrap_or(false);
 
     for p in &security_candidates {
-        let name = p
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_lowercase();
+        let name = p.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
         if name == "fcrt.bin" && nofcrt_enabled {
             continue;
         }
         if p.exists() {
             if let Ok(data) = std::fs::read(p) {
-                info!(
-                    "[cli] Discovered security asset: {:?} ({} bytes)",
-                    p,
-                    data.len()
-                );
+                info!("[cli] Discovered security asset: {:?} ({} bytes)", p, data.len());
                 session.pending_assets.insert(name, data);
             }
         }
     }
 
     // Enqueue INI Parsing
-    session.parse_ini(
-        &ini_path,
-        console_section,
-        &ini_dir,
-        &resolved_common_dir,
-        &data_dir,
-    );
+    session.parse_ini(&ini_path, console_section, &ini_dir, &resolved_common_dir, &data_dir);
 
     // 1BL Key Warning
     if args.bl_key.is_some() {
@@ -758,29 +694,22 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                             target: None,
                         });
                     } else {
-                        error!(
-                            "[cli] Invalid offset value '{}' in raw patch: {}",
-                            offset_str, patch_str
-                        );
+                        error!("[cli] Invalid offset value '{}' in raw patch: {}", offset_str, patch_str);
                     }
                 } else {
                     error!("[cli] Raw patch file not found: {}", filename);
                 }
             } else {
-                error!(
-                    "[cli] Malformed raw patch entry (expected filename,offset): {}",
-                    patch_str
-                );
+                error!("[cli] Malformed raw patch entry (expected filename,offset): {}", patch_str);
             }
         }
     }
 
     // Output Path Resolution
-    let output_path = args.output.clone().unwrap_or_else(|| {
-        args.output_dir
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("updflash.bin"))
-    });
+    let output_path = args
+        .output
+        .clone()
+        .unwrap_or_else(|| args.output_dir.clone().unwrap_or_else(|| PathBuf::from("updflash.bin")));
     session.build(output_path.clone(), 0); // Target 0 for now
 
     Ok(())

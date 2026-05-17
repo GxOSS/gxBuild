@@ -37,14 +37,7 @@ pub struct CeMetadata {
     pub uncompressed_size: u32,
 }
 
-#[derive(
-    zerocopy::FromBytes,
-    zerocopy::IntoBytes,
-    zerocopy::KnownLayout,
-    zerocopy::Immutable,
-    Clone,
-    Copy,
-)]
+#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
 #[repr(C)]
 pub struct BootloaderCeHeader {
     pub header: BootloaderHeader,
@@ -82,8 +75,7 @@ pub struct BootloaderCe {
 
 impl BootloaderCe {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload) =
-            BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CE header")?;
+        let (header, payload) = BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CE header")?;
 
         let mut data_vec = payload.to_vec();
         let expected_payload_size = ((header.size.get() as usize + 0xF) & 0xFFFFFFF0) - 0x10;
@@ -91,14 +83,7 @@ impl BootloaderCe {
             data_vec.resize(expected_payload_size, 0);
         }
 
-        Ok(Self {
-            header: header.clone(),
-            data: data_vec,
-            metadata: None,
-            data_ce: None,
-            data_kernel: None,
-            data_hv: None,
-        })
+        Ok(Self { header: header.clone(), data: data_vec, metadata: None, data_ce: None, data_kernel: None, data_hv: None })
     }
 
     pub fn populate_metadata(&mut self) {
@@ -109,10 +94,7 @@ impl BootloaderCe {
         let target_address = RealBigEndian::read_u64(&self.data[0x10..0x18]);
         let uncompressed_size = RealBigEndian::read_u32(&self.data[0x18..0x1C]);
 
-        self.metadata = Some(CeMetadata {
-            target_address,
-            uncompressed_size,
-        });
+        self.metadata = Some(CeMetadata { target_address, uncompressed_size });
     }
 
     pub fn sync_metadata(&mut self) {
@@ -152,35 +134,17 @@ impl BootloaderCe {
     }
 
     pub fn print_info(&self) {
-        let indicator = if (self.header.magic.get() & 0xF000) == 0x5000 {
-            "SE"
-        } else {
-            "CE"
-        };
-        info!(
-            "[builder] {} version: {}",
-            indicator,
-            self.header.version.get()
-        );
-        info!(
-            "[builder] {} size: 0x{:x}",
-            indicator,
-            self.header.size.get()
-        );
+        let indicator = if (self.header.magic.get() & 0xF000) == 0x5000 { "SE" } else { "CE" };
+        info!("[builder] {} version: {}", indicator, self.header.version.get());
+        info!("[builder] {} size: 0x{:x}", indicator, self.header.size.get());
 
         if self.is_decrypted() {
             // Decrypted fields: target_address at 0x10, uncompressed_size at 0x18 (rel payload)
             let target_address = RealBigEndian::read_u64(&self.data[0x10..0x18]);
             let uncompressed_size = RealBigEndian::read_u32(&self.data[0x18..0x1C]);
 
-            info!(
-                "[builder] {} decompressed size: 0x{:x}",
-                indicator, uncompressed_size
-            );
-            info!(
-                "[builder] {} load address: 0x{:x}",
-                indicator, target_address
-            );
+            info!("[builder] {} decompressed size: 0x{:x}", indicator, uncompressed_size);
+            info!("[builder] {} load address: 0x{:x}", indicator, target_address);
         } else {
             info!("[builder] {} is encrypted", indicator);
         }

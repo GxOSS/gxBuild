@@ -30,9 +30,7 @@ pub enum IniError {
     BadOptionsFormat(),
     #[error("[ini] Incorrect formatting in {0}")]
     BadBuildFormat(String),
-    #[error(
-        "[ini] Rebooter bootloader chain requested in INI but not initialized in NAND skeleton"
-    )]
+    #[error("[ini] Rebooter bootloader chain requested in INI but not initialized in NAND skeleton")]
     RebooterNotInitialized,
     #[error("[ini] Rebooter update chain requested in INI but not initialized in NAND skeleton")]
     RebooterUpdateNotInitialized,
@@ -88,10 +86,7 @@ pub fn get_hash(path: impl AsRef<Path>) -> std::io::Result<String> {
     Ok(format!("{:08x}", hasher.finalize()))
 }
 
-pub fn parse_xe_ini(
-    ini_path: impl AsRef<Path>,
-    target_section: &str,
-) -> Result<XeBuildIni, IniError> {
+pub fn parse_xe_ini(ini_path: impl AsRef<Path>, target_section: &str) -> Result<XeBuildIni, IniError> {
     let ini_path = ini_path.as_ref();
     let content = fs::read_to_string(ini_path).map_err(IniError::IoError)?;
     let filename_hint = ini_path.file_name().and_then(|s| s.to_str());
@@ -99,11 +94,7 @@ pub fn parse_xe_ini(
     parse_xe_ini_str(&content, target_section, filename_hint)
 }
 
-pub fn parse_xe_ini_str(
-    content: &str,
-    target_section: &str,
-    filename_hint: Option<&str>,
-) -> Result<XeBuildIni, IniError> {
+pub fn parse_xe_ini_str(content: &str, target_section: &str, filename_hint: Option<&str>) -> Result<XeBuildIni, IniError> {
     let mut sections: HashMap<String, Vec<Vec<String>>> = HashMap::new();
     let mut current_section = String::new();
 
@@ -116,14 +107,8 @@ pub fn parse_xe_ini_str(
         if line.starts_with('[') && line.ends_with(']') {
             current_section = line[1..line.len() - 1].to_lowercase();
         } else if !current_section.is_empty() {
-            let parts: Vec<String> = line
-                .split(',')
-                .map(|s| s.trim_end_matches(';').trim().to_string())
-                .collect();
-            sections
-                .entry(current_section.clone())
-                .or_default()
-                .push(parts);
+            let parts: Vec<String> = line.split(',').map(|s| s.trim_end_matches(';').trim().to_string()).collect();
+            sections.entry(current_section.clone()).or_default().push(parts);
         }
     }
 
@@ -154,38 +139,20 @@ pub fn parse_xe_ini_str(
 
     let payloads_data_raw = sections.get("payloads").cloned().unwrap_or_default();
 
-    let resolve = |filename: &str,
-                   expected_hash: Option<&str>,
-                   chain: u8|
-     -> Result<BuildIniEntry, IniError> {
-        let hash = expected_hash
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-        Ok(BuildIniEntry {
-            filename: filename.to_string(),
-            hash,
-            chain,
-        })
+    let resolve = |filename: &str, expected_hash: Option<&str>, chain: u8| -> Result<BuildIniEntry, IniError> {
+        let hash = expected_hash.map(|s| s.trim()).filter(|s| !s.is_empty()).map(|s| s.to_string());
+        Ok(BuildIniEntry { filename: filename.to_string(), hash, chain })
     };
 
     let mut main_entries = Vec::new();
     let mut counts = HashMap::new();
     for entry in main_data_raw {
         let original_name = &entry[0];
-        let prefix = original_name
-            .split('_')
-            .next()
-            .unwrap_or(original_name)
-            .to_lowercase();
+        let prefix = original_name.split('_').next().unwrap_or(original_name).to_lowercase();
         let count = counts.entry(prefix.clone()).or_insert(0);
         *count += 1;
 
-        main_entries.push(resolve(
-            original_name,
-            entry.get(1).map(|s| s.as_str()),
-            *count - 1,
-        )?);
+        main_entries.push(resolve(original_name, entry.get(1).map(|s| s.as_str()), *count - 1)?);
     }
 
     let mut security_entries = Vec::new();
@@ -226,11 +193,7 @@ pub fn parse_xe_ini_str(
             let parts: Vec<&str> = line.split('=').collect();
             let file_part = parts[0].trim();
             let subparts: Vec<&str> = file_part.split(':').collect();
-            let filename = if subparts.len() > 1 {
-                subparts[1].trim()
-            } else {
-                subparts[0].trim()
-            };
+            let filename = if subparts.len() > 1 { subparts[1].trim() } else { subparts[0].trim() };
 
             payloads_entries.push(resolve(filename, entry.get(1).map(|s| s.as_str()), 0)?);
         }
@@ -248,9 +211,7 @@ pub fn parse_xe_ini_str(
                     // format: 0x11,0x22,0x33
                     let parts: Vec<u8> = val
                         .split(',')
-                        .filter_map(|s: &str| {
-                            u8::from_str_radix(s.trim().trim_start_matches("0x"), 16).ok()
-                        })
+                        .filter_map(|s: &str| u8::from_str_radix(s.trim().trim_start_matches("0x"), 16).ok())
                         .collect();
                     if parts.len() == 3 {
                         jtag.pairing_2bl = Some([parts[0], parts[1], parts[2]]);
@@ -267,11 +228,7 @@ pub fn parse_xe_ini_str(
         security: security_entries,
         flashfs: flashfs_entries,
         payloads: payloads_entries,
-        patch: BuildIniPatch {
-            enabled: build_type != "retail",
-            path: None,
-            khv: None,
-        },
+        patch: BuildIniPatch { enabled: build_type != "retail", path: None, khv: None },
         rebooter: counts.values().any(|&c| c > 1),
         jtag,
     };
@@ -285,19 +242,12 @@ pub struct PendingAssets<'a> {
     pub security: &'a HashMap<String, Vec<u8>>,
 }
 
-pub fn apply_xe_ini(
-    mut nand: NandSkeleton,
-    ini: XeBuildIni,
-    pending: PendingAssets<'_>,
-) -> Result<NandSkeleton, IniError> {
+pub fn apply_xe_ini(mut nand: NandSkeleton, ini: XeBuildIni, pending: PendingAssets<'_>) -> Result<NandSkeleton, IniError> {
     nand.clear_bootloaders();
     nand.clear_update();
 
     if !pending.bootloaders.is_empty() {
-        info!(
-            "[ini] Applying {} discovered bootloader assets from memory...",
-            pending.bootloaders.len()
-        );
+        info!("[ini] Applying {} discovered bootloader assets from memory...", pending.bootloaders.len());
     }
 
     let mut notified = false;
@@ -318,17 +268,13 @@ pub fn apply_xe_ini(
         let chain_id = entry.chain;
 
         let target_bl = if is_rebooter {
-            nand.rebooter
-                .as_mut()
-                .ok_or(IniError::RebooterNotInitialized)?
+            nand.rebooter.as_mut().ok_or(IniError::RebooterNotInitialized)?
         } else {
             &mut nand.bootloaders
         };
 
         let target_update = if is_rebooter {
-            nand.rebooter_update
-                .as_mut()
-                .ok_or(IniError::RebooterUpdateNotInitialized)?
+            nand.rebooter_update.as_mut().ok_or(IniError::RebooterUpdateNotInitialized)?
         } else {
             &mut nand.update
         };
@@ -341,143 +287,52 @@ pub fn apply_xe_ini(
         }
 
         if prefix.starts_with("cba_") {
-            target_bl.cb_a = Some(
-                crate::builder::chain::cb::BootloaderCb::parse(&data)
-                    .map_err(|e| IniError::BootloaderError(e.to_string()))?,
-            );
-            info!(
-                "[ini] Assigned CB_A from '{}' ({} bytes, chain {})",
-                filename,
-                data.len(),
-                chain_id
-            );
+            target_bl.cb_a = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] Assigned CB_A from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
         } else if prefix.starts_with("cbb_") {
-            target_bl.cb_b = Some(
-                crate::builder::chain::cb::BootloaderCb::parse(&data)
-                    .map_err(|e| IniError::BootloaderError(e.to_string()))?,
-            );
-            info!(
-                "[ini] Assigned CB_B from '{}' ({} bytes, chain {})",
-                filename,
-                data.len(),
-                chain_id
-            );
+            target_bl.cb_b = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] Assigned CB_B from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
         } else if prefix.starts_with("cbx_") {
-            target_bl.cb_x = Some(
-                crate::builder::chain::cb::BootloaderCb::parse(&data)
-                    .map_err(|e| IniError::BootloaderError(e.to_string()))?,
-            );
-            info!(
-                "[ini] Assigned CB_X from '{}' ({} bytes, chain {})",
-                filename,
-                data.len(),
-                chain_id
-            );
+            target_bl.cb_x = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] Assigned CB_X from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
         } else if prefix.starts_with("cb_") || prefix.starts_with("sb_") {
-            target_bl.cb = Some(
-                crate::builder::chain::cb::BootloaderCb::parse(&data)
-                    .map_err(|e| IniError::BootloaderError(e.to_string()))?,
-            );
-            info!(
-                "[ini] Assigned CB from '{}' ({} bytes, chain {})",
-                filename,
-                data.len(),
-                chain_id
-            );
+            target_bl.cb = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] Assigned CB from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
         } else if prefix.starts_with("sc_") {
-            target_bl.sc = Some(
-                crate::builder::chain::sc::BootloaderSc::parse(&data)
-                    .map_err(|e| IniError::BootloaderError(e.to_string()))?,
-            );
-            info!(
-                "[ini] Assigned SC from '{}' ({} bytes, chain {})",
-                filename,
-                data.len(),
-                chain_id
-            );
+            target_bl.sc = Some(crate::builder::chain::sc::BootloaderSc::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] Assigned SC from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
         } else if prefix.starts_with("cd_") || prefix.starts_with("sd_") {
-            target_bl.cd = Some(
-                crate::builder::chain::cd::BootloaderCd::parse(&data)
-                    .map_err(|e| IniError::BootloaderError(e.to_string()))?,
-            );
-            info!(
-                "[ini] Assigned CD from '{}' ({} bytes, chain {})",
-                filename,
-                data.len(),
-                chain_id
-            );
+            target_bl.cd = Some(crate::builder::chain::cd::BootloaderCd::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] Assigned CD from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
         } else if prefix.starts_with("ce_") || prefix.starts_with("se_") {
-            target_bl.ce = Some(
-                crate::builder::chain::ce::BootloaderCe::parse(&data)
-                    .map_err(|e| IniError::BootloaderError(e.to_string()))?,
-            );
-            info!(
-                "[ini] Assigned CE from '{}' ({} bytes, chain {})",
-                filename,
-                data.len(),
-                chain_id
-            );
+            target_bl.ce = Some(crate::builder::chain::ce::BootloaderCe::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
+            info!("[ini] Assigned CE from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
         } else if prefix.starts_with("cf_") || prefix.starts_with("sf_") {
-            let parsed = Some(
-                crate::builder::chain::cf::BootloaderCf::parse(&data)
-                    .map_err(|e| IniError::BootloaderError(e.to_string()))?,
-            );
+            let parsed = Some(crate::builder::chain::cf::BootloaderCf::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
             if target_update.cf_0.is_none() {
                 target_update.cf_0 = parsed;
-                info!(
-                    "[ini] Assigned CF to slot 0 from '{}' ({} bytes, chain {})",
-                    filename,
-                    data.len(),
-                    chain_id
-                );
+                info!("[ini] Assigned CF to slot 0 from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
             } else if target_update.cf_1.is_none() {
                 target_update.cf_1 = parsed;
-                info!(
-                    "[ini] Assigned CF to slot 1 from '{}' ({} bytes, chain {})",
-                    filename,
-                    data.len(),
-                    chain_id
-                );
+                info!("[ini] Assigned CF to slot 1 from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
             } else {
                 target_update.cf_0 = parsed;
-                warn!(
-                    "[ini] Automatically overwriting CF slot 0 from '{}' (no free slots left)",
-                    filename
-                );
+                warn!("[ini] Automatically overwriting CF slot 0 from '{}' (no free slots left)", filename);
             }
         } else if prefix.starts_with("cg_") || prefix.starts_with("sg_") {
-            let parsed = Some(
-                crate::builder::chain::cg::BootloaderCg::parse(&data)
-                    .map_err(|e| IniError::BootloaderError(e.to_string()))?,
-            );
+            let parsed = Some(crate::builder::chain::cg::BootloaderCg::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
             if target_update.cg_0.is_none() {
                 target_update.cg_0 = parsed;
-                info!(
-                    "[ini] Assigned CG to slot 0 from '{}' ({} bytes, chain {})",
-                    filename,
-                    data.len(),
-                    chain_id
-                );
+                info!("[ini] Assigned CG to slot 0 from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
             } else if target_update.cg_1.is_none() {
                 target_update.cg_1 = parsed;
-                info!(
-                    "[ini] Assigned CG to slot 1 from '{}' ({} bytes, chain {})",
-                    filename,
-                    data.len(),
-                    chain_id
-                );
+                info!("[ini] Assigned CG to slot 1 from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
             } else {
                 target_update.cg_0 = parsed;
-                warn!(
-                    "[ini] Automatically overwriting CG slot 0 from '{}' (no free slots left)",
-                    filename
-                );
+                warn!("[ini] Automatically overwriting CG slot 0 from '{}' (no free slots left)", filename);
             }
         } else {
-            warn!(
-                "[ini] '{}' did not match any known bootloader prefix, skipping.",
-                filename
-            );
+            warn!("[ini] '{}' did not match any known bootloader prefix, skipping.", filename);
         }
     }
 
@@ -487,8 +342,7 @@ pub fn apply_xe_ini(
 
         if let Some(data) = pending.bootloaders.get(&lower) {
             if lower.contains("xell") {
-                let xell = crate::builder::chain::xell::Xell::parse(data, Some(filename))
-                    .map_err(|e| IniError::BootloaderError(e.to_string()))?;
+                let xell = crate::builder::chain::xell::Xell::parse(data, Some(filename)).map_err(|e| IniError::BootloaderError(e.to_string()))?;
                 let x_type = xell.identify();
 
                 let is_unsafe = nand.options.gxunsafe;
@@ -496,14 +350,8 @@ pub fn apply_xe_ini(
                 match x_type {
                     crate::builder::chain::xell::XellType::XellGg => {
                         if !nand.options.image_profile.contains("glitch") && !is_unsafe {
-                            error!(
-                                "[ini] FATAL: xell-gggggg is for Glitch builds only (Profile: {}).",
-                                nand.options.image_profile
-                            );
-                            return Err(IniError::IoError(std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                "Invalid XeLL for build profile",
-                            )));
+                            error!("[ini] FATAL: xell-gggggg is for Glitch builds only (Profile: {}).", nand.options.image_profile);
+                            return Err(IniError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid XeLL for build profile")));
                         }
                         nand.bootloaders.xell = Some(xell);
                         info!("[ini] Assigned xell-gggggg to primary slot");
@@ -511,10 +359,7 @@ pub fn apply_xe_ini(
                     crate::builder::chain::xell::XellType::Xell1f => {
                         if !nand.options.image_profile.contains("jtag") && !is_unsafe {
                             error!("[ini] FATAL: xell-1f is for Rebooter XeLL images only (Profile: {}).", nand.options.image_profile);
-                            return Err(IniError::IoError(std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                "Invalid XeLL for build profile",
-                            )));
+                            return Err(IniError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid XeLL for build profile")));
                         }
                         info!("[ini] Detected xell-1f: Switching to Onef profile (XeLL-only rebooter)");
                         nand.options.image_profile = "onef".to_string();
@@ -523,10 +368,7 @@ pub fn apply_xe_ini(
                     crate::builder::chain::xell::XellType::Xell2f => {
                         if !nand.options.image_profile.contains("jtag") && !is_unsafe {
                             error!("[ini] FATAL: xell-2f is for Full Rebooter images only (Profile: {}).", nand.options.image_profile);
-                            return Err(IniError::IoError(std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                "Invalid XeLL for build profile",
-                            )));
+                            return Err(IniError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid XeLL for build profile")));
                         }
                         if let Some(rebooter) = nand.rebooter.as_mut() {
                             rebooter.xell = Some(xell);
@@ -551,9 +393,7 @@ pub fn apply_xe_ini(
                     if lower == "jtag_payload.bin" {
                         p_entry.fixed_address = Some(0x200);
                         p_entry.description = "JTAG Exploit Payload".to_string();
-                        info!(
-                            "[ini] Detected JTAG Exploit Payload, assigning to fixed address 0x200"
-                        );
+                        info!("[ini] Detected JTAG Exploit Payload, assigning to fixed address 0x200");
                     } else if lower == "fuses.bin" {
                         p_entry.description = "Virtual Fuses".to_string();
                     } else if lower == "freeboot.bin" {
@@ -562,11 +402,7 @@ pub fn apply_xe_ini(
                 }
 
                 nand.payloads.push(p_entry);
-                info!(
-                    "[ini] Assigned payload '{}' ({} bytes)",
-                    filename,
-                    data.len()
-                );
+                info!("[ini] Assigned payload '{}' ({} bytes)", filename, data.len());
             }
         }
     }
@@ -580,11 +416,7 @@ pub fn apply_xe_ini(
         info!("[ini] Assigned SMC.bin from memory");
     }
 
-    if let Some(kv_data) = pending
-        .security
-        .get("keyvault.bin")
-        .or_else(|| pending.security.get("kv.bin"))
-    {
+    if let Some(kv_data) = pending.security.get("keyvault.bin").or_else(|| pending.security.get("kv.bin")) {
         nand.extra.keyvault = kv_data.clone();
         info!("[ini] Assigned Keyvault from memory");
     }
@@ -608,19 +440,13 @@ pub fn apply_xe_ini(
     // Overrides
     if let Some(cba_file) = &nand.options.cba {
         if let Some(data) = pending.bootloaders.get(&cba_file.to_lowercase()) {
-            nand.bootloaders.cb_a = Some(
-                crate::builder::chain::cb::BootloaderCb::parse(data)
-                    .map_err(|e| IniError::BootloaderError(e.to_string()))?,
-            );
+            nand.bootloaders.cb_a = Some(crate::builder::chain::cb::BootloaderCb::parse(data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
             info!("[ini] OVERRIDE: Assigned CB_A from '{}'", cba_file);
         }
     }
     if let Some(cbb_file) = &nand.options.cbb {
         if let Some(data) = pending.bootloaders.get(&cbb_file.to_lowercase()) {
-            nand.bootloaders.cb_b = Some(
-                crate::builder::chain::cb::BootloaderCb::parse(data)
-                    .map_err(|e| IniError::BootloaderError(e.to_string()))?,
-            );
+            nand.bootloaders.cb_b = Some(crate::builder::chain::cb::BootloaderCb::parse(data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
             info!("[ini] OVERRIDE: Assigned CB_B from '{}'", cbb_file);
         }
     }

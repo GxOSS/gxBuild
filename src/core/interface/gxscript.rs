@@ -85,10 +85,7 @@ impl GxScriptEngine {
 
                     let _ = rl.add_history_entry(trimmed);
 
-                    match self
-                        .engine
-                        .eval_with_scope::<rhai::Dynamic>(&mut self.scope, trimmed)
-                    {
+                    match self.engine.eval_with_scope::<rhai::Dynamic>(&mut self.scope, trimmed) {
                         Ok(result) => {
                             if !result.is_unit() {
                                 println!("=> {:?}", result);

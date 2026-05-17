@@ -20,9 +20,7 @@ pub fn init_logger(mode: &str, verbose: bool) -> Result<(), fern::InitError> {
 
     // Generate filename: gxbuild-<mode>-<secs>.log
     let start = SystemTime::now();
-    let since_the_epoch = start
-        .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards");
+    let since_the_epoch = start.duration_since(UNIX_EPOCH).expect("Time went backwards");
     let timestamp = since_the_epoch.as_secs();
     let filename = format!("logs/gxbuild-{}-{}.log", mode, timestamp);
 
@@ -45,11 +43,7 @@ pub fn init_logger(mode: &str, verbose: bool) -> Result<(), fern::InitError> {
                     let msg = CString::new(format!("{}", message)).unwrap_or_default();
                     cb(record.level() as i32, msg.as_ptr());
                 }
-                out.finish(format_args!(
-                    "[{}] {}",
-                    colors.color(record.level()),
-                    message
-                ))
+                out.finish(format_args!("[{}] {}", colors.color(record.level()), message))
             })
             .level(level)
             .chain(std::io::stdout())

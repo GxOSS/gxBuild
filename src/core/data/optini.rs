@@ -298,10 +298,7 @@ pub fn parse_options_ini(content: &str) -> Result<OptionsIni, OptionsIniError> {
         if line.starts_with('[') && line.ends_with(']') {
             return Err(OptionsIniError::BadOptionsFormat());
         } else {
-            let parts: Vec<String> = line
-                .split(" = ")
-                .map(|s| s.trim_end_matches(';').trim().to_string())
-                .collect();
+            let parts: Vec<String> = line.split(" = ").map(|s| s.trim_end_matches(';').trim().to_string()).collect();
             match parts.as_slice() {
                 [key, value] => match key.to_lowercase().as_str() {
                     "type" => options.ctype = Some(value.clone()),
@@ -324,18 +321,14 @@ pub fn parse_options_ini(content: &str) -> Result<OptionsIni, OptionsIniError> {
                     "noecdremap" => options.noecdremap = Some(value.eq_ignore_ascii_case("true")),
                     "nandmu" => options.nandmu = Some(value.eq_ignore_ascii_case("true")),
                     "nosecurity" => options.nosecurity = Some(value.eq_ignore_ascii_case("true")),
-                    "nosusecurity" => {
-                        options.nosusecurity = Some(value.eq_ignore_ascii_case("true"))
-                    }
+                    "nosusecurity" => options.nosusecurity = Some(value.eq_ignore_ascii_case("true")),
                     "noecc" => options.noecc = Some(value.eq_ignore_ascii_case("true")),
                     "noflashfs" => options.noflashfs = Some(value.eq_ignore_ascii_case("true")),
                     "smcnocheck" => options.smcnocheck = Some(value.eq_ignore_ascii_case("true")),
                     "noenter" => options.noenter = Some(value.eq_ignore_ascii_case("true")),
                     "nolog" => options.nolog = Some(value.eq_ignore_ascii_case("true")),
                     "noinfo" => options.noinfo = Some(value.eq_ignore_ascii_case("true")),
-                    "gxunsafe" | "unsafe" => {
-                        options.gxunsafe = Some(value.eq_ignore_ascii_case("true"))
-                    }
+                    "gxunsafe" | "unsafe" => options.gxunsafe = Some(value.eq_ignore_ascii_case("true")),
                     "verbose" => options.verbose = Some(value.eq_ignore_ascii_case("true")),
                     "cba" => options.cba = Some(value.clone()),
                     "cbb" => options.cbb = Some(value.clone()),

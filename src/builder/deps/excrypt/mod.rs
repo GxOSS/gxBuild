@@ -70,34 +70,13 @@ pub struct ExCryptAesSchedule {
 }
 
 extern "C" {
-    pub fn ExCryptAesCreateKeySchedule(
-        key: *const u8,
-        key_size: u32,
-        state: *mut ExCryptAesSchedule,
-    );
+    pub fn ExCryptAesCreateKeySchedule(key: *const u8, key_size: u32, state: *mut ExCryptAesSchedule);
 
-    pub fn ExCryptAesCbcEncrypt(
-        state: *mut ExCryptAesSchedule,
-        input: *const u8,
-        input_size: u32,
-        output: *mut u8,
-        feed: *mut u8,
-    );
+    pub fn ExCryptAesCbcEncrypt(state: *mut ExCryptAesSchedule, input: *const u8, input_size: u32, output: *mut u8, feed: *mut u8);
 
-    pub fn ExCryptAesCbcDecrypt(
-        state: *mut ExCryptAesSchedule,
-        input: *const u8,
-        input_size: u32,
-        output: *mut u8,
-        feed: *mut u8,
-    );
+    pub fn ExCryptAesCbcDecrypt(state: *mut ExCryptAesSchedule, input: *const u8, input_size: u32, output: *mut u8, feed: *mut u8);
 
-    pub fn ExCryptBnQwBeSigVerify(
-        sig: *const ExCryptSig,
-        hash: *const u8,
-        salt: *const u8,
-        pubkey: *const ExCryptRsa,
-    ) -> i32;
+    pub fn ExCryptBnQwBeSigVerify(sig: *const ExCryptSig, hash: *const u8, salt: *const u8, pubkey: *const ExCryptRsa) -> i32;
 
 }
 
@@ -109,10 +88,7 @@ pub struct Rc4 {
 
 fn rc4_key(state: &mut ExCryptRc4State, key: &[u8]) -> Result<()> {
     if key.is_empty() {
-        return Err(CryptoError::InvalidKeySize {
-            expected: 1,
-            got: 0,
-        });
+        return Err(CryptoError::InvalidKeySize { expected: 1, got: 0 });
     }
 
     state.i = 0;
@@ -143,11 +119,7 @@ fn rc4_crypt(state: &mut ExCryptRc4State, data: &mut [u8]) {
 
 impl Rc4 {
     pub fn new(key: &[u8]) -> Result<Self> {
-        let mut state = ExCryptRc4State {
-            s: [0; 256],
-            i: 0,
-            j: 0,
-        };
+        let mut state = ExCryptRc4State { s: [0; 256], i: 0, j: 0 };
         rc4_key(&mut state, key)?;
         Ok(Self { state })
     }
@@ -176,11 +148,7 @@ unsafe fn ffi_slice_mut<'a>(ptr: *mut u8, len: u32) -> &'a mut [u8] {
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub unsafe extern "C" fn ExCryptRc4Key(
-    state: *mut ExCryptRc4State,
-    key: *const u8,
-    key_size: u32,
-) {
+pub unsafe extern "C" fn ExCryptRc4Key(state: *mut ExCryptRc4State, key: *const u8, key_size: u32) {
     let Some(state) = state.as_mut() else {
         return;
     };
@@ -189,11 +157,7 @@ pub unsafe extern "C" fn ExCryptRc4Key(
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub unsafe extern "C" fn ExCryptRc4Ecb(
-    state: *mut ExCryptRc4State,
-    buf: *mut u8,
-    buf_size: u32,
-) {
+pub unsafe extern "C" fn ExCryptRc4Ecb(state: *mut ExCryptRc4State, buf: *mut u8, buf_size: u32) {
     let Some(state) = state.as_mut() else {
         return;
     };
@@ -203,11 +167,7 @@ pub unsafe extern "C" fn ExCryptRc4Ecb(
 #[no_mangle]
 #[allow(non_snake_case)]
 pub unsafe extern "C" fn ExCryptRc4(key: *const u8, key_size: u32, buf: *mut u8, buf_size: u32) {
-    let mut state = ExCryptRc4State {
-        s: [0; 256],
-        i: 0,
-        j: 0,
-    };
+    let mut state = ExCryptRc4State { s: [0; 256], i: 0, j: 0 };
     if rc4_key(&mut state, ffi_slice(key, key_size)).is_ok() {
         rc4_crypt(&mut state, ffi_slice_mut(buf, buf_size));
     }
@@ -259,14 +219,7 @@ pub unsafe extern "C" fn ExCryptHmacSha(
         return;
     }
 
-    if let Ok(hash) = hmac_sha(
-        ffi_slice(key, key_size),
-        &[
-            ffi_slice(input1, input1_size),
-            ffi_slice(input2, input2_size),
-            ffi_slice(input3, input3_size),
-        ],
-    ) {
+    if let Ok(hash) = hmac_sha(ffi_slice(key, key_size), &[ffi_slice(input1, input1_size), ffi_slice(input2, input2_size), ffi_slice(input3, input3_size)]) {
         let output = ffi_slice_mut(output, output_size.min(hash.len() as u32));
         output.copy_from_slice(&hash[..output.len()]);
     }
@@ -328,14 +281,7 @@ pub fn rot_sum_sha(input1: &[u8], input2: &[u8]) -> Result<[u8; 20]> {
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub unsafe extern "C" fn ExCryptRotSumSha(
-    input1: *const u8,
-    input1_size: u32,
-    input2: *const u8,
-    input2_size: u32,
-    output: *mut u8,
-    output_size: u32,
-) {
+pub unsafe extern "C" fn ExCryptRotSumSha(input1: *const u8, input1_size: u32, input2: *const u8, input2_size: u32, output: *mut u8, output_size: u32) {
     if output.is_null() {
         return;
     }
@@ -371,22 +317,13 @@ pub unsafe extern "C" fn ExCryptSha(
         return;
     }
 
-    if let Ok(hash) = sha(&[
-        ffi_slice(input1, input1_size),
-        ffi_slice(input2, input2_size),
-        ffi_slice(input3, input3_size),
-    ]) {
+    if let Ok(hash) = sha(&[ffi_slice(input1, input1_size), ffi_slice(input2, input2_size), ffi_slice(input3, input3_size)]) {
         let output = ffi_slice_mut(output, output_size.min(hash.len() as u32));
         output.copy_from_slice(&hash[..output.len()]);
     }
 }
 
-pub fn verify_signature(
-    sig: &[u8; 256],
-    hash: &[u8; 20],
-    salt: &[u8],
-    pubkey: &ExCryptRsa,
-) -> Result<bool> {
+pub fn verify_signature(sig: &[u8; 256], hash: &[u8; 20], salt: &[u8], pubkey: &ExCryptRsa) -> Result<bool> {
     let signature_ptr = sig.as_ptr() as *const ExCryptSig;
     unsafe {
         let result = ExCryptBnQwBeSigVerify(signature_ptr, hash.as_ptr(), salt.as_ptr(), pubkey);
@@ -400,10 +337,7 @@ pub struct Aes {
 
 impl Aes {
     pub fn new(key: &[u8]) -> Result<Self> {
-        let mut schedule = ExCryptAesSchedule {
-            keytab: [[[0; 4]; 4]; 29],
-            num_rounds: 0,
-        };
+        let mut schedule = ExCryptAesSchedule { keytab: [[[0; 4]; 4]; 29], num_rounds: 0 };
         unsafe {
             ExCryptAesCreateKeySchedule(key.as_ptr(), key.len() as u32, &mut schedule);
         }
@@ -412,26 +346,14 @@ impl Aes {
 
     pub fn decrypt_cbc(&mut self, data: &mut [u8], iv: &mut [u8; 16]) -> Result<()> {
         unsafe {
-            ExCryptAesCbcDecrypt(
-                &mut self.schedule,
-                data.as_ptr(),
-                data.len() as u32,
-                data.as_mut_ptr(),
-                iv.as_mut_ptr(),
-            );
+            ExCryptAesCbcDecrypt(&mut self.schedule, data.as_ptr(), data.len() as u32, data.as_mut_ptr(), iv.as_mut_ptr());
         }
         Ok(())
     }
 
     pub fn encrypt_cbc(&mut self, data: &mut [u8], iv: &mut [u8; 16]) -> Result<()> {
         unsafe {
-            ExCryptAesCbcEncrypt(
-                &mut self.schedule,
-                data.as_ptr(),
-                data.len() as u32,
-                data.as_mut_ptr(),
-                iv.as_mut_ptr(),
-            );
+            ExCryptAesCbcEncrypt(&mut self.schedule, data.as_ptr(), data.len() as u32, data.as_mut_ptr(), iv.as_mut_ptr());
         }
         Ok(())
     }

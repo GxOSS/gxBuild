@@ -19,9 +19,7 @@ use zerocopy::{
 use crate::builder::chain::cf::BootloaderCf;
 use crate::builder::chain::cg::BootloaderCg;
 
-pub const ONE_BL_KEY: [u8; 16] = [
-    0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA,
-];
+pub const ONE_BL_KEY: [u8; 16] = [0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA];
 
 #[derive(FromBytes, IntoBytes, KnownLayout, Immutable, Clone, Copy)]
 #[repr(C)]
@@ -76,10 +74,7 @@ impl<'a> StfsContainer<'a> {
         if data.len() < 4 || &data[0..4] != b"PIRS" {
             return Err("Invalid STFS signature: Expected 'PIRS'".into());
         }
-        info!(
-            "[builder] STFS container validated (PIRS magic OK, {} bytes)",
-            data.len()
-        );
+        info!("[builder] STFS container validated (PIRS magic OK, {} bytes)", data.len());
         Ok(Self { data })
     }
 
@@ -88,21 +83,9 @@ impl<'a> StfsContainer<'a> {
             return Err("STFS container too small to read directory metadata".to_string());
         }
 
-        let pathind_peek = u16::from_be_bytes(
-            self.data[0xC032..0xC034]
-                .try_into()
-                .map_err(|_| "Failed to read STFS path index")?,
-        );
-        let start_offset = if pathind_peek == 0xFFFF {
-            0xC000
-        } else {
-            0xD000
-        };
-        let multiplier = if start_offset == 0xC000 {
-            0x1000
-        } else {
-            0x2000
-        };
+        let pathind_peek = u16::from_be_bytes(self.data[0xC032..0xC034].try_into().map_err(|_| "Failed to read STFS path index")?);
+        let start_offset = if pathind_peek == 0xFFFF { 0xC000 } else { 0xD000 };
+        let multiplier = if start_offset == 0xC000 { 0x1000 } else { 0x2000 };
 
         let first_clust_end = start_offset + 0x31;
         if self.data.len() < first_clust_end {
@@ -114,12 +97,8 @@ impl<'a> StfsContainer<'a> {
                 .try_into()
                 .map_err(|_| "Failed to read STFS directory cluster count")?,
         ) as usize;
-        let dir_len = 0x1000usize
-            .checked_mul(first_clust)
-            .ok_or_else(|| "STFS directory size overflow".to_string())?;
-        let dir_end = start_offset
-            .checked_add(dir_len)
-            .ok_or_else(|| "STFS directory offset overflow".to_string())?;
+        let dir_len = 0x1000usize.checked_mul(first_clust).ok_or_else(|| "STFS directory size overflow".to_string())?;
+        let dir_end = start_offset.checked_add(dir_len).ok_or_else(|| "STFS directory offset overflow".to_string())?;
         if dir_end > self.data.len() {
             return Err("STFS directory extends beyond container bounds".to_string());
         }
@@ -168,8 +147,7 @@ impl<'a> StfsContainer<'a> {
                         skipped += (temp_clust + 1) * multiplier;
                     }
 
-                    let real_start =
-                        (start_offset as u32 + (cluster_idx * 0x1000) + skipped) as usize;
+                    let real_start = (start_offset as u32 + (cluster_idx * 0x1000) + skipped) as usize;
                     let chunk_size = std::cmp::min(0x1000, file_len);
 
                     if real_start + chunk_size > self.data.len() {
@@ -193,10 +171,7 @@ impl<'a> StfsContainer<'a> {
     pub fn extract_to_memory(&self) -> Result<HashMap<String, Vec<u8>>, String> {
         let (start_offset, multiplier, dir_end) = self.directory_layout()?;
 
-        info!(
-            "[builder] STFS extract_to_memory: start_offset=0x{:x}, multiplier=0x{:x}",
-            start_offset, multiplier
-        );
+        info!("[builder] STFS extract_to_memory: start_offset=0x{:x}, multiplier=0x{:x}", start_offset, multiplier);
 
         let dir_data = &self.data[start_offset..dir_end];
 
@@ -248,10 +223,7 @@ impl<'a> StfsContainer<'a> {
             results.insert(name.to_lowercase(), file_data);
         }
 
-        info!(
-            "[builder] STFS in-memory extraction complete: {} files extracted.",
-            results.len()
-        );
+        info!("[builder] STFS in-memory extraction complete: {} files extracted.", results.len());
         Ok(results)
     }
 }
@@ -262,10 +234,7 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
         return Err("xboxupd buffer too small to check magic".to_string());
     }
     if &xboxupd_bytes[0..2] != b"CF" {
-        return Err(format!(
-            "Invalid xboxupd magic: Expected 'CF' (0x4346), found 0x{:02X}{:02X}. Potential STFS misalignment.",
-            xboxupd_bytes[0], xboxupd_bytes[1]
-        ));
+        return Err(format!("Invalid xboxupd magic: Expected 'CF' (0x4346), found 0x{:02X}{:02X}. Potential STFS misalignment.", xboxupd_bytes[0], xboxupd_bytes[1]));
     }
 
     // 1. Parse CF
@@ -278,15 +247,9 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
         return Err("Failed to decrypt CF header.".to_string());
     }
 
-    info!(
-        "[builder] Parsing xboxupd: CF at offset 0, size=0x{:x}",
-        cf.header.size.get()
-    );
+    info!("[builder] Parsing xboxupd: CF at offset 0, size=0x{:x}", cf.header.size.get());
     cf.populate_metadata();
-    let meta = cf
-        .metadata
-        .as_ref()
-        .ok_or("Failed to populate CF metadata")?;
+    let meta = cf.metadata.as_ref().ok_or("Failed to populate CF metadata")?;
     let cf_size = (cf.header.size.get() as usize + 0xF) & !0xF;
 
     if xboxupd_bytes.len() < cf_size {
@@ -313,12 +276,7 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
         return Err("CG checking hash mismatch against CF signature metadata".to_string());
     }
 
-    info!(
-        "[builder] xboxupd parsed OK: CF v{} -> CG v{} ({} bytes)",
-        cf.header.version.get(),
-        cg.header.version.get(),
-        xboxupd_bytes.len()
-    );
+    info!("[builder] xboxupd parsed OK: CF v{} -> CG v{} ({} bytes)", cf.header.version.get(), cg.header.version.get(), xboxupd_bytes.len());
     Ok((cf, cg))
 }
 

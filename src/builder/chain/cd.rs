@@ -44,14 +44,8 @@ pub struct BootloaderCd {
 
 impl BootloaderCd {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload) =
-            BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CD header")?;
-        let mut cd = Self {
-            header: header.clone(),
-            data: payload.to_vec(),
-            metadata: None,
-            derived_key: None,
-        };
+        let (header, payload) = BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CD header")?;
+        let mut cd = Self { header: header.clone(), data: payload.to_vec(), metadata: None, derived_key: None };
         cd.populate_metadata();
         Ok(cd)
     }
@@ -76,13 +70,7 @@ impl BootloaderCd {
         let mut digest_5bl = [0u8; 0x14];
         digest_5bl.copy_from_slice(&self.data[0x23C..0x250]);
 
-        self.metadata = Some(CdMetadata {
-            signature,
-            rsa_pub_key,
-            nonce_6bl,
-            salt_6bl,
-            digest_5bl,
-        });
+        self.metadata = Some(CdMetadata { signature, rsa_pub_key, nonce_6bl, salt_6bl, digest_5bl });
     }
 
     pub fn sync_metadata(&mut self) {
@@ -126,26 +114,10 @@ impl BootloaderCd {
     }
 
     pub fn print_info(&self) {
-        let indicator = if (self.header.magic.get() & 0xF000) == 0x5000 {
-            "SD"
-        } else {
-            "CD"
-        };
-        info!(
-            "[builder] {} version: {}",
-            indicator,
-            self.header.version.get()
-        );
-        info!(
-            "[builder] {} size: 0x{:x}",
-            indicator,
-            self.header.size.get()
-        );
-        info!(
-            "[builder] {} entrypoint: 0x{:x}",
-            indicator,
-            self.header.entrypoint.get()
-        );
+        let indicator = if (self.header.magic.get() & 0xF000) == 0x5000 { "SD" } else { "CD" };
+        info!("[builder] {} version: {}", indicator, self.header.version.get());
+        info!("[builder] {} size: 0x{:x}", indicator, self.header.size.get());
+        info!("[builder] {} entrypoint: 0x{:x}", indicator, self.header.entrypoint.get());
 
         if let Some(ref meta) = self.metadata {
             if self.is_decrypted() {
