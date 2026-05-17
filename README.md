@@ -9,7 +9,7 @@
 
 gxBuild is a Xbox 360 image builder and patcher. Features full nand, xell and shadowboot parsing, patching and building. Stays as close to xeBuild as possible, with a few changes. 
 
-Based on [x360utils](https://github.com/Swizzy/x360Utils), [xenon-bltool](), and ~~J-Runner with Extras~~ (Replaced with legally valid permissive code). Releases are licensed under the GPL v2 (inherited from xenon-bltool).
+Based on [x360utils](https://github.com/Swizzy/x360Utils), [xenon-bltool](https://github.com/InvoxiPlayGames/xenon-bltool), and [RGBuildPP](https://github.com/emoose/RGBuildPP). Releases are licensed under the GPL v2 (inherited from xenon-bltool).
 
 ## Features
 
@@ -34,11 +34,9 @@ Coming Soon
 
 ## Info
 
-- [CREDITS.md](CREDITS.md) - Project Credits
-- [CONTRIBUTING.md](CONTRIBUTING.md) - Contribution Guidelines
-- [CONTACT.md](CONTACT.md) - Contact Information
-- [CHANGELOG.md](CHANGELOG.md) - Changelog
-- [TODO.md](TODO.md) - TODO List
+- [CREDITS.md](docs/CREDITS.md) - Project Credits
+- [CONTRIBUTING.md](docs/CONTRIBUTING.md) - Contribution Guidelines
+- [CHANGELOG.md](docs/CHANGELOG.md) - Changelog
 
 ## Testing
 
@@ -90,6 +88,6 @@ x360utils is licensed under the unlicense (Permissive).
 xenon-bltool is licensed under the GPL v2.
 libmspack is relicensed as GPL v2.
 ExCrypt is licensed under the BSD 3-Clause License.
-Xenia is licensed under a custom permissive license.
+Xenia is licensed under the BSD 3-Clause License.
 
 All code taken from other projects has been properly attributed in the header.

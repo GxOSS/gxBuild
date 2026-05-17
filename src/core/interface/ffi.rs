@@ -1,6 +1,6 @@
 #![allow(improper_ctypes_definitions)]
 /*
-    ffi.rs - interoptopus FFI and cxx-qt
+    ffi.rs - interoptopus FFI
 
     Created in 2026 by Exposure / Zach for gxBuild.
     Licensed under the GNU General Public License Version 2.0
