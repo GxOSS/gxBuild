@@ -655,16 +655,15 @@ impl IniSearch {
                     let p_xboxupd = build.join("xboxupd.bin");
                     if p_xboxupd.exists() {
                         if let Ok(data_upd) = std::fs::read(&p_xboxupd) {
-                            if let Ok(cf) =
-                                crate::builder::chain::cf::BootloaderCf::parse(&data_upd)
+                            if let Ok((cf, cg)) =
+                                crate::core::images::stfs::parse_xboxupd(&data_upd)
                             {
-                                let cf_size = cf.header.size.get() as usize;
                                 result
                                     .bootloader_assets
-                                    .insert(expected_cf.clone(), data_upd[0..cf_size].to_vec());
+                                    .insert(expected_cf.clone(), cf.serialize());
                                 result
                                     .bootloader_assets
-                                    .insert(expected_cg.clone(), data_upd[cf_size..].to_vec());
+                                    .insert(expected_cg.clone(), cg.serialize());
                                 if let Some(c) = result.bootloader_assets.get(&lower_name).cloned()
                                 {
                                     if check_hash!(c, filename, "xboxupd.bin") {
@@ -694,10 +693,9 @@ impl IniSearch {
                                                             || (k_lower.starts_with("su")
                                                                 && !k_lower.contains('.'))
                                                         {
-                                                            if let Ok(cf) = crate::builder::chain::cf::BootloaderCf::parse(&v) {
-                                                                let cf_size = cf.header.size.get() as usize;
-                                                                result.bootloader_assets.insert(expected_cf.clone(), v[0..cf_size].to_vec());
-                                                                result.bootloader_assets.insert(expected_cg.clone(), v[cf_size..].to_vec());
+                                                            if let Ok((cf, cg)) = crate::core::images::stfs::parse_xboxupd(&v) {
+                                                                result.bootloader_assets.insert(expected_cf.clone(), cf.serialize());
+                                                                result.bootloader_assets.insert(expected_cg.clone(), cg.serialize());
                                                             }
                                                         } else {
                                                             result

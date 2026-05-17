@@ -209,7 +209,9 @@ pub fn decrypt_chain(
 
     // 1. Decrypt CB using 1BL Key.
     info!("[builder] Decrypting CB with 1BL Key...");
-    cb.decrypt(&ONEBL_KEY);
+    if !cb.is_decrypted() {
+        cb.decrypt(&ONEBL_KEY);
+    }
     if cb.verify_decrypted() {
         info!("[builder] CB decryption verified successfully (zero-region check passed).");
     } else {
@@ -256,7 +258,9 @@ pub fn decrypt_chain(
 
     // Decrypt Updates (Slot 0 and Slot 1)
     if let (Some(cf), Some(cg)) = (cf_0, cg_0) {
-        cf.decrypt(&ONEBL_KEY);
+        if !cf.is_decrypted() {
+            cf.decrypt(&ONEBL_KEY);
+        }
         cf.populate_metadata_unchecked();
         if cf.verify_decrypted() {
             info!("[builder] CF slot 0 decryption verified successfully.");
@@ -266,13 +270,17 @@ pub fn decrypt_chain(
         if cf.data.len() >= 0x330 {
             let mut cg_hmac = [0u8; 16];
             cg_hmac.copy_from_slice(&cf.data[0x320..0x330]);
-            cg.decrypt(&cg_hmac);
+            if !cg.is_decrypted() {
+                cg.decrypt(&cg_hmac);
+            }
         }
         info!("[builder] Slot 0 Updates decrypted.");
     }
 
     if let (Some(cf), Some(cg)) = (cf_1, cg_1) {
-        cf.decrypt(&ONEBL_KEY);
+        if !cf.is_decrypted() {
+            cf.decrypt(&ONEBL_KEY);
+        }
         cf.populate_metadata_unchecked();
         if cf.verify_decrypted() {
             info!("[builder] CF slot 1 decryption verified successfully.");
@@ -282,7 +290,9 @@ pub fn decrypt_chain(
         if cf.data.len() >= 0x330 {
             let mut cg_hmac = [0u8; 16];
             cg_hmac.copy_from_slice(&cf.data[0x320..0x330]);
-            cg.decrypt(&cg_hmac);
+            if !cg.is_decrypted() {
+                cg.decrypt(&cg_hmac);
+            }
         }
         info!("[builder] Slot 1 Updates decrypted.");
     }

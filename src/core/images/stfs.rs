@@ -287,7 +287,7 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
         .metadata
         .as_ref()
         .ok_or("Failed to populate CF metadata")?;
-    let cf_size = cf.header.size.get() as usize;
+    let cf_size = (cf.header.size.get() as usize + 0xF) & !0xF;
 
     if xboxupd_bytes.len() < cf_size {
         return Err("xboxupd buffer too small to contain CG payload".to_string());
