@@ -380,6 +380,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                     }
                 }
                 "nomobile" => o.nomobile = Some(v.eq_ignore_ascii_case("true")),
+                "nofcrt" => o.nofcrt = Some(v.eq_ignore_ascii_case("true")),
                 "noenter" => o.noenter = Some(v.eq_ignore_ascii_case("true")),
                 "noremap" => o.noremap = Some(v.eq_ignore_ascii_case("true")),
                 "nandmu" => o.nandmu = Some(v.eq_ignore_ascii_case("true")),
@@ -660,14 +661,19 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         data_dir.join("keyvault.bin"),
     ];
 
+    let nofcrt_enabled = session.options.nofcrt.unwrap_or(false);
+
     for p in &security_candidates {
+        let name = p
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase();
+        if name == "fcrt.bin" && nofcrt_enabled {
+            continue;
+        }
         if p.exists() {
             if let Ok(data) = std::fs::read(p) {
-                let name = p
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_lowercase();
                 info!(
                     "[cli] Discovered security asset: {:?} ({} bytes)",
                     p,

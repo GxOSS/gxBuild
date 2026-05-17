@@ -487,6 +487,7 @@ pub struct BuildOptions {
     pub full_image: bool,
     pub xsb: bool,
     pub nomobile: bool,
+    pub nofcrt: bool,
 }
 
 impl Default for BuildOptions {
@@ -512,6 +513,7 @@ impl Default for BuildOptions {
             cba: None,
             cbb: None,
             nomobile: false,
+            nofcrt: false,
         }
     }
 }

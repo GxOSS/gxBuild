@@ -179,8 +179,10 @@ impl IniSearch {
         data: impl AsRef<Path>,
         nand: &Option<NandSkeleton>,
         unsafe_mode: Option<bool>,
+        nofcrt: Option<bool>,
     ) -> Result<Self, FilesearchError> {
         let unsafe_mode = unsafe_mode.unwrap_or(false);
+        let nofcrt = nofcrt.unwrap_or(false);
         let mut ini = ini;
         let mut result = IniSearchResult {
             bootloaders: None,
@@ -355,6 +357,10 @@ impl IniSearch {
             for entry in &ini.security {
                 let filename = &entry.filename;
                 let lower_name = filename.to_lowercase();
+                if lower_name == "fcrt.bin" && nofcrt {
+                    warn!("[ini] fcrt.bin bypassed due to nofcrt option.");
+                    continue;
+                }
                 let mut found_content: Option<Vec<u8>> = None;
                 let mut found_path: Option<PathBuf> = None;
 

@@ -208,6 +208,23 @@ mod tests {
         assert_eq!(cf_meta.pairing_data, [0x12, 0x34, 0x56]);
         assert_eq!(cf_meta.lockdown_value, 2);
     }
+
+    #[test]
+    fn test_nofcrt_option_handling() {
+        let mut session = Session::new();
+        // 1. Verify Default state
+        assert_eq!(session.options.nofcrt, None);
+
+        // 2. Set "nofcrt" option
+        session.set_option("nofcrt", "true");
+        assert_eq!(session.options.nofcrt, Some(true));
+
+        // 3. Test merging options
+        let mut other_opt = crate::core::data::optini::OptionsIni::new();
+        other_opt.nofcrt = Some(false);
+        session.options.merge(other_opt);
+        assert_eq!(session.options.nofcrt, Some(false));
+    }
 }
 
 impl InternalCommand {
@@ -645,6 +662,7 @@ impl Session {
             "osig" => o.osig = Some(v.to_string()),
             "mfdate" => o.mfdate = Some(v.to_string()),
             "fcrt" => o.fcrt = Some(is_true),
+            "nofcrt" => o.nofcrt = Some(is_true),
             "xellbutton" => o.xellbutton = Some(v.to_string()),
             "xellbutton2" => o.xellbutton2 = Some(v.to_string()),
             "cygnos" => o.cygnos = Some(is_true),
@@ -705,6 +723,7 @@ impl Session {
                     &data_dir,
                     &self.active_nand,
                     self.options.gxunsafe,
+                    self.options.nofcrt,
                 ) {
                     Ok(search) => {
                         self.bootloader_assets
@@ -986,6 +1005,9 @@ impl Session {
             "kv.bin",
             "keyvault.bin",
         ] {
+            if name == &"fcrt.bin" && self.options.nofcrt.unwrap_or(false) {
+                continue;
+            }
             let p = data_dir.join(name);
             if p.exists() {
                 if let Ok(data) = fs::read(&p) {
@@ -1097,6 +1119,7 @@ impl Session {
             nand.options.gxunsafe = self.options.gxunsafe.unwrap_or(false);
             nand.options.verbose = self.options.verbose.unwrap_or(false);
             nand.options.nomobile = self.options.nomobile.unwrap_or(false);
+            nand.options.nofcrt = self.options.nofcrt.unwrap_or(false);
 
             //  CPU Key
             if let Some(key_str) = &self.options.cpukey {
@@ -1647,6 +1670,7 @@ impl Session {
                                 &data,
                                 &self.active_nand,
                                 self.options.gxunsafe,
+                                self.options.nofcrt,
                             ) {
                                 Ok(search) => {
                                     // Route each pool to its typed session pool

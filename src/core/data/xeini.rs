@@ -158,9 +158,13 @@ pub fn parse_xe_ini_str(
                    expected_hash: Option<&str>,
                    chain: u8|
      -> Result<BuildIniEntry, IniError> {
+        let hash = expected_hash
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
         Ok(BuildIniEntry {
             filename: filename.to_string(),
-            hash: expected_hash.map(|s| s.to_string()),
+            hash,
             chain,
         })
     };
@@ -193,10 +197,24 @@ pub fn parse_xe_ini_str(
 
     let mut flashfs_entries = Vec::new();
     for entry in flashfs_data_raw {
-        if entry.len() >= 2 {
-            flashfs_entries.push(resolve(&entry[0], Some(&entry[1]), 0)?);
-        } else if entry.len() == 1 {
-            flashfs_entries.push(resolve(&entry[0], None, 0)?);
+        if !entry.is_empty() {
+            let mut filename = entry[0].clone();
+            let mut hash_storage: Option<String> = None;
+            let mut expected_hash = entry.get(1).map(|s| s.as_str());
+
+            if filename.contains('=') {
+                let parts: Vec<String> = filename.split('=').map(|s| s.trim().to_string()).collect();
+                filename = parts[0].clone();
+                if parts.len() > 1 && !parts[1].is_empty() {
+                    hash_storage = Some(parts[1].clone());
+                }
+            }
+
+            if hash_storage.is_some() {
+                expected_hash = hash_storage.as_deref();
+            }
+
+            flashfs_entries.push(resolve(&filename, expected_hash, 0)?);
         }
     }
 
@@ -608,4 +626,30 @@ pub fn apply_xe_ini(
     }
 
     Ok(nand)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_xe_ini_empty_crc_section() {
+        let content = "
+[trinitybl]
+cba_9188.bin = 00000000
+
+[flashfs]
+..\\launch.xex ,
+..\\lhelper.xex,  
+..\\launch.ini = 
+        ";
+        let parsed = parse_xe_ini_str(content, "trinity", None).unwrap();
+        assert_eq!(parsed.flashfs.len(), 3);
+        assert_eq!(parsed.flashfs[0].filename, "..\\launch.xex");
+        assert_eq!(parsed.flashfs[0].hash, None);
+        assert_eq!(parsed.flashfs[1].filename, "..\\lhelper.xex");
+        assert_eq!(parsed.flashfs[1].hash, None);
+        assert_eq!(parsed.flashfs[2].filename, "..\\launch.ini");
+        assert_eq!(parsed.flashfs[2].hash, None);
+    }
 }

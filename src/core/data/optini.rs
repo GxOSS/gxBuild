@@ -66,6 +66,7 @@ pub struct OptionsIni {
     pub osig: Option<String>,
     pub mfdate: Option<String>,
     pub fcrt: Option<bool>,
+    pub nofcrt: Option<bool>,
 }
 
 impl OptionsIni {
@@ -121,6 +122,7 @@ impl OptionsIni {
             osig: None,
             mfdate: None,
             fcrt: None,
+            nofcrt: None,
         }
     }
 
@@ -275,6 +277,9 @@ impl OptionsIni {
         if let Some(v) = other.fcrt {
             self.fcrt = Some(v);
         }
+        if let Some(v) = other.nofcrt {
+            self.nofcrt = Some(v);
+        }
     }
 }
 
@@ -351,6 +356,7 @@ pub fn parse_options_ini(content: &str) -> Result<OptionsIni, OptionsIniError> {
                     "osig" => options.osig = Some(value.clone()),
                     "mfdate" => options.mfdate = Some(value.clone()),
                     "fcrt" => options.fcrt = Some(value.eq_ignore_ascii_case("true")),
+                    "nofcrt" => options.nofcrt = Some(value.eq_ignore_ascii_case("true")),
                     _ => warn!("[ini] Unknown option: {}", key),
                 },
                 _ => {}
