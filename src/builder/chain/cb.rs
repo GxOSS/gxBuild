@@ -411,7 +411,7 @@ impl BootloaderCb {
         // Note: populate_metadata_unchecked is NOT called here intentionally.
     }
 
-    pub fn decrypt_v2(&mut self, _cb_a_hdr: &BootloaderHeader, cb_a_key: &[u8; 16], cpu_key: &[u8; 16]) {
+    pub fn decrypt_v2(&mut self, cb_a_hdr: &BootloaderHeader, cb_a_key: &[u8; 16], cpu_key: &[u8; 16]) {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = size_aligned as usize - 0x10;
@@ -420,14 +420,19 @@ impl BootloaderCb {
             return;
         }
 
-        // Build HMAC input for v2 crypto: nonce + cpu_key + cb_b_payload_start (with flags cleared)
-        // Per RGBuildPP: nonce[0x30] = {cb_b_nonce[0x10], cpu_key[0x10], cb_b_data[0x10]}
-        // Then clear flags at offset 0x26/0x27 (which is offset 0x6/0x7 in the cb_b_data portion)
-        let mut cb_b_data_copy: [u8; 16] = self.data[0..16].try_into().unwrap();
-        cb_b_data_copy[0x6] = 0; // Clear flags low byte
-        cb_b_data_copy[0x7] = 0; // Clear flags high byte
+        // Build HMAC input for v2 crypto per J-Runner Nand.decrypt_CB_cpukey:
+        //   message[0x00..0x10] = HmacShaNonce (= cb_b_data[0..16])
+        //   message[0x10..0x20] = CPU key
+        //   message[0x20..0x30] = CB_A bldr header (16 bytes) with wFlags (offset 0x6/0x7) cleared
+        // (Note: RGBuildPP uses CB_B's own header here instead — the two implementations differ.
+        //  We match J-Runner since its computed PD/LDV are the reference values.)
+        let mut cb_a_hdr_copy: [u8; 16] = zerocopy::IntoBytes::as_bytes(cb_a_hdr)
+            .try_into()
+            .unwrap();
+        cb_a_hdr_copy[0x6] = 0; // Clear wFlags low byte
+        cb_a_hdr_copy[0x7] = 0; // Clear wFlags high byte
 
-        match excrypt::hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key, &cb_b_data_copy]) {
+        match excrypt::hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key, &cb_a_hdr_copy]) {
             Ok(derived_key) => {
                 let mut decrypt_key = [0u8; 16];
                 decrypt_key.copy_from_slice(&derived_key[..16]);
