@@ -426,8 +426,8 @@ impl BootloaderCb {
         // Per RGBuildPP: nonce[0x30] = {cb_b_nonce[0x10], cpu_key[0x10], cb_b_data[0x10]}
         // Then clear flags at offset 0x26/0x27 (which is offset 0x6/0x7 in the cb_b_data portion)
         let mut cb_b_data_copy: [u8; 16] = self.data[0..16].try_into().unwrap();
-        cb_b_data_copy[0x6] = 0;  // Clear flags low byte
-        cb_b_data_copy[0x7] = 0;  // Clear flags high byte
+        cb_b_data_copy[0x6] = 0; // Clear flags low byte
+        cb_b_data_copy[0x7] = 0; // Clear flags high byte
 
         match excrypt::hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key, &cb_b_data_copy]) {
             Ok(derived_key) => {
@@ -437,12 +437,10 @@ impl BootloaderCb {
                 info!("[cb] CB_B v2 key derived successfully");
 
                 match Rc4::new(&decrypt_key) {
-                    Ok(mut rc4) => {
-                        match rc4.crypt(&mut self.data[0x10..payload_len]) {
-                            Ok(_) => info!("[cb] CB_B v2 RC4 decryption successful"),
-                            Err(e) => log::warn!("[cb] CB_B v2 RC4 decryption failed: {}", e),
-                        }
-                    }
+                    Ok(mut rc4) => match rc4.crypt(&mut self.data[0x10..payload_len]) {
+                        Ok(_) => info!("[cb] CB_B v2 RC4 decryption successful"),
+                        Err(e) => log::warn!("[cb] CB_B v2 RC4 decryption failed: {}", e),
+                    },
                     Err(e) => log::warn!("[cb] CB_B v2 RC4 init failed: {}", e),
                 }
             }

@@ -224,10 +224,12 @@ pub fn decrypt_chain(
             info!("[builder] CB_B decrypted data[0x00..0x10]: {:02x?}", &cb_b_bl.data[0x00..0x10]);
             info!("[builder] CB_B decrypted data[0x10..0x20]: {:02x?}", &cb_b_bl.data[0x10..0x20]);
             info!("[builder] CB_B decrypted data[0x20..0x30]: {:02x?}", &cb_b_bl.data[0x20..0x30]);
-            info!("[builder] CB_B byte at 0x03: {}, 0x13: {}, 0x23: {}",
+            info!(
+                "[builder] CB_B byte at 0x03: {}, 0x13: {}, 0x23: {}",
                 cb_b_bl.data.get(0x03).copied().unwrap_or(0),
                 cb_b_bl.data.get(0x13).copied().unwrap_or(0),
-                cb_b_bl.data.get(0x23).copied().unwrap_or(0));
+                cb_b_bl.data.get(0x23).copied().unwrap_or(0)
+            );
         }
         cb_b_bl.populate_metadata_unchecked();
         // J-Runner behavior: CB_A's LDV is authoritative for the entire CB chain
