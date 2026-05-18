@@ -27,7 +27,6 @@ use zerocopy::{FromBytes, IntoBytes};
 #[derive(Clone, Debug)]
 pub struct CbMetadata {
     // Basic / Legacy
-    pub ldv: u8,
     pub b_flags: u16,
 
     // PerBoxData (Offset 0x10 in payload)
@@ -163,7 +162,6 @@ impl BootloaderCb {
         console_allow.copy_from_slice(&self.data[0x3A0..0x3A4]);
 
         self.metadata = Some(CbMetadata {
-            ldv: lockdown_value,
             b_flags: self.header.flags.get(),
             pairing_data,
             lockdown_value,
@@ -301,7 +299,7 @@ impl BootloaderCb {
 
         if self.is_decrypted() {
             if let Some(ref meta) = self.metadata {
-                info!("[builder] {} LDV: {}", indicator, meta.ldv);
+                info!("[builder] {} LDV: {}", indicator, meta.lockdown_value);
                 info!("[builder] {} Pairing: {:02x?}", indicator, meta.pairing_data);
                 info!("[builder] {} Post Addr: 0x{:08X}", indicator, meta.post_output_addr);
                 info!("[builder] {} SB Flash: 0x{:08X}", indicator, meta.sb_flash_addr);

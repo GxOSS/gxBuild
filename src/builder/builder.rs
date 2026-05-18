@@ -610,9 +610,7 @@ impl NandSkeleton {
                             cb_b.decrypt_v1(&cb_a_key, &cpukey);
                         }
                         cb_b.populate_metadata_unchecked();
-                        info!("[pfa] Skeleton CB_B decrypted, meta: {:?}", cb_b.metadata.as_ref().map(|m| (m.ldv, &m.pairing_data)));
-                        // Note: input_ldv_cb should already be set from input NAND in from_nand_image()
-                        // Do NOT overwrite it here with the skeleton's LDV
+                        info!("[pfa] CB_B decrypted, meta: {:?}", cb_b.metadata.as_ref().map(|m| (m.lockdown_value, &m.pairing_data)));
                     } else {
                         warn!("[pfa] CB_B needs decrypt but CB_A is missing — cannot derive key");
                     }
@@ -624,9 +622,7 @@ impl NandSkeleton {
                     info!("[pfa] CB (single) has no metadata — decrypting with 1BL key");
                     cb.decrypt(&ONEBL_KEY);
                     cb.populate_metadata_unchecked();
-                    info!("[pfa] Skeleton CB decrypted, meta: {:?}", cb.metadata.as_ref().map(|m| (m.ldv, &m.pairing_data)));
-                    // Note: input_ldv_cb should already be set from input NAND in from_nand_image()
-                    // Do NOT overwrite it here with the skeleton's LDV
+                    info!("[pfa] CB decrypted, meta: {:?}", cb.metadata.as_ref().map(|m| (m.lockdown_value, &m.pairing_data)));
                 }
             }
 
@@ -688,13 +684,11 @@ impl NandSkeleton {
             if let Some(ref mut cb_b) = self.bootloaders.cb_b {
                 if let Some(ref mut meta) = cb_b.metadata {
                     info!("[pfa] Syncing LDV {} -> CB_B (was {})", ldv, meta.lockdown_value);
-                    meta.ldv = ldv;
                     meta.lockdown_value = ldv;
                 }
             } else if let Some(ref mut cb) = self.bootloaders.cb {
                 if let Some(ref mut meta) = cb.metadata {
                     info!("[pfa] Syncing LDV {} -> CB (was {})", ldv, meta.lockdown_value);
-                    meta.ldv = ldv;
                     meta.lockdown_value = ldv;
                 }
             }

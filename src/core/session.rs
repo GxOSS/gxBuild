@@ -133,7 +133,6 @@ mod tests {
             data: vec![0; 0x3B0],
             derived_key: None,
             metadata: Some(CbMetadata {
-                ldv,
                 b_flags: 0,
                 pairing_data: pairing,
                 lockdown_value: ldv,
@@ -196,7 +195,6 @@ mod tests {
 
         assert_eq!(cb_meta.pairing_data, [0x12, 0x34, 0x56]);
         assert_eq!(cb_meta.lockdown_value, 7);
-        assert_eq!(cb_meta.ldv, 7);
 
         assert_eq!(cf_meta.pairing_data, [0x12, 0x34, 0x56]);
         assert_eq!(cf_meta.lockdown_value, 2);
@@ -366,7 +364,6 @@ impl Session {
             if let Some(ref mut meta) = cb.metadata {
                 meta.pairing_data = pairing;
                 meta.lockdown_value = cb_ldv;
-                meta.ldv = cb_ldv;
                 cb.sync_metadata();
             }
         }
@@ -375,7 +372,6 @@ impl Session {
             if let Some(ref mut meta) = cb.metadata {
                 meta.pairing_data = pairing;
                 meta.lockdown_value = cb_ldv;
-                meta.ldv = cb_ldv;
                 cb.sync_metadata();
             }
         }
@@ -384,7 +380,6 @@ impl Session {
             if let Some(ref mut meta) = cb.metadata {
                 meta.pairing_data = pairing;
                 meta.lockdown_value = cb_ldv;
-                meta.ldv = cb_ldv;
                 cb.sync_metadata();
             }
         }
