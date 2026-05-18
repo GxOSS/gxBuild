@@ -610,7 +610,9 @@ impl NandSkeleton {
                             cb_b.decrypt_v1(&cb_a_key, &cpukey);
                         }
                         cb_b.populate_metadata_unchecked();
-                        info!("[pfa] CB_B decrypted, meta: {:?}", cb_b.metadata.as_ref().map(|m| (m.ldv, &m.pairing_data)));
+                        info!("[pfa] Skeleton CB_B decrypted, meta: {:?}", cb_b.metadata.as_ref().map(|m| (m.ldv, &m.pairing_data)));
+                        // Note: input_ldv_cb should already be set from input NAND in from_nand_image()
+                        // Do NOT overwrite it here with the skeleton's LDV
                     } else {
                         warn!("[pfa] CB_B needs decrypt but CB_A is missing — cannot derive key");
                     }
@@ -622,7 +624,9 @@ impl NandSkeleton {
                     info!("[pfa] CB (single) has no metadata — decrypting with 1BL key");
                     cb.decrypt(&ONEBL_KEY);
                     cb.populate_metadata_unchecked();
-                    info!("[pfa] CB decrypted, meta: {:?}", cb.metadata.as_ref().map(|m| (m.ldv, &m.pairing_data)));
+                    info!("[pfa] Skeleton CB decrypted, meta: {:?}", cb.metadata.as_ref().map(|m| (m.ldv, &m.pairing_data)));
+                    // Note: input_ldv_cb should already be set from input NAND in from_nand_image()
+                    // Do NOT overwrite it here with the skeleton's LDV
                 }
             }
 
@@ -927,14 +931,22 @@ impl NandSkeleton {
         let mut input_pd = None;
 
         if let Some(cb_b) = bl_mut.cb_b.as_ref() {
+            info!("[builder] Input CB_B: data_len={}, metadata={}", cb_b.data.len(), cb_b.metadata.is_some());
             if let Some(meta) = &cb_b.metadata {
                 input_ldv_cb = Some(meta.lockdown_value);
                 input_pd = Some(meta.pairing_data);
+                info!("[builder] Captured input CB_B LDV={}", meta.lockdown_value);
+            } else {
+                warn!("[builder] Input CB_B metadata is None after decryption!");
             }
         } else if let Some(cb) = bl_mut.cb.as_ref() {
+            info!("[builder] Input CB (single): data_len={}, metadata={}", cb.data.len(), cb.metadata.is_some());
             if let Some(meta) = &cb.metadata {
                 input_ldv_cb = Some(meta.lockdown_value);
                 input_pd = Some(meta.pairing_data);
+                info!("[builder] Captured input CB LDV={}", meta.lockdown_value);
+            } else {
+                warn!("[builder] Input CB metadata is None after decryption!");
             }
         }
 

@@ -216,9 +216,36 @@ pub fn decrypt_chain(
             info!("[builder] CB_A new crypto (flags & 0x1000): using decrypt_v2 for CB_B");
             cb_b_bl.decrypt_v2(&cb.header, &cb_key, _cpukey);
         } else {
+            info!("[builder] Using decrypt_v1 for CB_B");
             cb_b_bl.decrypt_v1(&cb_key, _cpukey);
         }
+        // Debug: Print first 0x30 bytes of decrypted CB_B to find LDV
+        if cb_b_bl.data.len() >= 0x30 {
+            info!("[builder] CB_B decrypted data[0x00..0x10]: {:02x?}", &cb_b_bl.data[0x00..0x10]);
+            info!("[builder] CB_B decrypted data[0x10..0x20]: {:02x?}", &cb_b_bl.data[0x10..0x20]);
+            info!("[builder] CB_B decrypted data[0x20..0x30]: {:02x?}", &cb_b_bl.data[0x20..0x30]);
+            info!(
+                "[builder] CB_B byte at 0x03: {}, 0x13: {}, 0x23: {}",
+                cb_b_bl.data.get(0x03).copied().unwrap_or(0),
+                cb_b_bl.data.get(0x13).copied().unwrap_or(0),
+                cb_b_bl.data.get(0x23).copied().unwrap_or(0)
+            );
+        }
         cb_b_bl.populate_metadata_unchecked();
+        // J-Runner behavior: CB_A's LDV is authoritative for the entire CB chain
+        // Override CB_B's LDV with CB_A's LDV if CB_A has valid metadata
+        if let (Some(ref mut cb_b_meta), Some(ref cb_a_meta)) = (&mut cb_b_bl.metadata, &cb.metadata) {
+            let cb_a_ldv = cb_a_meta.lockdown_value;
+            if cb_a_ldv != cb_b_meta.lockdown_value {
+                info!("[builder] CB_B LDV override: {} -> {} (from CB_A)", cb_b_meta.lockdown_value, cb_a_ldv);
+                cb_b_meta.lockdown_value = cb_a_ldv;
+            }
+        }
+        if let Some(ref meta) = cb_b_bl.metadata {
+            info!("[builder] CB_B metadata populated: LDV={}, PD={:02x?}", meta.lockdown_value, meta.pairing_data);
+        } else {
+            log::warn!("[builder] CB_B metadata is None after populate_metadata_unchecked!");
+        }
         cb_b_bl.derived_key()
     } else {
         cb_key
