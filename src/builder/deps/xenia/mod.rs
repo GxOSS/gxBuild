@@ -1,3 +1,24 @@
+/*
+    xenia/mod.rs - Handling of Xenia LZX Delta
+    Copyright 2024 Emma https://ipg.gay/
+
+    Modified in 2026 by Exposure / Zach for gxBuild
+
+    This file has been taken from xenon-bltool and modified, and therefore retains the original
+    License.
+
+    xenon-bltool is free software: you can redistribute it and/or modify it under the terms of
+    the GNU General Public License as published by the Free Software Foundation, version 2 of
+    the License.
+
+    xenon-bltool is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+    without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+    See the GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along with xenon-bltool.
+    If not, see <https://www.gnu.org/licenses/>.
+*/
+
 #[repr(C)]
 #[derive(
     zerocopy::FromBytes,
