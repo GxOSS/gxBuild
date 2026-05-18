@@ -68,6 +68,20 @@ pub struct BuildIniEntry {
     pub chain: u8,
 }
 
+/// Strips leading relative-path indicators (`..\`, `../`, `.\`, `./`) and any
+/// directory components from a FlashFS asset name. xeBuild INIs commonly
+/// prefix flashfs assets with `..\` to point at the build folder; that hint
+/// must not be persisted into the on-NAND 0x16-byte filename field.
+pub fn strip_flashfs_path_indicator(name: &str) -> String {
+    let trimmed = name.trim();
+    // Take the last component after splitting on both Windows and Unix separators.
+    trimmed
+        .rsplit(|c| c == '\\' || c == '/')
+        .next()
+        .unwrap_or(trimmed)
+        .to_string()
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct JtagConfig {
     pub syscall: Option<u16>,
@@ -196,7 +210,13 @@ pub fn parse_xe_ini_str(content: &str, target_section: &str, filename_hint: Opti
                 expected_hash = hash_storage.as_deref();
             }
 
-            flashfs_entries.push(resolve(&filename, expected_hash, 0)?);
+            // FlashFS entry names live in a flat 0x16-byte field on-NAND; strip any
+            // path indicator (e.g. "..\launch.xex" → "launch.xex"). The filesearch
+            // tier already probes build/, build/flashfs/, and data/ by basename, so
+            // the "..\" hint is redundant for disk discovery.
+            let stripped = strip_flashfs_path_indicator(&filename);
+
+            flashfs_entries.push(resolve(&stripped, expected_hash, 0)?);
         }
     }
 
@@ -486,11 +506,24 @@ cba_9188.bin = 00000000
         ";
         let parsed = parse_xe_ini_str(content, "trinity", None).unwrap();
         assert_eq!(parsed.flashfs.len(), 3);
-        assert_eq!(parsed.flashfs[0].filename, "..\\launch.xex");
+        // The "..\\" path indicator must be stripped: only the basename is
+        // stored, since the on-NAND FlashFS entry is a flat 0x16-byte name.
+        assert_eq!(parsed.flashfs[0].filename, "launch.xex");
         assert_eq!(parsed.flashfs[0].hash, None);
-        assert_eq!(parsed.flashfs[1].filename, "..\\lhelper.xex");
+        assert_eq!(parsed.flashfs[1].filename, "lhelper.xex");
         assert_eq!(parsed.flashfs[1].hash, None);
-        assert_eq!(parsed.flashfs[2].filename, "..\\launch.ini");
+        assert_eq!(parsed.flashfs[2].filename, "launch.ini");
         assert_eq!(parsed.flashfs[2].hash, None);
+    }
+
+    #[test]
+    fn strip_flashfs_path_indicator_handles_common_forms() {
+        assert_eq!(strip_flashfs_path_indicator("..\\launch.xex"), "launch.xex");
+        assert_eq!(strip_flashfs_path_indicator("../launch.xex"), "launch.xex");
+        assert_eq!(strip_flashfs_path_indicator(".\\launch.xex"), "launch.xex");
+        assert_eq!(strip_flashfs_path_indicator("./launch.xex"), "launch.xex");
+        assert_eq!(strip_flashfs_path_indicator("foo\\bar\\launch.xex"), "launch.xex");
+        assert_eq!(strip_flashfs_path_indicator("launch.xex"), "launch.xex");
+        assert_eq!(strip_flashfs_path_indicator("  ..\\launch.xex  "), "launch.xex");
     }
 }
