@@ -112,13 +112,21 @@ impl BootloaderCb {
             return;
         }
 
-        // Mappings (+0x10 from RGBuild DecryptedData offsets)
-        // Absolute 0x20 = self.data[0x10]
-        let mut pairing_data: [u8; 3] = self.data[0x10..0x13].try_into().unwrap();
+        // J-Runner reads per-box data from decrypted CB_B:
+        // - Pairing data: cb_dec[0x20..0x22] (3 bytes, reversed)
+        // - LDV: cb_dec[0x3B1] (only if <= 16)
+        // Since self.data starts at cb_dec[0x10], we adjust:
+        // - self.data[0x10..0x13] = cb_dec[0x20..0x22] (pairing data)
+        // - self.data[0x3A1] = cb_dec[0x3B1] (LDV)
+        let pd_raw: [u8; 3] = self.data[0x10..0x13].try_into().unwrap();
+        info!("[cb] PD raw bytes at self.data[0x10..0x13]: {:02x?}", pd_raw);
+        let mut pairing_data = pd_raw;
         pairing_data.reverse(); // J-Runner reverses the 3 bytes
 
-        // Absolute 0x23 = self.data[0x13]
-        let mut lockdown_value = self.data[0x13];
+        // Read LDV from offset 0x3A1 (cb_dec[0x3B1] in J-Runner terms)
+        let ldv_raw = self.data.get(0x3A1).copied().unwrap_or(0);
+        let mut lockdown_value = if ldv_raw <= 16 { ldv_raw } else { 0 };
+        info!("[cb] populate_metadata: PD={:02x?} LDV={} (raw={} at self.data[0x3A1])", pairing_data, lockdown_value, ldv_raw);
 
         // J-Runner check: if bootloader starts with specific branch, LDV is 0
         // cb_dec[0x02] and cb_dec[0x03] correspond to the version field in the header.
@@ -320,7 +328,6 @@ impl BootloaderCb {
         }
 
         // Derive RC4 key from 1BL key and the bootloader's key field.
-        // Matches xenon-bltool's cb_decrypt: writes derived key back into data[0..16] in-place.
         if let Ok(derived_key) = excrypt::hmac_sha(onebl_key, &[&self.data[0..16]]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
@@ -402,7 +409,7 @@ impl BootloaderCb {
         // Note: populate_metadata_unchecked is NOT called here intentionally.
     }
 
-    pub fn decrypt_v2(&mut self, cb_a_hdr: &BootloaderHeader, cb_a_key: &[u8; 16], cpu_key: &[u8; 16]) {
+    pub fn decrypt_v2(&mut self, _cb_a_hdr: &BootloaderHeader, cb_a_key: &[u8; 16], cpu_key: &[u8; 16]) {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = size_aligned as usize - 0x10;
@@ -411,17 +418,31 @@ impl BootloaderCb {
             return;
         }
 
-        let mut cb_a_hdr_copy = cb_a_hdr.clone();
-        cb_a_hdr_copy.flags.set(0);
+        // Build HMAC input for v2 crypto: nonce + cpu_key + cb_b_payload_start (with flags cleared)
+        // Per RGBuildPP: nonce[0x30] = {cb_b_nonce[0x10], cpu_key[0x10], cb_b_data[0x10]}
+        // Then clear flags at offset 0x26/0x27 (which is offset 0x6/0x7 in the cb_b_data portion)
+        let mut cb_b_data_copy: [u8; 16] = self.data[0..16].try_into().unwrap();
+        cb_b_data_copy[0x6] = 0;  // Clear flags low byte
+        cb_b_data_copy[0x7] = 0;  // Clear flags high byte
 
-        if let Ok(derived_key) = excrypt::hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key, &IntoBytes::as_bytes(&cb_a_hdr_copy)[..0x10]]) {
-            let mut decrypt_key = [0u8; 16];
-            decrypt_key.copy_from_slice(&derived_key[..16]);
-            self.derived_key = Some(decrypt_key);
+        match excrypt::hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key, &cb_b_data_copy]) {
+            Ok(derived_key) => {
+                let mut decrypt_key = [0u8; 16];
+                decrypt_key.copy_from_slice(&derived_key[..16]);
+                self.derived_key = Some(decrypt_key);
+                info!("[cb] CB_B v2 key derived successfully");
 
-            if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
-                let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
+                match Rc4::new(&decrypt_key) {
+                    Ok(mut rc4) => {
+                        match rc4.crypt(&mut self.data[0x10..payload_len]) {
+                            Ok(_) => info!("[cb] CB_B v2 RC4 decryption successful"),
+                            Err(e) => log::warn!("[cb] CB_B v2 RC4 decryption failed: {}", e),
+                        }
+                    }
+                    Err(e) => log::warn!("[cb] CB_B v2 RC4 init failed: {}", e),
+                }
             }
+            Err(e) => log::warn!("[cb] CB_B v2 key derivation failed: {}", e),
         }
     }
     /// Returns the 16-byte value at `data[0..16]`.

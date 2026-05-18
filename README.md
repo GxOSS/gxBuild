@@ -11,8 +11,6 @@ gxBuild is a Xbox 360 image builder and patcher. Features full nand, xell and sh
 
 Based on [x360utils](https://github.com/Swizzy/x360Utils), [xenon-bltool](https://github.com/InvoxiPlayGames/xenon-bltool), and [RGBuildPP](https://github.com/emoose/RGBuildPP). Releases are licensed under the GPL v2 (inherited from xenon-bltool).
 
-## Features
-
 | Feature | gxBuild | xeBuild | RGBuild |
 | ------- | ------- | ------- | ------- |
 | Retail | ✅ | ✅ | ❌ |
@@ -81,13 +79,18 @@ cargo build --release --features cli
 
 ## License
 
-gxBuild is multi-licensed, distributed under the GPL v2.
+gxBuild is multi-licensed, distributed under the GPL version 2.
 
-Original code by ExposureMG is for the public domain.
-x360utils is licensed under the unlicense (Permissive).
+Original gxBuild code is Zlib.
+
+x360utils is licensed under the unlicense.
+
 xenon-bltool is licensed under the GPL v2.
+
 libmspack is relicensed as GPL v2.
+
 ExCrypt is licensed under the BSD 3-Clause License.
+
 Xenia is licensed under the BSD 3-Clause License.
 
 All code taken from other projects has been properly attributed in the header.
