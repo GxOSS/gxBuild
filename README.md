@@ -7,24 +7,20 @@
 
 ![gxBuild Colour Transparent Banner](assets/gx_banner_colour_trans.png)
 
-gxBuild is a Xbox 360 image builder and patcher. Features full nand, xell and shadowboot parsing, patching and building. Stays as close to xeBuild as possible, with a few changes. 
+gxBuild is a Xbox 360 image builder and patcher.
 
 Based on [x360utils](https://github.com/Swizzy/x360Utils), [xenon-bltool](https://github.com/InvoxiPlayGames/xenon-bltool), and [RGBuildPP](https://github.com/emoose/RGBuildPP). Releases are licensed under the GPL v2 (inherited from xenon-bltool).
 
-| Feature | gxBuild | xeBuild | RGBuild |
-| ------- | ------- | ------- | ------- |
-| Retail | ✅ | ✅ | ❌ |
-| Devkit | ✅ | ✅ | ❌ |
-| DevGL | ✅ | ✅ | ❌ |
-| RGLoader | ✅ | ❌ | ✅ |
-| XDKBuild | ✅ | - | ❌ |
-| Glitch3 | ✅ | ❌ | ❌ |
-| SMC Patcher | ✅ | ❌ | ❌ |
-| KV Patcher | ✅ | ✅ | ✅ |
-| RGLP | - | ❌ | ✅ |
-| API | ✅ | ❌ | ❌ |
-| Wireless | ❌ | ✅ | ❌ |
-| UI Editor | ✅ | ❌ | ✅ |
+
+## Features
+
+- Mostly compatible with xeBuild
+- NAND, Shadowboot and XeLL support
+- JTAG and Glitch Images
+- RGBuild / XDKBuild Images
+- Devkit / DevGL Images
+- Full Scripting support and Interactive Shell
+- XEPATCH, GXS2, and JSON Signature Patches
 
 ## Documentation
 
@@ -39,11 +35,6 @@ Coming Soon
 ## Testing
 
 ✓ = Tested Working
-
-- = Builds correctly
-
-× = Does not built correctly
-
 
 | Platform | Retail Single | Retail Split | ArgonData | AudClamp | RJTAG | Glitch1 | Glitch2 | Glitch3 | Glitch2.3 | XDKBuild | RGBuild |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | 
@@ -65,16 +56,34 @@ The project is fully setup with [Interoptopus](https://github.com/ralfbiedert/in
 
 ### Building
 
-Build gxBuild default (FFI Only)
+Default (CLI, FFI, Rhai)
 
 ```bash
 cargo build --release
 ```
 
-Build gxBuild with CLI
+CLI Only
 
 ```bash
-cargo build --release --features cli
+cargo build --no-default-features --features cli
+```
+
+FFI Only
+
+```bash
+cargo build --no-default-features --features ffi
+```
+
+CLI + Rhai Scripting
+
+```bash
+cargo build --no-default-features --features cli,rhai
+```
+
+FFI + Rhai Scripting
+
+```bash
+cargo build --no-default-features --features ffi,rhai
 ```
 
 ## License
