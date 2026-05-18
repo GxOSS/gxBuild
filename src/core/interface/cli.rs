@@ -22,12 +22,14 @@
 
 #![cfg(feature = "cli")]
 
+#[cfg(feature = "rhai")]
 use crate::core::interface::gxscript::GxScriptEngine;
 use crate::core::logger;
 use crate::core::session::{InternalCommand, Session};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use log::{error, info, warn};
 use std::path::PathBuf;
+#[cfg(feature = "rhai")]
 use std::sync::{Arc, Mutex};
 
 /// xeBuild v1.21.810 clone - System image builder
@@ -128,10 +130,12 @@ pub struct GgxArgs {
     pub full_image: bool,
 
     /// Run a Rhai script file
+    #[cfg(feature = "rhai")]
     #[arg(long = "script")]
     pub script: Option<PathBuf>,
 
     /// Launch interactive Rhai shell
+    #[cfg(feature = "rhai")]
     #[arg(long = "shell")]
     pub shell: bool,
 }
@@ -269,6 +273,7 @@ pub fn ggx_cli() {
 
     if session_prepared {
         // --- Scripting & Shell Handlers ---
+        #[cfg(feature = "rhai")]
         if args.shell || args.script.is_some() {
             let session_ptr = Arc::new(Mutex::new(session));
             let mut script_engine = GxScriptEngine::new(session_ptr);
