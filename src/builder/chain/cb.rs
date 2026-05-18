@@ -194,22 +194,9 @@ impl BootloaderCb {
             pd_sync.reverse(); // Reverse back for storage
             self.data[0x10..0x13].copy_from_slice(&pd_sync);
             self.data[0x13] = meta.lockdown_value;
-            self.data[0x3A1] = meta.lockdown_value; // J-Runner display offset
 
             self.data[0x14..0x20].copy_from_slice(&meta.reserved_per_box);
             self.data[0x20..0x30].copy_from_slice(&meta.per_box_digest);
-
-            // If this is a combined CB (like CB_6750), it contains an embedded CB_B.
-            // External tools like J-Runner-with-Extras will decrypt the payload and read the LDV from CB_B.
-            // We must sync the metadata to the embedded CB_B as well.
-            if self.data.len() > 0x2400 && self.data[0x1FF0] == 0x43 && self.data[0x1FF1] == 0x42 {
-                self.data[0x2010..0x2013].copy_from_slice(&pd_sync);
-                self.data[0x2013] = meta.lockdown_value;
-                self.data[0x23B1] = meta.lockdown_value;
-                self.data[0x2014..0x2020].copy_from_slice(&meta.reserved_per_box);
-                self.data[0x2020..0x2030].copy_from_slice(&meta.per_box_digest);
-                info!("[pfa] Synchronized embedded CB_B metadata!");
-            }
 
             self.data[0x30..0x130].copy_from_slice(&meta.signature);
 
@@ -222,7 +209,24 @@ impl BootloaderCb {
             self.data[0x378..0x382].copy_from_slice(&meta.salt_3bl);
             self.data[0x382..0x38C].copy_from_slice(&meta.salt_4bl);
             self.data[0x38C..0x3A0].copy_from_slice(&meta.digest_4bl);
+
             self.data[0x3A0..0x3A4].copy_from_slice(&meta.console_allow);
+            self.data[0x3A1] = meta.lockdown_value;
+
+            if self.data.len() > 0x2400 && self.data[0x1FF0] == 0x43 && self.data[0x1FF1] == 0x42 {
+                self.data[0x2010..0x2013].copy_from_slice(&pd_sync);
+                self.data[0x2013] = meta.lockdown_value;
+                self.data[0x2014..0x2020].copy_from_slice(&meta.reserved_per_box);
+                self.data[0x2020..0x2030].copy_from_slice(&meta.per_box_digest);
+                if self.data.len() >= 0x23A4 {
+                    self.data[0x23A0..0x23A4].copy_from_slice(&meta.console_allow);
+                    self.data[0x23A1] = meta.lockdown_value;
+                }
+                if self.data.len() > 0x23B1 {
+                    self.data[0x23B1] = meta.lockdown_value;
+                }
+                info!("[pfa] Synchronized embedded CB_B metadata!");
+            }
         }
     }
 
