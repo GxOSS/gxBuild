@@ -1,0 +1,18 @@
+[committed]
+conventional_commits = true
+no_merge = true
+no_wip = true
+capitalized_subject = false
+
+allowed_types = [
+    "feat",
+    "fix",
+    "chore",
+    "ci",
+    "docs",
+    "style",
+    "refactor",
+    "perf",
+    "test",
+    "build",
+]
