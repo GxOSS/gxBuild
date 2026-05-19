@@ -1,0 +1,3 @@
+#!/bin/sh
+committed --commit-file "$1" --config "$(git rev-parse --show-toplevel)/committed.toml"
+
