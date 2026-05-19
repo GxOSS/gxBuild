@@ -1,8 +1,23 @@
 /*
-    signature.rs - Signature patching engine
-    
-    Created in 2026 by Exposure / Zach for gxBuild.
-    Licensed under GPLv2 (inherited from xenon-bltool).
+  signature.rs - Signature patching engine
+
+  Copyright (c) 2026 gxBuild Contributors and Developers
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
 */
 
 use log::{info, warn};
@@ -15,8 +30,7 @@ pub struct Signature {
 }
 
 impl Signature {
-    /// Creates a new Signature from hex strings. 
-    /// Use "??" or ".." for wildcards.
+    /// Creates Signature from hex strings.
     pub fn from_hex(name: Option<&str>, pattern_hex: &str, replacement_hex: &str) -> Result<Self, String> {
         let pattern = Self::parse_hex(pattern_hex)?;
         let replacement = Self::parse_hex(replacement_hex)?;
@@ -25,27 +39,23 @@ impl Signature {
             return Err(format!("Pattern and replacement lengths must match ({} vs {})", pattern.len(), replacement.len()));
         }
 
-        Ok(Self {
-            name: name.map(|s| s.to_string()),
-            pattern,
-            replacement,
-        })
+        Ok(Self { name: name.map(|s| s.to_string()), pattern, replacement })
     }
 
-    /// Parses a simple JSON-like map of "pattern": "replacement" and applies it to the data.
-    /// Does not require serde_json.
+    /// Parses a simple JSON-like map of "pattern": "replacement" and applies it to the data
     pub fn apply_batch(data: &mut [u8], json_str: &str) -> Result<usize, String> {
         let mut total_matches = 0;
-        
-        // Very basic JSON-subset parser for { "key": "value", ... }
+
         let content = json_str.trim().trim_start_matches('{').trim_end_matches('}');
         for pair in content.split(',') {
             let parts: Vec<&str> = pair.split(':').collect();
             if parts.len() == 2 {
                 let pattern_hex = parts[0].trim().trim_matches('"');
                 let replacement_hex = parts[1].trim().trim_matches('"');
-                
-                if pattern_hex.is_empty() || replacement_hex.is_empty() { continue; }
+
+                if pattern_hex.is_empty() || replacement_hex.is_empty() {
+                    continue;
+                }
 
                 match Self::from_hex(None, pattern_hex, replacement_hex) {
                     Ok(sig) => {
@@ -73,16 +83,14 @@ impl Signature {
             if chunk == "??" || chunk == ".." {
                 out.push(None);
             } else {
-                let byte = u8::from_str_radix(chunk, 16)
-                    .map_err(|e| format!("Invalid hex byte '{}': {}", chunk, e))?;
+                let byte = u8::from_str_radix(chunk, 16).map_err(|e| format!("Invalid hex byte '{}': {}", chunk, e))?;
                 out.push(Some(byte));
             }
         }
         Ok(out)
     }
 
-    /// Scans the data and applies the patch to ALL matches.
-    /// Returns the number of matches found and patched.
+    /// Scans the data and applies the patch to ALL matches
     pub fn apply(&self, data: &mut [u8]) -> usize {
         if data.len() < self.pattern.len() {
             return 0;
@@ -90,16 +98,15 @@ impl Signature {
 
         let mut matches = 0;
         let mut i = 0;
-        
+
         while i <= data.len() - self.pattern.len() {
             if self.matches_at(data, i) {
                 self.patch_at(data, i);
                 matches += 1;
-                
+
                 let log_name = self.name.as_deref().unwrap_or("unnamed");
                 info!("[signature] Applied patch '{}' at offset 0x{:04X}", log_name, i);
-                
-                // Move ahead to avoid overlapping matches of the same signature
+
                 i += self.pattern.len();
             } else {
                 i += 1;
@@ -137,7 +144,7 @@ mod tests {
     fn test_signature_basic() {
         let sig = Signature::from_hex(Some("test"), "AA ?? CC", "00 ?? 11").unwrap();
         let mut data = vec![0xBB, 0xAA, 0x22, 0xCC, 0xDD];
-        
+
         let count = sig.apply(&mut data);
         assert_eq!(count, 1);
         assert_eq!(data, vec![0xBB, 0x00, 0x22, 0x11, 0xDD]);

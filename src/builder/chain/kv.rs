@@ -1,28 +1,41 @@
 /*
-    kv.rs - Handling for Xbox 360 Keyvault (KV).
+  kv.rs - Handling for Xbox 360 Keyvault (KV).
 
-    Modified for GGX by Exposure / Zach
+  Copyright (c) 2026 gxBuild Contributors and Developers
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
 */
 
-use zerocopy::FromBytes;
-use zerocopy::byteorder::{U16, BigEndian};
 use crate::builder::deps::excrypt::{self, Rc4};
 use log::{info, warn};
+use zerocopy::byteorder::{BigEndian, U16};
+use zerocopy::FromBytes;
 
-/// Keyvault record header - covers the first 0x110 bytes.
-/// All offsets confirmed against J-Runner Nand.cs lines 674-682.
-/// Fields beyond 0x110 (console_id @ 0x9CA, osig @ 0xC92, mfdate @ 0x9E4)
-/// live far outside this struct and are accessed via sparse accessors below.
+/// Keyvault record header
 #[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy, Debug)]
 #[repr(C)]
 pub struct KeyvaultRecord {
-    pub hmac: [u8; 0x10],           // 0x000 - HMAC-SHA1 nonce (RC4 seed)
-    pub unused0: [u8; 0x0C],        // 0x010
-    pub version: U16<BigEndian>,    // 0x01C
-    pub unused1: [u8; 0x92],        // 0x01E..0x0B0
-    pub serial: [u8; 12],           // 0x0B0 - Console serial number (ASCII)
-    pub unused2: [u8; 0x50],        // 0x0BC..0x10C
-    pub dvd_key: [u8; 16],          // 0x100 - DVD encryption key
+    pub hmac: [u8; 0x10], // HMAC-SHA1 nonce (RC4 seed)
+    pub unused0: [u8; 0x0C],
+    pub version: U16<BigEndian>,
+    pub unused1: [u8; 0x92],
+    pub serial: [u8; 12], // Console serial number (ASCII)
+    pub unused2: [u8; 0x50],
+    pub dvd_key: [u8; 16], // DVD encryption key
 }
 
 #[derive(Clone, Debug)]
@@ -48,14 +61,14 @@ pub struct Keyvault {
 }
 
 // Offsets for Keyvault patching (including 16-byte HMAC header)
-pub const OFFSET_REGION: usize = 0xC8;      // 2 bytes (Big Endian)
-pub const OFFSET_SERIAL: usize = 0xB0;      // 12 bytes (ASCIIString)
-pub const OFFSET_DVD_KEY: usize = 0x100;    // 16 bytes (Binary)
+pub const OFFSET_REGION: usize = 0xC8; // 2 bytes (Big Endian)
+pub const OFFSET_SERIAL: usize = 0xB0; // 12 bytes (ASCIIString)
+pub const OFFSET_DVD_KEY: usize = 0x100; // 16 bytes (Binary)
 pub const OFFSET_CONSOLE_ID: usize = 0x9CA; // 5 bytes (Binary)
-pub const OFFSET_MF_DATE: usize = 0x9E4;    // 8 bytes (ASCIIString)
+pub const OFFSET_MF_DATE: usize = 0x9E4; // 8 bytes (ASCIIString)
 pub const OFFSET_DRIVE_INQUIRY: usize = 0xC8A; // 40 bytes (Binary)
-pub const OFFSET_OSIG_STR: usize = 0xC92;   // 32 bytes (ASCIIString, inside Inquiry)
-pub const OFFSET_FCRT_FLAG: usize = 0x1C;   // 2 bytes (Hardware Flags u16 BE) - J-Runner updatekvval() L684
+pub const OFFSET_OSIG_STR: usize = 0xC92; // 32 bytes (ASCIIString, inside Inquiry)
+pub const OFFSET_FCRT_FLAG: usize = 0x1C; // 2 bytes (Hardware Flags u16 BE) - J-Runner updatekvval() L684
 
 impl Keyvault {
     pub const SIZE: usize = 0x4000;
@@ -64,13 +77,8 @@ impl Keyvault {
         if data.len() < Self::SIZE {
             return Err(format!("Keyvault data too small: {} bytes (expected {})", data.len(), Self::SIZE));
         }
-        let mut kv = Self {
-            data: data[..Self::SIZE].to_vec(),
-            is_decrypted: false,
-            hashed: false,
-            metadata: None,
-        };
-        
+        let mut kv = Self { data: data[..Self::SIZE].to_vec(), is_decrypted: false, hashed: false, metadata: None };
+
         // Automatic detection of pre-decrypted Keyvaults
         if kv.check_decrypted_signatures() {
             info!("[builder] Pre-decrypted Keyvault detected via signatures.");
@@ -98,9 +106,9 @@ impl Keyvault {
 
         let meta = KeyvaultMetadata {
             serial: self.get_serial(),
-            region: u16::from_be_bytes(self.data[OFFSET_REGION..OFFSET_REGION+2].try_into().unwrap()),
-            dvd_key: self.data[OFFSET_DVD_KEY..OFFSET_DVD_KEY+16].try_into().unwrap(),
-            console_id: self.data[OFFSET_CONSOLE_ID..OFFSET_CONSOLE_ID+5].try_into().unwrap(),
+            region: u16::from_be_bytes(self.data[OFFSET_REGION..OFFSET_REGION + 2].try_into().unwrap()),
+            dvd_key: self.data[OFFSET_DVD_KEY..OFFSET_DVD_KEY + 16].try_into().unwrap(),
+            console_id: self.data[OFFSET_CONSOLE_ID..OFFSET_CONSOLE_ID + 5].try_into().unwrap(),
             mf_date: self.get_mf_date(),
             osig: self.get_osig(),
             fcrt: (flags & 0x120) != 0,
@@ -114,21 +122,19 @@ impl Keyvault {
     }
 
     /// Detects if the data is already decrypted.
-    /// Primary check: J-Runner updatekvval() L669 - `data[0x40..0x60]` are all zeros in decrypted KVs.
-    /// Fallback: look for OSIG/DRM ASCII magic at their known certificate offsets.
     fn check_decrypted_signatures(&self) -> bool {
-        if self.data.len() < 0x60 { return false; }
+        if self.data.len() < 0x60 {
+            return false;
+        }
 
-        // Canonical zero-pad check (J-Runner / x360Utils): decrypted KVs always have
-        // zeros at 0x40..0x60 (the reserved pad region after the HMAC nonce and header).
         if self.data[0x40..0x60].iter().all(|&b| b == 0x00) {
             return true;
         }
 
-        // Fallback: ASCII magic at known decrypted offsets
+        // Fallback ASCII magic at known decrypted offsets
         if self.data.len() >= 0x2000 {
-            let osig_sig = &self.data[0xC82..0xC86];  // "OSIG"
-            let drm_sig  = &self.data[0x1F64..0x1F67]; // "DRM"
+            let osig_sig = &self.data[0xC82..0xC86]; // "OSIG"
+            let drm_sig = &self.data[0x1F64..0x1F67]; // "DRM"
             return (osig_sig == b"OSIG") || (drm_sig == b"DRM");
         }
 
@@ -149,32 +155,31 @@ impl Keyvault {
         // 1. Try KV1 Decryption
         self.hashed = false;
         let mut kv1_data = self.data.clone();
-        
+
         let mut nonce = [0u8; 16];
         nonce.copy_from_slice(&kv1_data[..0x10]);
-        let hmac_res = excrypt::hmac_sha(cpukey, &[&nonce])
-            .map_err(|e| format!("KV key derivation failed: {}", e))?;
-        
+        let hmac_res = excrypt::hmac_sha(cpukey, &[&nonce]).map_err(|e| format!("KV key derivation failed: {}", e))?;
+
         let mut decrypt_key = [0u8; 16];
         decrypt_key.copy_from_slice(&hmac_res[..16]);
 
-        let mut rc4 = Rc4::new(&decrypt_key)
-            .map_err(|e| format!("RC4 init failed: {}", e))?;
-        rc4.crypt(&mut kv1_data[0x10..])
-            .map_err(|e| format!("Decryption failed: {}", e))?;
+        let mut rc4 = Rc4::new(&decrypt_key).map_err(|e| format!("RC4 init failed: {}", e))?;
+        rc4.crypt(&mut kv1_data[0x10..]).map_err(|e| format!("Decryption failed: {}", e))?;
 
         // 2. Check if KV1 was correct
         let kv1_valid = {
             let temp_kv = Keyvault { data: kv1_data.clone(), ..self.clone() };
             temp_kv.check_decrypted_signatures()
         };
-        
+
         let kv1_looks_like_type2 = if kv1_valid {
             let sig_region = &kv1_data[0x1DF8..0x1E00];
             let all_ff = sig_region.iter().all(|&b| b == 0xFF);
             let all_00 = sig_region.iter().all(|&b| b == 0x00);
             !(all_ff || all_00)
-        } else { false };
+        } else {
+            false
+        };
 
         if kv1_valid && !kv1_looks_like_type2 {
             info!("[builder] Keyvault decrypted as Type 1 (Retail).");
@@ -188,16 +193,13 @@ impl Keyvault {
         // 3. Try KV2 Fallback
         info!("[builder] KV1 decryption invalid or Type 2 signature found. Attempting KV2 (hashed) decryption...");
         let mut kv2_data = original_data.clone();
-        
-        let hmac_res_v2 = excrypt::hmac_sha(cpukey, &[&hmac_res[..16]])
-            .map_err(|e| format!("KV2 double-HMAC failed: {}", e))?;
+
+        let hmac_res_v2 = excrypt::hmac_sha(cpukey, &[&hmac_res[..16]]).map_err(|e| format!("KV2 double-HMAC failed: {}", e))?;
         let mut fallback_key = [0u8; 16];
         fallback_key.copy_from_slice(&hmac_res_v2[..16]);
-        
-        let mut rc4_v2 = Rc4::new(&fallback_key)
-            .map_err(|e| format!("RC4 init failed: {}", e))?;
-        rc4_v2.crypt(&mut kv2_data[0x10..])
-            .map_err(|e| format!("Decryption failed: {}", e))?;
+
+        let mut rc4_v2 = Rc4::new(&fallback_key).map_err(|e| format!("RC4 init failed: {}", e))?;
+        rc4_v2.crypt(&mut kv2_data[0x10..]).map_err(|e| format!("Decryption failed: {}", e))?;
 
         if {
             let temp_kv = Keyvault { data: kv2_data.clone(), ..self.clone() };
@@ -233,37 +235,30 @@ impl Keyvault {
             // KV2 / Hashed Encryption (J-Runner Style)
             let mut message = self.data[0x10..].to_vec();
             message.extend_from_slice(&[0x07, 0x12]); // KV2 secret
-            
-            let salt = excrypt::hmac_sha(cpukey, &[&message])
-                .map_err(|e| format!("KV2 salt derivation failed: {}", e))?;
-            
-            let final_key = excrypt::hmac_sha(cpukey, &[&salt[..16]])
-                .map_err(|e| format!("KV2 key derivation failed: {}", e))?;
-            
-            let mut rc4 = Rc4::new(&final_key[..16])
-                .map_err(|e| format!("RC4 init failed: {}", e))?;
-            
-            rc4.crypt(&mut self.data[0x10..])
-                .map_err(|e| format!("Encryption failed: {}", e))?;
-            
+
+            let salt = excrypt::hmac_sha(cpukey, &[&message]).map_err(|e| format!("KV2 salt derivation failed: {}", e))?;
+
+            let final_key = excrypt::hmac_sha(cpukey, &[&salt[..16]]).map_err(|e| format!("KV2 key derivation failed: {}", e))?;
+
+            let mut rc4 = Rc4::new(&final_key[..16]).map_err(|e| format!("RC4 init failed: {}", e))?;
+
+            rc4.crypt(&mut self.data[0x10..]).map_err(|e| format!("Encryption failed: {}", e))?;
+
             self.data[..16].copy_from_slice(&salt[..16]);
         } else {
             // KV1 / Standard Encryption
             let mut nonce = [0u8; 16];
             nonce.copy_from_slice(&self.data[..0x10]);
-            let hmac_res = excrypt::hmac_sha(cpukey, &[&nonce])
-                .map_err(|e| format!("Key derivation failed: {}", e))?;
-            let mut rc4 = Rc4::new(&hmac_res[..16])
-                .map_err(|e| format!("RC4 init failed: {}", e))?;
-            rc4.crypt(&mut self.data[0x10..])
-                .map_err(|e| format!("Encryption failed: {}", e))?;
+            let hmac_res = excrypt::hmac_sha(cpukey, &[&nonce]).map_err(|e| format!("Key derivation failed: {}", e))?;
+            let mut rc4 = Rc4::new(&hmac_res[..16]).map_err(|e| format!("RC4 init failed: {}", e))?;
+            rc4.crypt(&mut self.data[0x10..]).map_err(|e| format!("Encryption failed: {}", e))?;
         }
 
         self.is_decrypted = false;
+        self.metadata = None;
         Ok(())
     }
 
-    /// Provides a view of the record header at the start of the KV.
     pub fn get_record(&self) -> Result<KeyvaultRecord, String> {
         KeyvaultRecord::read_from_prefix(&self.data)
             .map(|(r, _)| r)
@@ -271,7 +266,7 @@ impl Keyvault {
     }
 
     // High-level accessors for sparse fields not in the Record struct yet
-    
+
     pub fn get_serial(&self) -> String {
         let start = 0xB0;
         let end = start + 12;
@@ -296,7 +291,9 @@ impl Keyvault {
 
     pub fn get_kv_type(&self) -> u8 {
         // J-Runner Nand.cs:679 - Check 0x1DF8 (XEKEY_SPECIAL_KEYVAULT_SIGNATURE)
-        if self.data.len() < 0x1E00 { return 1; }
+        if self.data.len() < 0x1E00 {
+            return 1;
+        }
         let sig_region = &self.data[0x1DF8..0x1E00];
         if sig_region.iter().all(|&b| b == 0xFF || b == 0x00) {
             1
@@ -337,7 +334,7 @@ impl Keyvault {
     pub fn set_region(&mut self, region_code: u16) -> Result<(), String> {
         self.ensure_decrypted()?;
         let bytes = region_code.to_be_bytes();
-        self.data[OFFSET_REGION..OFFSET_REGION+2].copy_from_slice(&bytes);
+        self.data[OFFSET_REGION..OFFSET_REGION + 2].copy_from_slice(&bytes);
         let _ = self.refresh_metadata();
         Ok(())
     }
@@ -346,8 +343,8 @@ impl Keyvault {
         self.ensure_decrypted()?;
         let bytes = serial.as_bytes();
         let len = bytes.len().min(12);
-        self.data[OFFSET_SERIAL..OFFSET_SERIAL+12].fill(0);
-        self.data[OFFSET_SERIAL..OFFSET_SERIAL+len].copy_from_slice(&bytes[..len]);
+        self.data[OFFSET_SERIAL..OFFSET_SERIAL + 12].fill(0);
+        self.data[OFFSET_SERIAL..OFFSET_SERIAL + len].copy_from_slice(&bytes[..len]);
         let _ = self.refresh_metadata();
         Ok(())
     }
@@ -356,8 +353,8 @@ impl Keyvault {
         self.ensure_decrypted()?;
         let bytes = date.as_bytes();
         let len = bytes.len().min(8);
-        self.data[OFFSET_MF_DATE..OFFSET_MF_DATE+8].fill(0);
-        self.data[OFFSET_MF_DATE..OFFSET_MF_DATE+len].copy_from_slice(&bytes[..len]);
+        self.data[OFFSET_MF_DATE..OFFSET_MF_DATE + 8].fill(0);
+        self.data[OFFSET_MF_DATE..OFFSET_MF_DATE + len].copy_from_slice(&bytes[..len]);
         let _ = self.refresh_metadata();
         Ok(())
     }
@@ -367,21 +364,21 @@ impl Keyvault {
         if osig.len() != 32 {
             return Err(format!("OSIG string must be exactly 32 characters (got {})", osig.len()));
         }
-        self.data[OFFSET_OSIG_STR..OFFSET_OSIG_STR+32].copy_from_slice(osig.as_bytes());
+        self.data[OFFSET_OSIG_STR..OFFSET_OSIG_STR + 32].copy_from_slice(osig.as_bytes());
         let _ = self.refresh_metadata();
         Ok(())
     }
 
     pub fn set_console_id(&mut self, id: &[u8; 5]) -> Result<(), String> {
         self.ensure_decrypted()?;
-        self.data[OFFSET_CONSOLE_ID..OFFSET_CONSOLE_ID+5].copy_from_slice(id);
+        self.data[OFFSET_CONSOLE_ID..OFFSET_CONSOLE_ID + 5].copy_from_slice(id);
         let _ = self.refresh_metadata();
         Ok(())
     }
 
     pub fn set_dvd_key(&mut self, key: &[u8; 16]) -> Result<(), String> {
         self.ensure_decrypted()?;
-        self.data[OFFSET_DVD_KEY..OFFSET_DVD_KEY+16].copy_from_slice(key);
+        self.data[OFFSET_DVD_KEY..OFFSET_DVD_KEY + 16].copy_from_slice(key);
         let _ = self.refresh_metadata();
         Ok(())
     }
@@ -394,9 +391,13 @@ impl Keyvault {
         // J-Runner updatekvval() L684: FCRT check reads u16 at 0x1C (BE) and tests bits 0x120.
         // We set/clear those same bits rather than writing the whole field, preserving
         // any other flags in the hardware flags word.
-        let mut flags = u16::from_be_bytes(self.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG+2].try_into().unwrap());
-        if enabled { flags |= 0x0120; } else { flags &= !0x0120; }
-        self.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG+2].copy_from_slice(&flags.to_be_bytes());
+        let mut flags = u16::from_be_bytes(self.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG + 2].try_into().unwrap());
+        if enabled {
+            flags |= 0x0120;
+        } else {
+            flags &= !0x0120;
+        }
+        self.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG + 2].copy_from_slice(&flags.to_be_bytes());
         let _ = self.refresh_metadata();
         Ok(())
     }
@@ -452,9 +453,9 @@ mod tests {
         let mut data = vec![0u8; 0x4000];
         data[0xC82..0xC86].copy_from_slice(b"OSIG"); // Force decrypted state
         let mut kv = Keyvault::parse(&data).unwrap();
-        
+
         kv.set_region(0x02FE).unwrap();
-        assert_eq!(&kv.data[OFFSET_REGION..OFFSET_REGION+2], &[0x02, 0xFE]);
+        assert_eq!(&kv.data[OFFSET_REGION..OFFSET_REGION + 2], &[0x02, 0xFE]);
     }
 
     #[test]
@@ -462,13 +463,13 @@ mod tests {
         let mut data = vec![0u8; 0x4000];
         data[0xC82..0xC86].copy_from_slice(b"OSIG");
         let mut kv = Keyvault::parse(&data).unwrap();
-        
+
         kv.set_serial("123456789012").unwrap();
-        assert_eq!(&kv.data[OFFSET_SERIAL..OFFSET_SERIAL+12], b"123456789012");
-        
+        assert_eq!(&kv.data[OFFSET_SERIAL..OFFSET_SERIAL + 12], b"123456789012");
+
         kv.set_serial("SHORT").unwrap();
-        assert_eq!(&kv.data[OFFSET_SERIAL..OFFSET_SERIAL+5], b"SHORT");
-        assert_eq!(kv.data[OFFSET_SERIAL+5], 0, "Should be null padded");
+        assert_eq!(&kv.data[OFFSET_SERIAL..OFFSET_SERIAL + 5], b"SHORT");
+        assert_eq!(kv.data[OFFSET_SERIAL + 5], 0, "Should be null padded");
     }
 
     #[test]
@@ -476,14 +477,14 @@ mod tests {
         let mut data = vec![0u8; 0x4000];
         data[0xC82..0xC86].copy_from_slice(b"OSIG");
         let mut kv = Keyvault::parse(&data).unwrap();
-        
+
         // Test invalid length
         let res = kv.set_osig("TOO_SHORT");
         assert!(res.is_err());
-        
+
         let valid_osig = "PLDS    DG-16D2S        74850C  "; // Exactly 32 chars
         kv.set_osig(valid_osig).unwrap();
-        assert_eq!(&kv.data[OFFSET_OSIG_STR..OFFSET_OSIG_STR+32], valid_osig.as_bytes());
+        assert_eq!(&kv.data[OFFSET_OSIG_STR..OFFSET_OSIG_STR + 32], valid_osig.as_bytes());
     }
 
     #[test]
@@ -494,12 +495,12 @@ mod tests {
 
         kv.apply_fcrt_patch(false).unwrap();
         // OFFSET_FCRT_FLAG = 0x1C; 2-byte BE field; mask 0x120 cleared
-        assert_eq!(&kv.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG+2], &[0x00, 0x00]);
+        assert_eq!(&kv.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG + 2], &[0x00, 0x00]);
         assert!(!kv.metadata.as_ref().unwrap().fcrt);
 
         kv.apply_fcrt_patch(true).unwrap();
         // 0x0120 in big-endian = [0x01, 0x20]
-        assert_eq!(&kv.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG+2], &[0x01, 0x20]);
+        assert_eq!(&kv.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG + 2], &[0x01, 0x20]);
         assert!(kv.metadata.as_ref().unwrap().fcrt);
     }
 
@@ -508,7 +509,7 @@ mod tests {
         let mut data = vec![0u8; 0x4000];
         data[0xC82..0xC86].copy_from_slice(b"OSIG"); // Force decrypted state
         let mut kv = Keyvault::parse(&data).unwrap();
-        
+
         // Check initial parsed metadata
         assert!(kv.metadata.is_some());
         assert_eq!(kv.metadata.as_ref().unwrap().region, 0);

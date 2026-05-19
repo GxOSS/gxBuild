@@ -1,5 +1,5 @@
 /*
-  main.rs - gxBuild release entry point
+  verify.rs - Builder verification
 
   Copyright (c) 2026 gxBuild Contributors and Developers
 
@@ -19,13 +19,3 @@
      misrepresented as being the original software.
   3. This notice may not be removed or altered from any source distribution.
 */
-
-#[cfg(feature = "cli")]
-fn main() {
-    libgxbuild::core::interface::cli::ggx_cli();
-}
-
-#[cfg(not(feature = "cli"))]
-fn main() {
-    println!("gxbuild successfully compiled (CLI feature disabled).");
-}

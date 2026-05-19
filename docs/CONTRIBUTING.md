@@ -2,13 +2,6 @@
 
 Kindly derived from [EdgeTX](https://github.com/EdgeTX/.github/)
 
-#### **AI Policy**
-
-gxBuild has no concrete policy on AI; The only requirement for a change is that the code is properly licensed and of a high standard. I understand that in 2026, with Human assistance, AI has advanced enough to write high quality code.
-
-You are responsible for your patches; You may submit AI generated code, but you are responsible for testing, bugfixing, and ensuring it meets the project standards.
-
-
 #### **Projects**
 
 Local dependencies (src/builder/deps) are manually updated and placed in the repo:
@@ -61,9 +54,4 @@ Pull Requests adding new functionality or improving existing ones are always wel
 #### **Do you want to contribute to the gxBuild documentation?**
 
 gxBuild is a volunteer effort. Documentation edits are greatly appreciated: [Wiki GitHub Repo](https://github.com/ExposureMG/MkDocs).
-
-Peace and love,
-
-ExposureMG
-
 

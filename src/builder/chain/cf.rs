@@ -1,8 +1,8 @@
 /*
     cf.rs - Handling for Xbox 360 CF/6BL bootloader stages.
     Copyright 2024 Emma https://ipg.gay/
-    
-    Modified in 2026 by Exposure / Zach for GGX
+
+    Modified in 2026 by Exposure / Zach for gxBuild
 
     This file has been taken from xenon-bltool and modified, and therefore retains the original
     License.
@@ -19,11 +19,11 @@
     If not, see <https://www.gnu.org/licenses/>.
 */
 
-use zerocopy::{FromBytes, IntoBytes};
 use super::BootloaderHeader;
-use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
+use crate::builder::deps::excrypt::{self, ExCryptRsa, Rc4};
 use byteorder::{BigEndian, ByteOrder};
 use log::info;
+use zerocopy::{FromBytes, IntoBytes};
 
 #[derive(Clone, Debug)]
 pub struct CfMetadata {
@@ -37,14 +37,14 @@ pub struct CfMetadata {
     // Stage 2 (Decrypted - 7BL Bridge - Offset 0x20 in payload / 0x30 Absolute)
     pub cg_blocks_used: u16,
     pub cg_block_numbers: Vec<u16>, // 223 entries
-    
+
     // Stage 2 (Decrypted - PerBoxData)
     pub reserved_per_box: [u8; 0x2B],
     pub update_slot: u8,
     pub pairing_data: [u8; 3],
     pub lockdown_value: u8,
     pub per_box_digest: [u8; 0x10],
-    
+
     // Stage 2 (Decrypted - Chain Bridge)
     pub signature: [u8; 0x100],
     pub cg_nonce: [u8; 0x10],
@@ -60,19 +60,27 @@ pub struct BootloaderCf {
 
 impl BootloaderCf {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload) = BootloaderHeader::read_from_prefix(data)
-            .map_err(|_| "Failed to parse CF header")?;
-        let mut cf = Self {
-            header: header.clone(),
-            data: payload.to_vec(),
-            metadata: None,
-        };
+        let (header, payload) = BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CF header")?;
+        let mut cf = Self { header: header.clone(), data: payload.to_vec(), metadata: None };
         cf.populate_metadata();
         Ok(cf)
     }
 
     pub fn populate_metadata(&mut self) {
-        if !self.is_decrypted() || self.data.len() < 0x344 { return; }
+        // verify_decrypted() checks reserved_per_box zeros — unreliable for all CFs.
+        // After decrypt() use populate_metadata_unchecked instead.
+        if !self.is_decrypted() || self.data.len() < 0x344 {
+            return;
+        }
+        self.populate_metadata_unchecked();
+    }
+
+    /// Populates metadata unconditionally (no is_decrypted guard).
+    /// Use after decrypt() since verify_decrypted() can fail for valid CFs.
+    pub fn populate_metadata_unchecked(&mut self) {
+        if self.data.len() < 0x344 {
+            return;
+        }
 
         // Stage 1 (Plain)
         let source_version = BigEndian::read_u16(&self.data[0x0..0x2]);
@@ -87,14 +95,17 @@ impl BootloaderCf {
         let mut cg_block_numbers = Vec::with_capacity(223);
         for i in 0..223 {
             let offset = 0x22 + (i * 2);
-            cg_block_numbers.push(BigEndian::read_u16(&self.data[offset..offset+2]));
+            cg_block_numbers.push(BigEndian::read_u16(&self.data[offset..offset + 2]));
         }
 
         let mut reserved_per_box = [0u8; 0x2B];
         reserved_per_box.copy_from_slice(&self.data[0x1E0..0x20B]);
         let update_slot = self.data[0x20B];
+
         let mut pairing_data = [0u8; 3];
         pairing_data.copy_from_slice(&self.data[0x20C..0x20F]);
+        pairing_data.reverse(); // J-Runner reverses the 3 bytes
+
         let lockdown_value = self.data[0x20F];
         let mut per_box_digest = [0u8; 0x10];
         per_box_digest.copy_from_slice(&self.data[0x210..0x220]);
@@ -129,7 +140,9 @@ impl BootloaderCf {
 
     pub fn sync_metadata(&mut self) {
         if let Some(ref meta) = self.metadata {
-            if self.data.len() < 0x344 { return; }
+            if self.data.len() < 0x344 {
+                return;
+            }
 
             // Stage 1
             BigEndian::write_u16(&mut self.data[0x0..0x2], meta.source_version);
@@ -141,14 +154,20 @@ impl BootloaderCf {
             // Stage 2
             BigEndian::write_u16(&mut self.data[0x20..0x22], meta.cg_blocks_used);
             for (i, &block) in meta.cg_block_numbers.iter().enumerate() {
-                if i >= 223 { break; }
+                if i >= 223 {
+                    break;
+                }
                 let offset = 0x22 + (i * 2);
-                BigEndian::write_u16(&mut self.data[offset..offset+2], block);
+                BigEndian::write_u16(&mut self.data[offset..offset + 2], block);
             }
 
             self.data[0x1E0..0x20B].copy_from_slice(&meta.reserved_per_box);
             self.data[0x20B] = meta.update_slot;
-            self.data[0x20C..0x20F].copy_from_slice(&meta.pairing_data);
+
+            let mut pd_sync = meta.pairing_data;
+            pd_sync.reverse(); // Reverse back for storage
+            self.data[0x20C..0x20F].copy_from_slice(&pd_sync);
+
             self.data[0x20F] = meta.lockdown_value;
             self.data[0x210..0x220].copy_from_slice(&meta.per_box_digest);
 
@@ -172,7 +191,9 @@ impl BootloaderCf {
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = size_aligned as usize - 0x10; // total payload size after 0x10 header
 
-        if self.data.len() < payload_len { return; }
+        if self.data.len() < payload_len {
+            return;
+        }
 
         // rotsum covers first 0x20 bytes (header + version info)
         // and everything from cg_hmac (0x320 rel / 0x330 abs) to the end
@@ -180,10 +201,7 @@ impl BootloaderCf {
         combined_header[..0x10].copy_from_slice(&IntoBytes::as_bytes(&self.header)[..0x10]);
         combined_header[0x10..].copy_from_slice(&self.data[0x0..0x10]);
 
-        if let Ok(hash) = excrypt::rot_sum_sha(
-            &combined_header,
-            &self.data[0x320..payload_len],
-        ) {
+        if let Ok(hash) = excrypt::rot_sum_sha(&combined_header, &self.data[0x320..payload_len]) {
             sha_out.copy_from_slice(&hash);
         }
     }
@@ -192,7 +210,9 @@ impl BootloaderCf {
         let mut cf_hash = [0u8; 0x14];
         self.calculate_rotsum(&mut cf_hash);
 
-        if self.data.len() < 0x320 { return false; }
+        if self.data.len() < 0x320 {
+            return false;
+        }
         let signature: &[u8; 256] = self.data[0x220..0x320].try_into().unwrap();
 
         let expected_salt = b"XBOX_ROM_6\0";
@@ -200,11 +220,7 @@ impl BootloaderCf {
     }
 
     pub fn print_info(&self) {
-        let indicator = if (self.header.magic.get() & 0xF000) == 0x5000 {
-            "SF"
-        } else {
-            "CF"
-        };
+        let indicator = if (self.header.magic.get() & 0xF000) == 0x5000 { "SF" } else { "CF" };
         info!("[builder] {} version: {}", indicator, self.header.version.get());
         info!("[builder] {} size: 0x{:x}", indicator, self.header.size.get());
         info!("[builder] {} entrypoint: 0x{:x}", indicator, self.header.entrypoint.get());
@@ -213,7 +229,7 @@ impl BootloaderCf {
             info!("[builder] {} source build: {}", indicator, meta.source_version);
             info!("[builder] {} target build: {}", indicator, meta.target_version);
             info!("[builder] {}-G size: 0x{:x}", indicator, meta.cg_size);
-            
+
             if self.is_decrypted() {
                 info!("[builder] {} slot: {}", indicator, meta.update_slot);
                 info!("[builder] {} pairing: {:02x?}", indicator, meta.pairing_data);
@@ -244,7 +260,9 @@ impl BootloaderCf {
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_size = (size_aligned - 0x10) as usize; // size of data after the header
 
-        if self.data.len() < payload_size { return; }
+        if self.data.len() < payload_size {
+            return;
+        }
 
         // HMAC key for CF is at Absolute 0x20, which is data[0x10..0x20]
         if let Ok(derived_key) = excrypt::hmac_sha(onebl_key, &[&self.data[0x10..0x20]]) {
@@ -257,6 +275,10 @@ impl BootloaderCf {
                 let _ = rc4.crypt(&mut self.data[0x20..payload_size]);
             }
         }
+        // Do NOT call populate_metadata_unchecked here: this function is used
+        // symmetrically for re-encryption in encrypt_chain. Calling it after
+        // re-encryption would overwrite synced metadata with ciphertext garbage.
+        // decrypt_chain calls populate_metadata_unchecked explicitly after this.
     }
 
     /// Verifies that a CF bootloader has been successfully decrypted.
@@ -266,7 +288,9 @@ impl BootloaderCf {
     /// Note: x360Utils offsets are from the full bootloader start (including 16-byte header).
     /// gxBuild's `data` field is the payload AFTER the header, so we subtract 0x10.
     pub fn verify_decrypted(&self) -> bool {
-        if self.data.len() < 0x200 { return false; }
+        if self.data.len() < 0x200 {
+            return false;
+        }
         self.data[0x1E0..0x200].iter().all(|&b| b == 0)
     }
 
