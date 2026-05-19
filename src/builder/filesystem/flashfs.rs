@@ -109,6 +109,7 @@ pub fn get_fs_base_block_for_meta2(image: &[u8], layout: &NandLayout, fs_root_sp
 pub struct FileSystemEntry {
     pub page_number: i32,
     pub file_name: String,
+    pub source_path: Option<String>,
     pub block_number: u16,
     pub size: u32,
     pub timestamp: i32,
@@ -118,7 +119,7 @@ pub struct FileSystemEntry {
 
 impl FileSystemEntry {
     pub fn new(page_number: i32) -> Self {
-        FileSystemEntry { page_number, file_name: String::new(), block_number: 0, size: 0, timestamp: 0, deleted: false, data: Vec::new() }
+        FileSystemEntry { page_number, file_name: String::new(), source_path: None, block_number: 0, size: 0, timestamp: 0, deleted: false, data: Vec::new() }
     }
 
     pub fn read_from(&mut self, chunk: &[u8]) {

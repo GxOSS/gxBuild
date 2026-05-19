@@ -821,10 +821,9 @@ impl IniSearch {
                 }
 
                 if let Some(c) = found_content {
-                    // Strip path indicator for the on-NAND 0x16-byte name field; original
-                    // filename was used for all discovery tiers above.
                     let mut fs_entry = FileSystemEntry::new(0);
                     fs_entry.file_name = basename.clone();
+                    fs_entry.source_path = Some(filename.to_string());
                     fs_entry.data = c.clone();
                     flashfs.root.entries.push(fs_entry);
                     result.flashfs_assets.insert(lower_basename, c);
