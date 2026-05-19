@@ -1,8 +1,8 @@
 /*
     cd.rs - Handling for Xbox 360 CD/4BL bootloader stages.
     Copyright 2024 Emma https://ipg.gay/
-    
-    Modified in 2026 by Exposure / Zach for GGX
+
+    Modified in 2026 by Exposure / Zach for gxBuild
 
     This file has been taken from xenon-bltool and modified, and therefore retains the original
     License.
@@ -20,9 +20,9 @@
 */
 
 use zerocopy::{FromBytes, IntoBytes};
-    
+
 use super::BootloaderHeader;
-use crate::builder::deps::excrypt::{self, Rc4, ExCryptRsa};
+use crate::builder::deps::excrypt::{self, ExCryptRsa, Rc4};
 use log::info;
 
 #[derive(Clone, Debug)]
@@ -39,23 +39,21 @@ pub struct BootloaderCd {
     pub header: BootloaderHeader,
     pub data: Vec<u8>,
     pub metadata: Option<CdMetadata>,
+    pub derived_key: Option<[u8; 16]>,
 }
 
 impl BootloaderCd {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload) = BootloaderHeader::read_from_prefix(data)
-            .map_err(|_| "Failed to parse CD header")?;
-        let mut cd = Self {
-            header: header.clone(),
-            data: payload.to_vec(),
-            metadata: None,
-        };
+        let (header, payload) = BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CD header")?;
+        let mut cd = Self { header: header.clone(), data: payload.to_vec(), metadata: None, derived_key: None };
         cd.populate_metadata();
         Ok(cd)
     }
 
     pub fn populate_metadata(&mut self) {
-        if !self.is_decrypted() || self.data.len() < 0x250 { return; }
+        if !self.is_decrypted() || self.data.len() < 0x250 {
+            return;
+        }
 
         let mut signature = [0u8; 0x100];
         signature.copy_from_slice(&self.data[0x10..0x110]);
@@ -72,18 +70,14 @@ impl BootloaderCd {
         let mut digest_5bl = [0u8; 0x14];
         digest_5bl.copy_from_slice(&self.data[0x23C..0x250]);
 
-        self.metadata = Some(CdMetadata {
-            signature,
-            rsa_pub_key,
-            nonce_6bl,
-            salt_6bl,
-            digest_5bl,
-        });
+        self.metadata = Some(CdMetadata { signature, rsa_pub_key, nonce_6bl, salt_6bl, digest_5bl });
     }
 
     pub fn sync_metadata(&mut self) {
         if let Some(ref meta) = self.metadata {
-            if self.data.len() < 0x250 { return; }
+            if self.data.len() < 0x250 {
+                return;
+            }
 
             self.data[0x10..0x110].copy_from_slice(&meta.signature);
             self.data[0x110..0x220].copy_from_slice(&meta.rsa_pub_key);
@@ -94,7 +88,9 @@ impl BootloaderCd {
     }
 
     pub fn is_decrypted(&self) -> bool {
-        if self.data.len() < 0x111 { return false; }
+        if self.data.len() < 0x111 {
+            return false;
+        }
         // Matches xenon-bltool cd_is_decrypted(): hdr->idk_yet[0] == 0x00.
         // The idk_yet field is unnamed in all references; empirically always 0 when decrypted.
         self.data[0x110] == 0x00
@@ -105,7 +101,9 @@ impl BootloaderCd {
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = (size_aligned - 0x10) as usize; // data after header
 
-        if self.data.len() < payload_len { return; }
+        if self.data.len() < payload_len {
+            return;
+        }
 
         if let Ok(hash) = excrypt::rot_sum_sha(
             &IntoBytes::as_bytes(&self.header)[..0x10],
@@ -116,11 +114,7 @@ impl BootloaderCd {
     }
 
     pub fn print_info(&self) {
-        let indicator = if (self.header.magic.get() & 0xF000) == 0x5000 {
-            "SD"
-        } else {
-            "CD"
-        };
+        let indicator = if (self.header.magic.get() & 0xF000) == 0x5000 { "SD" } else { "CD" };
         info!("[builder] {} version: {}", indicator, self.header.version.get());
         info!("[builder] {} size: 0x{:x}", indicator, self.header.size.get());
         info!("[builder] {} entrypoint: 0x{:x}", indicator, self.header.entrypoint.get());
@@ -143,7 +137,9 @@ impl BootloaderCd {
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_size = (size_aligned - 0x10) as usize;
 
-        if self.data.len() < payload_size { return; }
+        if self.data.len() < payload_size {
+            return;
+        }
 
         // Derived key starts with CBB key and Absolute 0x10 key.
         // Matches xenon-bltool's cd_decrypt: writes derived key back into data[0..16] in-place.
@@ -162,7 +158,7 @@ impl BootloaderCd {
                 }
             }
 
-            self.data[0..16].copy_from_slice(&final_key);
+            self.derived_key = Some(final_key);
             if let Ok(mut rc4) = Rc4::new(&final_key) {
                 // Encryption starts at signature, which is 0x10 rel into payload (absolute 0x20)
                 let _ = rc4.crypt(&mut self.data[0x10..payload_size]);
@@ -170,11 +166,24 @@ impl BootloaderCd {
         }
     }
 
+    pub fn derived_key(&self) -> [u8; 16] {
+        if let Some(key) = self.derived_key {
+            return key;
+        }
+        if self.data.len() >= 16 {
+            self.data[0..16].try_into().unwrap_or([0u8; 16])
+        } else {
+            [0u8; 16]
+        }
+    }
+
     pub fn verify_signature_devkit(&self, pubkey: &ExCryptRsa) -> bool {
         let mut cd_hash = [0u8; 0x14];
         self.calculate_rotsum(&mut cd_hash);
 
-        if self.data.len() < 0x110 { return false; }
+        if self.data.len() < 0x110 {
+            return false;
+        }
         let signature: &[u8; 256] = self.data[0x10..0x110].try_into().unwrap(); // Absolute 0x20
 
         let expected_salt = b"XBOX_ROM_4\0";

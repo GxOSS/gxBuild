@@ -1,18 +1,67 @@
 /*
-    filesearch.rs - xeBuild style file searching engine
+  filesearch.rs - xeBuild style file searching engine
 
-    Created in 2026 by Exposure / Zach for gxBuild.
-    Licensed under GPLv2 (inherited from xenon-bltool).
+  Copyright (c) 2026 gxBuild Contributors and Developers
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
 */
+use crate::builder::builder::NandSkeleton;
+use crate::builder::filesystem::flashfs::{FileSystemEntry, FlashFS};
+use crate::core::data::xeini::{strip_flashfs_path_indicator, XeBuildIni};
+use log::{info, warn};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use crate::builder::chain::flashfs::{FlashFS, FileSystemEntry};
-use crate::builder::builder::NandSkeleton;
-use crate::core::data::xeini::{XeBuildIni, IniError};
-use log::{info, warn, error};
+use thiserror::Error;
 
+#[derive(Error, Debug)]
+pub enum FilesearchError {
+    #[error("[filesearch] File not found: {0}")]
+    FileNotFound(String),
+    #[error("[filesearch] Incorrect formatting in {0}")]
+    BadBuildFormat(String),
+    #[error("[filesearch] Rebooter bootloader chain requested in INI but not initialized in NAND skeleton")]
+    RebooterNotInitialized,
+    #[error("[filesearch] {0} Patches for platform {1} not found at path {2}")]
+    NoAutoPatches(String, String, String),
+    #[error("[filesearch] No security files found in INI")]
+    NoSecurityFiles,
+    #[error("[ini] Hash mismatch for {0}")]
+    HashMismatch(String),
+    #[error("[ini] No SMC.bin or {0}_CLEAN.bin found")]
+    NoSmcOrCleanBin(String),
+    #[error("[ini] Payload {0} has broken hash")]
+    PayloadBrokenHash(String),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
 
-// Search for files listed in INI
+fn resolve_robust(base: &Path, cand: &str) -> PathBuf {
+    let mut p = base.to_path_buf();
+    for component in cand.split(['/', '\\']) {
+        if component == ".." {
+            p.pop();
+        } else if component == "." || component.is_empty() {
+            continue;
+        } else {
+            p.push(component);
+        }
+    }
+    p
+}
 
 pub struct DiscoveredBootloaders {
     pub cb: Option<PathBuf>,
@@ -45,7 +94,7 @@ impl DiscoveredUpdate {
 
 fn get_xebuild_crc32(data: &[u8], filename: &str) -> String {
     let lower_name = filename.to_lowercase();
-    
+
     if data.len() < 0x10 {
         return format!("{:08x}", crc32fast::hash(data));
     }
@@ -56,24 +105,42 @@ fn get_xebuild_crc32(data: &[u8], filename: &str) -> String {
     if xe_len == 0 || xe_len > data.len() {
         xe_len = data.len();
     }
-    
+
     let mut working = data[..xe_len].to_vec();
 
     // Zero out sensitive/nonce fields per xeBuild rules:
-    // - CB / CB_A / CB_B / SB: Zero 0x30 bytes starting at 0x10 (0x10..0x40)
-    // - CD / SD / CG / SG / CF / SF: Zero 0x10 bytes starting at 0x10 (0x10..0x20)
-    // - Others (CE, etc): Truncated but not zeroed.
     if lower_name.starts_with("cb") || lower_name.starts_with("sb") {
+        // CB/CB_A/CB_B/CB_X: Zero 0x30 bytes starting at 0x10 (0x10..0x40)
+        let start = 0x10;
         let end = std::cmp::min(0x40, working.len());
-        if working.len() > 0x10 {
-            for i in 0x10..end { working[i] = 0; }
+        if working.len() > start {
+            for i in start..end {
+                working[i] = 0;
+            }
         }
-    } else if lower_name.starts_with("cd") || lower_name.starts_with("sd") ||
-              lower_name.starts_with("cf") || lower_name.starts_with("sf") ||
-              lower_name.starts_with("cg") || lower_name.starts_with("sg") {
+    } else if lower_name.starts_with("cf") || lower_name.starts_with("sf") {
+        // CF: Zero 0x210 bytes starting at 0x20 (0x20..0x230)
+        let start = 0x20;
+        let end = std::cmp::min(0x230, working.len());
+        if working.len() > start {
+            for i in start..end {
+                working[i] = 0;
+            }
+        }
+    } else if lower_name.starts_with("cd")
+        || lower_name.starts_with("sd")
+        || lower_name.starts_with("ce")
+        || lower_name.starts_with("se")
+        || lower_name.starts_with("cg")
+        || lower_name.starts_with("sg")
+    {
+        // CD, CE, CG: Zero 0x10 bytes starting at 0x10 (0x10..0x20)
+        let start = 0x10;
         let end = std::cmp::min(0x20, working.len());
-        if working.len() > 0x10 {
-            for i in 0x10..end { working[i] = 0; }
+        if working.len() > start {
+            for i in start..end {
+                working[i] = 0;
+            }
         }
     }
 
@@ -100,14 +167,27 @@ pub struct IniSearch {
     pub ini: XeBuildIni,
     pub build: PathBuf,
     pub common: PathBuf,
-    pub data: PathBuf,
+    pub mydata: PathBuf,
+    pub payloads: PathBuf,
+    pub smc: PathBuf,
     pub unsafe_mode: Option<bool>,
     pub result: IniSearchResult,
 }
 
 impl IniSearch {
-    pub fn new(ini: XeBuildIni, build: impl AsRef<Path>, common: impl AsRef<Path>, data: impl AsRef<Path>, nand: &Option<NandSkeleton>, unsafe_mode: Option<bool>) -> Result<Self, IniError> {
+    pub fn new(
+        ini: XeBuildIni,
+        build: impl AsRef<Path>,
+        common: impl AsRef<Path>,
+        mydata: impl AsRef<Path>,
+        payloads: impl AsRef<Path>,
+        smc: impl AsRef<Path>,
+        nand: &Option<NandSkeleton>,
+        unsafe_mode: Option<bool>,
+        nofcrt: Option<bool>,
+    ) -> Result<Self, FilesearchError> {
         let unsafe_mode = unsafe_mode.unwrap_or(false);
+        let nofcrt = nofcrt.unwrap_or(false);
         let mut ini = ini;
         let mut result = IniSearchResult {
             bootloaders: None,
@@ -123,10 +203,10 @@ impl IniSearch {
 
         let build = build.as_ref().to_path_buf();
         let common = common.as_ref().to_path_buf();
-        let data = data.as_ref().to_path_buf();
-        
+        let mydata = mydata.as_ref().to_path_buf();
+        let payloads = payloads.as_ref().to_path_buf();
+        let smc_dir = smc.as_ref().to_path_buf();
         let flashfs_folder = build.join("flashfs");
-        
         // Auto Patcher
         // Patches Priority: 1. Build/bin Folder, 2. Build/../bin Folder
         let platform = ini.name.split('_').next().unwrap_or(&ini.name).to_lowercase();
@@ -135,15 +215,20 @@ impl IniSearch {
         let find_patch = |name: &str| -> Option<PathBuf> {
             let p1 = build.join("bin").join(name);
             let p2 = build.parent().unwrap_or(&build).join("bin").join(name);
-            if p1.exists() { Some(p1) }
-            else if p2.exists() { Some(p2) }
-            else { None }
+            if p1.exists() {
+                Some(p1)
+            } else if p2.exists() {
+                Some(p2)
+            } else {
+                None
+            }
         };
 
+        // could probably be improved
         match ini.buildtype.as_str() {
             "retail" => {
                 info!("[ini] Retail build type selected");
-            },
+            }
             "glitch1" | "glitch2" | "glitch2m" | "glitch3" | "jtag" | "1f" | "2f" | "devgl" | "devkit" | "xdkbuild" | "rgbuild" => {
                 info!("[ini] {} build type selected", ini.buildtype);
                 match ini.buildtype.as_str() {
@@ -158,7 +243,7 @@ impl IniSearch {
                                 info!("[ini] Glitch1 Patches for platform {} found at path: {}", platform, p.display());
                                 patch_path = Some(p);
                             } else {
-                                return Err(IniError::NoAutoPatches("Glitch1".to_string(), ini.name.clone(), format!("Build/bin/{}", n)));
+                                return Err(FilesearchError::NoAutoPatches("Glitch1".to_string(), ini.name.clone(), format!("<build>/bin/{}", n)));
                             }
                         }
                     }
@@ -168,7 +253,7 @@ impl IniSearch {
                             info!("[ini] Glitch2 Patches for platform {} found at path: {}", platform, p.display());
                             patch_path = Some(p);
                         } else {
-                            return Err(IniError::NoAutoPatches("Glitch2".to_string(), ini.name.clone(), format!("Build/bin/{}", n)));
+                            return Err(FilesearchError::NoAutoPatches("Glitch2".to_string(), ini.name.clone(), format!("<build>/bin/{}", n)));
                         }
                     }
                     "glitch2m" | "devgl" | "xdkbuild" => {
@@ -177,7 +262,7 @@ impl IniSearch {
                             info!("[ini] {} Patches for platform {} found at path: {}", ini.buildtype, platform, p.display());
                             patch_path = Some(p);
                         } else {
-                            return Err(IniError::NoAutoPatches(ini.buildtype.clone(), ini.name.clone(), format!("Build/bin/{}", n)));
+                            return Err(FilesearchError::NoAutoPatches(ini.buildtype.clone(), ini.name.clone(), format!("<build>/bin/{}", n)));
                         }
                     }
                     "glitch3" => {
@@ -190,7 +275,7 @@ impl IniSearch {
                             warn!("[ini] Glitch3 Patches for platform {} not found, using fallback: {}", platform, p2.display());
                             patch_path = Some(p2);
                         } else {
-                            return Err(IniError::NoAutoPatches("Glitch3".to_string(), ini.name.clone(), format!("Build/bin/{}", n3)));
+                            return Err(FilesearchError::NoAutoPatches("Glitch3".to_string(), ini.name.clone(), format!("<build>/bin/{}", n3)));
                         }
                     }
                     "devkit" => {
@@ -199,7 +284,7 @@ impl IniSearch {
                             info!("[ini] Devkit Patches for platform {} found at path: {}", platform, p.display());
                             patch_path = Some(p);
                         } else {
-                            return Err(IniError::NoAutoPatches("Devkit".to_string(), ini.name.clone(), format!("Build/bin/{}", n)));
+                            return Err(FilesearchError::NoAutoPatches("Devkit".to_string(), ini.name.clone(), format!("<build>/bin/{}", n)));
                         }
                     }
                     "rgbuild" => {
@@ -208,101 +293,97 @@ impl IniSearch {
                             info!("[ini] RGBuild Patches for platform {} found at path: {}", platform, p.display());
                             patch_path = Some(p);
                         } else {
-                            return Err(IniError::NoAutoPatches("RGBuild".to_string(), ini.name.clone(), format!("Build/bin/{}", n)));
+                            return Err(FilesearchError::NoAutoPatches("RGBuild".to_string(), ini.name.clone(), format!("<build>/bin/{}", n)));
                         }
                     }
                     _ => {}
                 }
-            },
-            _ => return Err(IniError::BadBuildFormat(ini.buildtype.clone())),
+            }
+            _ => return Err(FilesearchError::BadBuildFormat(ini.buildtype.clone())),
         }
         ini.patch.path = patch_path.clone();
 
-        // --- Security (KV/SMC) and Extra (FCRT) Discovery ---
+        // Helper: check CRC32 against expected hash; returns true if pass (or no hash), logs/warns/errors on mismatch.
+        // Returns None to signal "move to next tier" on mismatch without unsafe_mode.
+        let check_crc32_simple = |data: &[u8], filename: &str, expected: &Option<String>, tier: &str, unsafe_mode: bool| -> Option<bool> {
+            if let Some(exp) = expected {
+                let mut hasher = crc32fast::Hasher::new();
+                hasher.update(data);
+                let actual = format!("{:08x}", hasher.finalize());
+                if actual.to_lowercase() == exp.to_lowercase() {
+                    Some(true)
+                } else if unsafe_mode {
+                    warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Got: {} in {} Tier). Continuing...", filename, exp, actual, tier);
+                    Some(true)
+                } else {
+                    info!("[ini] Hash mismatch for {} in {} Tier, trying next tier...", filename, tier);
+                    None
+                }
+            } else {
+                Some(true)
+            }
+        };
+
+        // security and extra
         if !ini.security.is_empty() {
             let mut sec_paths = Vec::new();
             for entry in &ini.security {
                 let filename = &entry.filename;
                 let lower_name = filename.to_lowercase();
+                if lower_name == "fcrt.bin" && nofcrt {
+                    warn!("[ini] fcrt.bin bypassed due to nofcrt option.");
+                    continue;
+                }
                 let mut found_content: Option<Vec<u8>> = None;
                 let mut found_path: Option<PathBuf> = None;
 
-                // Tier 1: NAND Image
-                if let Some(n) = nand {
-                    let nand_data = match lower_name.as_str() {
-                        "smc.bin" => Some(n.extra.smc.clone()),
-                        "keyvault.bin" | "kv.bin" => Some(n.extra.keyvault.clone()),
-                        "fcrt.bin" => n.extra.fcrt.clone(),
-                        _ => None,
-                    };
-                    if let Some(c) = nand_data {
-                        if let Some(expected) = &entry.hash {
-                            let mut hasher = crc32fast::Hasher::new();
-                            hasher.update(&c);
-                            let actual = format!("{:08x}", hasher.finalize());
-                            if actual.to_lowercase() == expected.to_lowercase() {
+                // Tier 0: NAND Image
+                if found_content.is_none() {
+                    if let Some(n) = nand {
+                        let nand_data = match lower_name.as_str() {
+                            "keyvault.bin" | "kv.bin" => Some(n.extra.keyvault.clone()),
+                            "fcrt.bin" => n.extra.fcrt.clone(),
+                            _ => None,
+                        };
+                        if let Some(c) = nand_data {
+                            if check_crc32_simple(&c, filename, &entry.hash, "NAND Image", unsafe_mode).is_some() {
                                 found_content = Some(c);
                                 found_path = Some(PathBuf::from("NAND_IMAGE"));
-                            } else if unsafe_mode {
-                                warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in NAND Image Tier). Continuing...", filename, expected, actual);
-                                found_content = Some(c);
-                                found_path = Some(PathBuf::from("NAND_IMAGE"));
-                            } else {
-                                info!("[ini] Hash mismatch for {} in NAND Image Tier, seeking fallback...", filename);
                             }
-                        } else {
-                            found_content = Some(c);
-                            found_path = Some(PathBuf::from("NAND_IMAGE"));
                         }
                     }
                 }
 
-                // Tier 2: Data Folder
+                // Tier 1: mydata folder
                 if found_content.is_none() {
-                    let cand = data.join(filename);
+                    let cand = resolve_robust(&mydata, filename);
                     if cand.exists() {
                         let c = std::fs::read(&cand)?;
-                        if let Some(expected) = &entry.hash {
-                            let mut hasher = crc32fast::Hasher::new();
-                            hasher.update(&c);
-                            let actual = format!("{:08x}", hasher.finalize());
-                            if actual.to_lowercase() == expected.to_lowercase() {
-                                found_content = Some(c);
-                                found_path = Some(cand);
-                            } else if unsafe_mode {
-                                warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Data Folder Tier). Continuing...", filename, expected, actual);
-                                found_content = Some(c);
-                                found_path = Some(cand);
-                            } else {
-                                info!("[ini] Hash mismatch for {} in Data Folder Tier, seeking fallback...", filename);
-                            }
-                        } else {
+                        if check_crc32_simple(&c, filename, &entry.hash, "mydata", unsafe_mode).is_some() {
                             found_content = Some(c);
                             found_path = Some(cand);
                         }
                     }
                 }
 
-                // Tier 3: Common Folder (Security only)
+                // Tier 2: Build folder
                 if found_content.is_none() {
-                    let cand = common.join(filename);
+                    let cand = resolve_robust(&build, filename);
                     if cand.exists() {
                         let c = std::fs::read(&cand)?;
-                        if let Some(expected) = &entry.hash {
-                            let mut hasher = crc32fast::Hasher::new();
-                            hasher.update(&c);
-                            let actual = format!("{:08x}", hasher.finalize());
-                            if actual.to_lowercase() == expected.to_lowercase() {
-                                found_content = Some(c);
-                                found_path = Some(cand);
-                            } else if unsafe_mode {
-                                warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Common Folder Tier). Continuing...", filename, expected, actual);
-                                found_content = Some(c);
-                                found_path = Some(cand);
-                            } else {
-                                info!("[ini] Hash mismatch for {} in Common Folder Tier", filename);
-                            }
-                        } else {
+                        if check_crc32_simple(&c, filename, &entry.hash, "Build", unsafe_mode).is_some() {
+                            found_content = Some(c);
+                            found_path = Some(cand);
+                        }
+                    }
+                }
+
+                // Tier 6: Common folder
+                if found_content.is_none() {
+                    let cand = resolve_robust(&common, filename);
+                    if cand.exists() {
+                        let c = std::fs::read(&cand)?;
+                        if check_crc32_simple(&c, filename, &entry.hash, "Common", unsafe_mode).is_some() {
                             found_content = Some(c);
                             found_path = Some(cand);
                         }
@@ -310,21 +391,84 @@ impl IniSearch {
                 }
 
                 if let Some(c) = found_content {
-                result.security_assets.insert(lower_name, c);
-                    if let Some(p) = found_path { sec_paths.push(p); }
+                    result.security_assets.insert(lower_name, c);
+                    if let Some(p) = found_path {
+                        sec_paths.push(p);
+                    }
                 } else {
                     if lower_name == "odd.bin" {
                         warn!("[ini] odd.bin not found during discovery, skipping with warning.");
                         continue;
                     }
-                    error!("[ini] All tiers failed for priority asset: {}", filename);
-                    return Err(IniError::FileNotFound(filename.clone()));
+                    warn!("[ini] All tiers failed for security asset: {}", filename);
+                    return Err(FilesearchError::FileNotFound(filename.clone()));
                 }
             }
             result.security = Some(sec_paths);
         }
 
-        // --- Bootloaders and Update Discovery ---
+        // SMC: Tier 1 = mydata, Tier 2 = smc folder (peer of build/common/mydata)
+        let section_base = ini.name.split('_').next().unwrap_or(&ini.name);
+        let platform_clean = if section_base.ends_with("bl") {
+            &section_base[..section_base.len() - 2]
+        } else {
+            section_base
+        }
+        .to_uppercase();
+
+        {
+            let smc_names = ["SMC.bin".to_string(), format!("{}_CLEAN.bin", platform_clean)];
+            let smc_search_dirs = [mydata.clone(), smc_dir.clone()];
+            let mut smc_found = false;
+            'smc: for dir in &smc_search_dirs {
+                for name in &smc_names {
+                    let p = dir.join(name);
+                    if p.exists() {
+                        if let Ok(c) = std::fs::read(&p) {
+                            info!("[ini] Discovered SMC: {}", p.display());
+                            result.security_assets.insert("smc.bin".to_string(), c);
+                            smc_found = true;
+                            break 'smc;
+                        }
+                    }
+                }
+            }
+            if !smc_found {
+                return Err(FilesearchError::NoSmcOrCleanBin(platform_clean));
+            }
+        }
+
+        // Payloads: Tier 5 = payloads folder ONLY
+        for entry in &ini.payloads {
+            let filename = &entry.filename;
+            let lower_name = filename.to_lowercase();
+            let cand = payloads.join(filename);
+            if cand.exists() {
+                if let Ok(c) = std::fs::read(&cand) {
+                    if let Some(expected) = &entry.hash {
+                        let actual = get_xebuild_crc32(&c, filename);
+                        if actual.to_lowercase() != expected.to_lowercase() {
+                            if unsafe_mode {
+                                warn!("[ini] Unsafe Bypass: payload {} CRC32 mismatch (Expected: {}, Found: {}). Continuing...", filename, expected, actual);
+                                result.bootloader_assets.insert(lower_name, c);
+                            } else {
+                                return Err(FilesearchError::HashMismatch(filename.to_string()));
+                            }
+                        } else {
+                            info!("[ini] Discovered payload in payloads folder: {}", cand.display());
+                            info!("[ini] Payload {} passed CRC32: {}", filename, actual);
+                            result.bootloader_assets.insert(lower_name, c);
+                        }
+                    } else {
+                        return Err(FilesearchError::PayloadBrokenHash(filename.to_string()));
+                    }
+                }
+            } else {
+                return Err(FilesearchError::FileNotFound(filename.to_string()));
+            }
+        }
+
+        // Bootloaders and Update Discovery
         if !ini.main.is_empty() {
             result.bootloaders = Some(DiscoveredBootloaders::new());
             if ini.rebooter {
@@ -337,19 +481,25 @@ impl IniSearch {
 
             for entry in &ini.main {
                 let lower = entry.filename.to_lowercase();
-                if lower.starts_with("cf_") || lower.starts_with("sf_") { expected_cf = lower.clone(); }
-                else if lower.starts_with("cg_") || lower.starts_with("sg_") { expected_cg = lower.clone(); }
-                
-                if lower.starts_with("cbb_") { target_cb = Some(lower.clone()); }
-                else if target_cb.is_none() && (lower.starts_with("cb_") || lower.starts_with("sb_")) { target_cb = Some(lower.clone()); }
+                if lower.starts_with("cf_") || lower.starts_with("sf_") {
+                    expected_cf = lower.clone();
+                } else if lower.starts_with("cg_") || lower.starts_with("sg_") {
+                    expected_cg = lower.clone();
+                }
+
+                if lower.starts_with("cbb_") {
+                    target_cb = Some(lower.clone());
+                } else if target_cb.is_none() && (lower.starts_with("cb_") || lower.starts_with("sb_")) {
+                    target_cb = Some(lower.clone());
+                }
             }
 
             // Parse Auto Patch into Memory
             let mut xe_patch = None;
             if let Some(ref p) = patch_path {
-                if let Ok(parsed) = crate::core::data::gxp::parse_patch_binary(p) {
-                    if let Some(khv) = parsed.khv.as_ref() { 
-                        ini.patch.khv = Some(khv.records.clone()); 
+                if let Ok(parsed) = crate::core::images::gxp::parse_patch_binary(p) {
+                    if let Some(khv) = parsed.khv.as_ref() {
+                        ini.patch.khv = Some(khv.records.clone());
                     }
                     xe_patch = Some(parsed);
                 }
@@ -358,42 +508,48 @@ impl IniSearch {
             for entry in &ini.main {
                 let filename = &entry.filename;
                 let lower_name = filename.to_lowercase();
-                if lower_name == "none" { continue; }
+                if lower_name == "none" {
+                    continue;
+                }
                 let mut found_content: Option<Vec<u8>> = None;
                 let mut found_path: Option<PathBuf> = None;
 
                 let is_update = lower_name.starts_with("cf_") || lower_name.starts_with("sf_") || lower_name.starts_with("cg_") || lower_name.starts_with("sg_");
 
+                // crc32
                 macro_rules! check_hash {
                     ($c:expr, $name:expr, $tier:expr) => {
                         if let Some(expected) = &entry.hash {
                             let actual = get_xebuild_crc32(&$c, $name);
-                            if actual.to_lowercase() == expected.to_lowercase() { true }
-                            else {
+                            if actual.to_lowercase() == expected.to_lowercase() {
+                                true
+                            } else {
                                 if unsafe_mode {
                                     warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in {} Tier). Continuing...", $name, expected, actual, $tier);
                                     true
-                                } else if $name.to_lowercase().starts_with("cf") || $name.to_lowercase().starts_with("sf") ||
-                                   $name.to_lowercase().starts_with("cg") || $name.to_lowercase().starts_with("sg") {
-                                    warn!("[ini] CF/SF/CG/SG CRC32 mismatch bypass (Expected: {}, Found: {} in {} Tier). Continuing...", expected, actual, $tier);
-                                    true
                                 } else {
-                                    info!("[ini] Hash mismatch for {} in {} Tier", $name, $tier);
-                                    false
+                                    return Err(FilesearchError::HashMismatch($name.to_string()));
                                 }
                             }
-                        } else { true }
+                        } else {
+                            true
+                        }
                     };
                 }
 
-                // Tier 1: NAND Image
+                // NAND Image
                 if let Some(n) = nand {
                     let mut nand_data = None;
                     if lower_name.starts_with("cb") {
-                        if lower_name.starts_with("cba") { nand_data = n.bootloaders.cb_a.as_ref().map(|b| b.serialize()); }
-                        else if lower_name.starts_with("cbb") { nand_data = n.bootloaders.cb_b.as_ref().map(|b| b.serialize()); }
-                        else if lower_name.starts_with("cbx") { nand_data = n.bootloaders.cb_x.as_ref().map(|b| b.serialize()); }
-                        else { nand_data = n.bootloaders.cb.as_ref().map(|b| b.serialize()); }
+                        if lower_name.starts_with("cba") {
+                            nand_data = n.bootloaders.cb_a.as_ref().map(|b| b.serialize());
+                        } else if lower_name.starts_with("cbb") {
+                            nand_data = n.bootloaders.cb_b.as_ref().map(|b| b.serialize());
+                        } else if lower_name.starts_with("cbx") {
+                            nand_data = n.bootloaders.cb_x.as_ref().map(|b| b.serialize());
+                        } else {
+                            nand_data = n.bootloaders.cb.as_ref().map(|b| b.serialize());
+                        }
                     } else if lower_name.starts_with("cd") || lower_name.starts_with("sd") {
                         nand_data = n.bootloaders.cd.as_ref().map(|b| b.serialize());
                     } else if lower_name.starts_with("ce") || lower_name.starts_with("se") {
@@ -414,53 +570,40 @@ impl IniSearch {
                     }
                 }
 
-                // Tier 2: Build ini Folder / Data
+                // Tier 1: mydata folder
                 if found_content.is_none() {
-                    let cand = build.join("data").join(filename);
+                    let cand = resolve_robust(&mydata, filename);
                     if cand.exists() {
                         let c = std::fs::read(&cand)?;
-                        if check_hash!(c, filename, "Data Folder") {
+                        if check_hash!(c, filename, "mydata") {
                             found_content = Some(c);
                             found_path = Some(cand);
                         }
                     }
                 }
 
-                // Tier 3: Build ini Folder (direct)
+                // Tier 2: Build folder
                 if found_content.is_none() {
-                    let cand = build.join(filename);
+                    let cand = resolve_robust(&build, filename);
                     if cand.exists() {
                         let c = std::fs::read(&cand)?;
-                        if check_hash!(c, filename, "Build Folder") {
+                        if check_hash!(c, filename, "Build") {
                             found_content = Some(c);
                             found_path = Some(cand);
                         }
                     }
                 }
 
-                // Tier 4: Common Folder
-                if found_content.is_none() {
-                    let cand = common.join(filename);
-                    if cand.exists() {
-                        let c = std::fs::read(&cand)?;
-                        if check_hash!(c, filename, "Common Folder") {
-                            found_content = Some(c);
-                            found_path = Some(cand);
-                        }
-                    }
-                }
-
-                // Tier 5: Fallbacks (xboxupd.bin / STFS) - Update only
+                // Tier 4: Build folder STFS (CF, CG only)
                 if is_update && found_content.is_none() {
                     let p_xboxupd = build.join("xboxupd.bin");
                     if p_xboxupd.exists() {
                         if let Ok(data_upd) = std::fs::read(&p_xboxupd) {
-                            if let Ok(cf) = crate::builder::chain::cf::BootloaderCf::parse(&data_upd) {
-                                let cf_size = cf.header.size.get() as usize;
-                                result.bootloader_assets.insert(expected_cf.clone(), data_upd[0..cf_size].to_vec());
-                                result.bootloader_assets.insert(expected_cg.clone(), data_upd[cf_size..].to_vec());
+                            if let Ok((cf, cg)) = crate::core::images::stfs::parse_xboxupd(&data_upd) {
+                                result.bootloader_assets.insert(expected_cf.clone(), cf.serialize());
+                                result.bootloader_assets.insert(expected_cg.clone(), cg.serialize());
                                 if let Some(c) = result.bootloader_assets.get(&lower_name).cloned() {
-                                    if check_hash!(c, filename, "xboxupd.bin") {
+                                    if check_hash!(c, filename, "Build STFS (xboxupd.bin)") {
                                         found_content = Some(c);
                                         found_path = Some(p_xboxupd);
                                     }
@@ -475,15 +618,14 @@ impl IniSearch {
                                 if let Some(name) = stfs_entry.file_name().to_str() {
                                     if name.starts_with("su") && !name.contains('.') {
                                         if let Ok(data_stfs) = std::fs::read(stfs_entry.path()) {
-                                            if let Ok(stfs) = crate::core::data::stfs::StfsContainer::new(&data_stfs) {
+                                            if let Ok(stfs) = crate::core::images::stfs::StfsContainer::new(&data_stfs) {
                                                 if let Ok(mem) = stfs.extract_to_memory() {
                                                     for (k, v) in mem {
                                                         let k_lower = k.to_lowercase();
                                                         if k_lower == "xboxupd.bin" || (k_lower.starts_with("su") && !k_lower.contains('.')) {
-                                                            if let Ok(cf) = crate::builder::chain::cf::BootloaderCf::parse(&v) {
-                                                                let cf_size = cf.header.size.get() as usize;
-                                                                result.bootloader_assets.insert(expected_cf.clone(), v[0..cf_size].to_vec());
-                                                                result.bootloader_assets.insert(expected_cg.clone(), v[cf_size..].to_vec());
+                                                            if let Ok((cf, cg)) = crate::core::images::stfs::parse_xboxupd(&v) {
+                                                                result.bootloader_assets.insert(expected_cf.clone(), cf.serialize());
+                                                                result.bootloader_assets.insert(expected_cg.clone(), cg.serialize());
                                                             }
                                                         } else {
                                                             result.flashfs_assets.insert(k_lower, v);
@@ -497,7 +639,9 @@ impl IniSearch {
                                                     }
                                                 }
                                             }
-                                            if found_content.is_some() { break; }
+                                            if found_content.is_some() {
+                                                break;
+                                            }
                                         }
                                     }
                                 }
@@ -506,125 +650,169 @@ impl IniSearch {
                     }
                 }
 
+                // Tier 6: Common folder
+                if found_content.is_none() {
+                    let cand = common.join(filename);
+                    if cand.exists() {
+                        let c = std::fs::read(&cand)?;
+                        if check_hash!(c, filename, "Common") {
+                            found_content = Some(c);
+                            found_path = Some(cand);
+                        }
+                    }
+                }
+
+                // Need to add rebooter patching
                 if let Some(mut c) = found_content {
                     // Apply Patch after confirmation
                     if let Some(ref parsed_patch) = xe_patch {
                         if Some(&lower_name) == target_cb.as_ref() {
                             if let Some(ref cb_patch) = parsed_patch.cb {
-                                let _ = crate::core::data::gxp::apply_records(&cb_patch.records, &mut c);
+                                let _ = crate::core::images::gxp::apply_records(&cb_patch.records, &mut c);
                             } else if let Some(ref cbb_patch) = parsed_patch.cb_b {
-                                let _ = crate::core::data::gxp::apply_records(&cbb_patch.records, &mut c);
+                                let _ = crate::core::images::gxp::apply_records(&cbb_patch.records, &mut c);
                             }
                         } else if lower_name.starts_with("cd_") || lower_name.starts_with("sd_") {
                             if let Some(ref cd_patch) = parsed_patch.cd {
-                                let _ = crate::core::data::gxp::apply_records(&cd_patch.records, &mut c);
+                                let _ = crate::core::images::gxp::apply_records(&cd_patch.records, &mut c);
                             }
                         }
                     }
 
                     result.bootloader_assets.insert(lower_name.clone(), c);
                     let target_bl = if entry.chain > 0 {
-                        result.rebooter.as_mut().ok_or(IniError::RebooterNotInitialized)?
+                        result.rebooter.as_mut().ok_or(FilesearchError::RebooterNotInitialized)?
                     } else {
                         result.bootloaders.as_mut().unwrap()
                     };
 
                     let fp = found_path.unwrap_or_else(|| PathBuf::from("MEMORY"));
                     if lower_name.starts_with("cb") {
-                        if lower_name.starts_with("cba") { target_bl.cb_a = Some(fp); }
-                        else if lower_name.starts_with("cbb") { target_bl.cb_b = Some(fp); }
-                        else if lower_name.starts_with("cbx") { target_bl.cb_x = Some(fp); }
-                        else { target_bl.cb = Some(fp); }
-                    } else if lower_name.starts_with("cd") || lower_name.starts_with("sd") { target_bl.cd = Some(fp); }
-                    else if lower_name.starts_with("ce") || lower_name.starts_with("se") { target_bl.ce = Some(fp); }
-                    else if lower_name.starts_with("sc") { target_bl.sc = Some(fp); }
+                        if lower_name.starts_with("cba") {
+                            target_bl.cb_a = Some(fp);
+                        } else if lower_name.starts_with("cbb") {
+                            target_bl.cb_b = Some(fp);
+                        } else if lower_name.starts_with("cbx") {
+                            target_bl.cb_x = Some(fp);
+                        } else {
+                            target_bl.cb = Some(fp);
+                        }
+                    } else if lower_name.starts_with("cd") || lower_name.starts_with("sd") {
+                        target_bl.cd = Some(fp);
+                    } else if lower_name.starts_with("ce") || lower_name.starts_with("se") {
+                        target_bl.ce = Some(fp);
+                    } else if lower_name.starts_with("sc") {
+                        target_bl.sc = Some(fp);
+                    }
                 } else {
-                    error!("[ini] Bootloader Tiered Search failed: {}", filename);
-                    return Err(IniError::FileNotFound(filename.to_string()));
+                    return Err(FilesearchError::FileNotFound(filename.to_string()));
                 }
             }
         }
 
-        // --- FlashFS Tiered Discovery ---
+        // FlashFS Tiered Discovery
         if !ini.flashfs.is_empty() {
             let mut flashfs = FlashFS::new();
             for entry in &ini.flashfs {
                 let filename = &entry.filename;
+                let basename = strip_flashfs_path_indicator(filename);
+                let lower_basename = basename.to_lowercase();
+                if lower_basename == "sysupdate.xexp1" || lower_basename == "sysupdate.xexp2" {
+                    info!("[ini] Unconditionally bypassing file discovery for {}", filename);
+                    continue;
+                }
                 let mut found_content: Option<Vec<u8>> = None;
 
-                // Tier 1: NAND Image
-                if let Some(n) = nand {
-                    if let Some(n_entry) = n.flashfs.root.entries.iter().find(|e| e.file_name.to_lowercase() == filename.to_lowercase()) {
-                        let c = n_entry.data.clone();
-                        if let Some(expected) = &entry.hash {
-                            let mut hasher = crc32fast::Hasher::new();
-                            hasher.update(&c);
-                            let actual = format!("{:08x}", hasher.finalize());
-                            if actual.to_lowercase() == expected.to_lowercase() {
-                                found_content = Some(c);
-                            } else if unsafe_mode {
-                                warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in NAND FlashFS Tier). Continuing...", filename, expected, actual);
-                                found_content = Some(c);
-                            } else {
-                                info!("[ini] Hash mismatch for {} in NAND FlashFS Tier", filename);
-                            }
-                        } else { found_content = Some(c); }
-                    }
-                }
-
-                // Tier 2 & 3: Local Folder (orig, orig1, orig2)
+                // Tier 0: NAND FlashFS (match by basename)
                 if found_content.is_none() {
-                    let candidates = [filename.clone(), format!("{}1", filename), format!("{}2", filename)];
-                    let paths = [flashfs_folder.clone(), build.clone()];
-                    for p_base in &paths {
-                        for cand in &candidates {
-                            let p = p_base.join(cand);
-                            if p.exists() {
-                                let c = std::fs::read(&p)?;
-                                if let Some(expected) = &entry.hash {
-                                    let mut hasher = crc32fast::Hasher::new();
-                                    hasher.update(&c);
-                                    let actual = format!("{:08x}", hasher.finalize());
-                                    if actual.to_lowercase() == expected.to_lowercase() {
-                                        found_content = Some(c);
-                                        break;
-                                    } else if unsafe_mode {
-                                        warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Folder Tier). Continuing...", filename, expected, actual);
-                                        found_content = Some(c);
-                                        break;
-                                    } else {
-                                        info!("[ini] Hash mismatch for {} ({}) in Folder Tier", filename, cand);
-                                    }
-                                } else {
-                                    found_content = Some(c);
-                                    break;
-                                }
+                    if let Some(n) = nand {
+                        if let Some(n_entry) = n.flashfs.root.entries.iter().find(|e| e.file_name.to_lowercase() == lower_basename) {
+                            let c = n_entry.data.clone();
+                            if check_crc32_simple(&c, &basename, &entry.hash, "NAND FlashFS", unsafe_mode).is_some() {
+                                found_content = Some(c);
                             }
                         }
-                        if found_content.is_some() { break; }
                     }
                 }
 
-                // Tier 4: Memory / STFS
+                // Probe candidates: exact basename, then basename+"1", basename+"2" (xeBuild
+                // stores e.g. "bootanim.xexp1" on disk when the INI names "bootanim.xexp").
+                let disk_candidates = [basename.clone(), format!("{}1", basename), format!("{}2", basename)];
+
+                // Tier 1: mydata folder (resolve with original path hint for relative traversal,
+                // then fall back to suffixed basenames)
                 if found_content.is_none() {
-                    let cand_names = [filename.to_lowercase(), format!("{}1", filename.to_lowercase()), format!("{}2", filename.to_lowercase())];
+                    // Try the original hint path first (handles "..\launch.xex" style entries)
+                    let hint_path = resolve_robust(&mydata, filename);
+                    let paths: Vec<std::path::PathBuf> = std::iter::once(hint_path)
+                        .chain(disk_candidates.iter().skip(1).map(|c| mydata.join(c)))
+                        .collect();
+                    for p in paths {
+                        if p.exists() {
+                            let c = std::fs::read(&p)?;
+                            if check_crc32_simple(&c, &basename, &entry.hash, "mydata", unsafe_mode).is_some() {
+                                found_content = Some(c);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Tier 2: Build folder
+                if found_content.is_none() {
+                    let hint_path = resolve_robust(&build, filename);
+                    let paths: Vec<std::path::PathBuf> = std::iter::once(hint_path)
+                        .chain(disk_candidates.iter().skip(1).map(|c| build.join(c)))
+                        .collect();
+                    for p in paths {
+                        if p.exists() {
+                            let c = std::fs::read(&p)?;
+                            if check_crc32_simple(&c, &basename, &entry.hash, "Build", unsafe_mode).is_some() {
+                                found_content = Some(c);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Tier 3: build/flashfs subfolder
+                if found_content.is_none() && flashfs_folder.is_dir() {
+                    for cand in &disk_candidates {
+                        let p = flashfs_folder.join(cand);
+                        if p.exists() {
+                            let c = std::fs::read(&p)?;
+                            if check_crc32_simple(&c, &basename, &entry.hash, "Build/flashfs", unsafe_mode).is_some() {
+                                found_content = Some(c);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Tier 4: Build folder STFS (FlashFS assets extracted during bootloader discovery)
+                if found_content.is_none() {
+                    let cand_names = [
+                        lower_basename.clone(),
+                        format!("{}1", lower_basename),
+                        format!("{}2", lower_basename),
+                    ];
                     for cand in &cand_names {
                         if let Some(c) = result.flashfs_assets.get(cand).cloned() {
-                            if let Some(expected) = &entry.hash {
-                                let mut hasher = crc32fast::Hasher::new();
-                                hasher.update(&c);
-                                let actual = format!("{:08x}", hasher.finalize());
-                                if actual.to_lowercase() == expected.to_lowercase() {
-                                    found_content = Some(c);
-                                    break;
-                                } else if unsafe_mode {
-                                    warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Memory/STFS Tier). Continuing...", filename, expected, actual);
-                                    found_content = Some(c);
-                                    break;
-                                } else {
-                                    info!("[ini] Hash mismatch for {} in Memory/STFS Tier", filename);
-                                }
-                            } else {
+                            if check_crc32_simple(&c, &basename, &entry.hash, "Build STFS", unsafe_mode).is_some() {
+                                found_content = Some(c);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Tier 6: Common folder
+                if found_content.is_none() {
+                    for cand in &disk_candidates {
+                        let p = common.join(cand);
+                        if p.exists() {
+                            let c = std::fs::read(&p)?;
+                            if check_crc32_simple(&c, &basename, &entry.hash, "Common", unsafe_mode).is_some() {
                                 found_content = Some(c);
                                 break;
                             }
@@ -633,30 +821,20 @@ impl IniSearch {
                 }
 
                 if let Some(c) = found_content {
-                    let lower = filename.to_lowercase();
-                    // No bootloader filter needed here: the [flashfs] INI section only names
-                    // filesystem assets. Routing is enforced by section membership, not by prefix.
                     let mut fs_entry = FileSystemEntry::new(0);
-                    fs_entry.file_name = filename.clone();
+                    fs_entry.file_name = basename.clone();
+                    fs_entry.source_path = Some(filename.to_string());
                     fs_entry.data = c.clone();
                     flashfs.root.entries.push(fs_entry);
-                    result.flashfs_assets.insert(lower, c);
+                    result.flashfs_assets.insert(lower_basename, c);
                 } else {
-                    error!("[ini] FlashFS Tiered Search failed: {}", filename);
-                    return Err(IniError::FileNotFound(filename.to_string()));
+                    return Err(FilesearchError::FileNotFound(filename.to_string()));
                 }
             }
             result.flashfs = Some(flashfs);
         }
 
-        Ok(IniSearch {
-            ini,
-            build,
-            common,
-            data,
-            unsafe_mode: Some(unsafe_mode),
-            result,
-        })
+        Ok(IniSearch { ini, build, common, mydata, payloads, smc: smc_dir, unsafe_mode: Some(unsafe_mode), result })
     }
 }
 
@@ -679,17 +857,9 @@ impl ImageSearch {
         let nand = nand.as_ref().to_path_buf();
         let nand = nand.canonicalize().unwrap_or_else(|_| nand.clone());
 
-        let result = ImageSearchResult {
-            nand: Some(nand),
-            key_string: None,
-            key_bin: None,
-            keyvault: None,
-            smc: None,
-        };
-        
-        ImageSearch {
-            result,
-        }
+        let result = ImageSearchResult { nand: Some(nand), key_string: None, key_bin: None, keyvault: None, smc: None };
+
+        ImageSearch { result }
     }
 }
 
@@ -711,10 +881,33 @@ impl PatchSearch {
         let build = Some(build.as_ref().to_path_buf());
         let data = data.map(|p| p.as_ref().to_path_buf());
 
-        PatchSearch {
-            build,
-            data,
-            result: Vec::new(),
-        }
+        PatchSearch { build, data, result: Vec::new() }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Verifies that get_xebuild_crc32 produces a hash matching a real xeBuild INI entry for CF.
+    //
+    // Requires a CF binary and its expected hash from a matching xeBuild INI.
+    // Set GXBUILD_TEST_CF to the path of your CF binary, and GXBUILD_TEST_CF_HASH to
+    // the expected hash from the INI (e.g. "f19cf13f").
+    //
+    // Example:
+    //   GXBUILD_TEST_CF=/path/to/xeBuild/9199/cf_9199.bin GXBUILD_TEST_CF_HASH=f19cf13f cargo test -- --ignored
+    #[test]
+    #[ignore = "requires GXBUILD_TEST_CF env var pointing to a CF binary"]
+    fn test_cf_crc32_matches_xebuild() {
+        let cf_path = std::path::PathBuf::from(std::env::var("GXBUILD_TEST_CF").expect("GXBUILD_TEST_CF must be set"));
+
+        let expected = std::env::var("GXBUILD_TEST_CF_HASH")
+            .expect("GXBUILD_TEST_CF_HASH must be set to the CRC32 from the xeBuild INI")
+            .to_lowercase();
+
+        let data = std::fs::read(&cf_path).expect("Failed to read CF binary");
+        let actual = get_xebuild_crc32(&data, &cf_path.file_name().unwrap().to_string_lossy());
+        assert_eq!(actual, expected, "CF CRC32 mismatch: got {}, expected {}", actual, expected);
     }
 }

@@ -1,16 +1,31 @@
 /*
-    gxp.rs - gxBuild Patch (GXP) binary parser
+  gxp.rs - gxBuild Patch (GXP) binary parser
 
-    Created in 2026 by Exposure / Zach for gxBuild.
-    Licensed under GPLv2 (inherited from xenon-bltool).
+  Copyright (c) 2026 gxBuild Contributors and Developers
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
 */
 
-use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom, BufRead, BufReader};
-use std::path::Path;
 use log::{info, warn};
+use std::fs::File;
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
+use std::path::Path;
 
-/// GXP Header Magic: "GXP\0" (0x47 0x58 0x50 0x00)
+/// GXP Header Magic: "GXP\0"
 pub const GXP_MAGIC: [u8; 4] = [0x47, 0x58, 0x50, 0x00];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,12 +62,12 @@ impl From<u16> for MotherboardType {
 #[repr(u8)]
 pub enum GxpPatchType {
     Disabled = 0,
-    Rgh4Section = 1,   // CB_B, CD, KHV, SMC
-    Jtag4Section = 2,  // 1BL, CB, CD, KHV
-    Rgh3Section = 3,   // CB, CD, KHV
-    Standalone = 4,    // 1 Section (Target BL)
-    Addon = 5,         // 1 Section (Target BL at offset)
-    Jtag5Section = 7,  // 1BL, CB, CD, KHV, SMC
+    Rgh4Section = 1,  // CB_B, CD, KHV, SMC
+    Jtag4Section = 2, // 1BL, CB, CD, KHV
+    Rgh3Section = 3,  // CB, CD, KHV
+    Standalone = 4,   // 1 Section (Target BL)
+    Addon = 5,        // 1 Section (Target BL at offset)
+    Jtag5Section = 7, // 1BL, CB, CD, KHV, SMC
     Unknown = 0xFF,
 }
 
@@ -105,7 +120,7 @@ impl From<u8> for BootloaderId {
 pub struct PatchRecord {
     pub address: u32,
     pub amount: u32,
-    pub data: Vec<u8>, // Switched to Vec<u8> for byte-level granularity
+    pub data: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -126,13 +141,17 @@ impl GxpHeader {
             1 => GxpPatchType::Addon,
             _ => GxpPatchType::Unknown,
         };
-        
+
         Self {
             magic: [0u8; 4],
             version: 0,
             motherboard: MotherboardType::Any,
             patch_type,
-            bootloader: if patch_type == GxpPatchType::Addon { BootloaderId::Khv } else { BootloaderId::None },
+            bootloader: if patch_type == GxpPatchType::Addon {
+                BootloaderId::Khv
+            } else {
+                BootloaderId::None
+            },
             offset: 0,
         }
     }
@@ -148,7 +167,7 @@ pub struct GxpBinary {
     pub header: GxpHeader,
     pub sections: Vec<GxpSection>,
     pub is_legacy: bool,
-    
+
     // Categorized accessors
     pub onebl: Option<GxpSection>,
     pub cb: Option<GxpSection>,
@@ -159,8 +178,7 @@ pub struct GxpBinary {
     pub smc: Option<GxpSection>,
 }
 
-/// Core record reading logic. 
-/// Handles legacy word-based patches and modern GXP patches with section-aware granularity.
+/// Parse sections and determine xepatch or gxs
 fn read_patch_sections(mut reader: impl Read, patch_type: GxpPatchType, is_legacy: bool, smc_id: BootloaderId) -> io::Result<Vec<GxpSection>> {
     let mut sections = Vec::new();
     let mut cur_records = Vec::new();
@@ -185,15 +203,15 @@ fn read_patch_sections(mut reader: impl Read, patch_type: GxpPatchType, is_legac
         let mut amt_buf = [0u8; 4];
         reader.read_exact(&mut amt_buf)?;
         let amount = u32::from_be_bytes(amt_buf);
-        
-        // Determine granularity: SMC sections in GXP files are byte-based.
+
+        // SMC sections in GXP files are GXS
         let current_section_idx = sections.len();
         let is_byte_mode = if is_legacy {
             false
         } else {
             match patch_type {
-                GxpPatchType::Rgh4Section => current_section_idx == 3, // Section 4 (SMC)
-                GxpPatchType::Jtag5Section => current_section_idx == 4, // Section 5 (SMC)
+                GxpPatchType::Rgh4Section => current_section_idx == 3,
+                GxpPatchType::Jtag5Section => current_section_idx == 4,
                 GxpPatchType::Standalone | GxpPatchType::Addon => smc_id == BootloaderId::Smc,
                 _ => false,
             }
@@ -214,11 +232,7 @@ fn read_patch_sections(mut reader: impl Read, patch_type: GxpPatchType, is_legac
             }
         }
 
-        cur_records.push(PatchRecord {
-            address,
-            amount,
-            data,
-        });
+        cur_records.push(PatchRecord { address, amount, data });
     }
 
     Ok(sections)
@@ -233,7 +247,7 @@ pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> 
         // GXP Format
         let mut meta_buf = [0u8; 12];
         file.read_exact(&mut meta_buf)?;
-        
+
         let header = GxpHeader {
             magic: GXP_MAGIC,
             version: u32::from_be_bytes([meta_buf[0], meta_buf[1], meta_buf[2], meta_buf[3]]),
@@ -255,27 +269,29 @@ pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> 
 
     if !is_legacy {
         info!("[gxp] Detected GXP binary: {:?}", path.as_ref());
-        info!("[gxp] Metadata: Type={:?}, Kernel={}, MB={:?}, BL={:?}, Offset=0x{:X}", 
-            header.patch_type, header.version, header.motherboard, header.bootloader, header.offset);
+        info!(
+            "[gxp] Metadata: Type={:?}, Kernel={}, MB={:?}, BL={:?}, Offset=0x{:X}",
+            header.patch_type, header.version, header.motherboard, header.bootloader, header.offset
+        );
     } else {
         info!("[gxp] Detected legacy xeBuild binary: {:?}", path.as_ref());
-        info!("[gxp] Heuristic: Type={:?}, Sections={}", header.patch_type, if header.patch_type == GxpPatchType::Addon { 1 } else if header.patch_type == GxpPatchType::Rgh3Section { 3 } else { 4 });
+        info!(
+            "[gxp] Heuristic: Type={:?}, Sections={}",
+            header.patch_type,
+            if header.patch_type == GxpPatchType::Addon {
+                1
+            } else if header.patch_type == GxpPatchType::Rgh3Section {
+                3
+            } else {
+                4
+            }
+        );
     }
 
     let sections_raw = read_patch_sections(file, header.patch_type, is_legacy, header.bootloader)?;
 
-    let mut binary = GxpBinary {
-        header: header.clone(),
-        sections: sections_raw.clone(),
-        is_legacy,
-        onebl: None,
-        cb: None,
-        cb_a: None,
-        cb_b: None,
-        cd: None,
-        khv: None,
-        smc: None,
-    };
+    let mut binary =
+        GxpBinary { header: header.clone(), sections: sections_raw.clone(), is_legacy, onebl: None, cb: None, cb_a: None, cb_b: None, cd: None, khv: None, smc: None };
 
     // Route sections based on patch type
     match header.patch_type {
@@ -336,7 +352,7 @@ pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> 
         }
         _ => {
             if is_legacy && !sections_raw.is_empty() {
-                 binary.khv = Some(sections_raw[0].clone());
+                binary.khv = Some(sections_raw[0].clone());
             }
         }
     }
@@ -344,13 +360,11 @@ pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> 
     Ok(binary)
 }
 
-/// Parses a human-readable GXS (GXP-Source) file into a GxpSection.
-/// Supports [Address]: [Hex Data...] format with comments and multi-line payloads.
 pub fn parse_gxs_source<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpSection> {
     let file = File::open(&path)?;
     let reader = BufReader::new(file);
     let mut records = Vec::new();
-    
+
     let mut current_address: Option<u32> = None;
     let mut current_data: Vec<u8> = Vec::new();
 
@@ -365,16 +379,12 @@ pub fn parse_gxs_source<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpSection> {
         if let Some((addr_part, data_part)) = line_clean.split_once(':') {
             // New record found. Flush previous if any.
             if let Some(addr) = current_address {
-                records.push(PatchRecord {
-                    address: addr,
-                    amount: current_data.len() as u32,
-                    data: std::mem::take(&mut current_data),
-                });
+                records.push(PatchRecord { address: addr, amount: current_data.len() as u32, data: std::mem::take(&mut current_data) });
             }
 
             let addr_str = addr_part.trim().trim_start_matches("0x");
             current_address = Some(u32::from_str_radix(addr_str, 16)?);
-            
+
             // Initial data on the same line
             for token in data_part.split_whitespace() {
                 current_data.push(u8::from_str_radix(token, 16)?);
@@ -389,22 +399,36 @@ pub fn parse_gxs_source<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpSection> {
 
     // Final flush
     if let Some(addr) = current_address {
-        records.push(PatchRecord {
-            address: addr,
-            amount: current_data.len() as u32,
-            data: current_data,
-        });
+        records.push(PatchRecord { address: addr, amount: current_data.len() as u32, data: current_data });
     }
 
     info!("[gxs] Parsed {} records from {:?}", records.len(), path.as_ref());
     Ok(GxpSection { records })
 }
 
-/// Low-level function to apply a set of patch records to a buffer.
+pub fn serialize_records(records: &[PatchRecord]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    for record in records {
+        buf.extend_from_slice(&record.address.to_be_bytes());
+        // Amount is count of 32-bit words for standard patches
+        let word_count = (record.data.len() + 3) / 4;
+        buf.extend_from_slice(&(word_count as u32).to_be_bytes());
+
+        let mut data = record.data.clone();
+        if data.len() % 4 != 0 {
+            data.resize((data.len() + 3) & !3, 0); // Align to 4 bytes
+        }
+        buf.extend(data);
+    }
+    // Terminator
+    buf.extend_from_slice(&0xFFFFFFFFu32.to_be_bytes());
+    buf
+}
+
 pub fn apply_records(records: &[PatchRecord], data: &mut Vec<u8>) -> anyhow::Result<()> {
     info!("[gxp] Applying {} records to buffer (size 0x{:X})", records.len(), data.len());
     let mut modified_words = 0;
-    
+
     for record in records {
         let offset = record.address as usize;
 
@@ -417,14 +441,13 @@ pub fn apply_records(records: &[PatchRecord], data: &mut Vec<u8>) -> anyhow::Res
         }
 
         data[offset..offset + record.data.len()].copy_from_slice(&record.data);
-        modified_words += (record.data.len() + 3) / 4;
+        modified_words += (record.data.len() as u32 + 3) / 4;
     }
-    
-    info!("[gxp] Modified {} words.", modified_words);
+
+    info!("[gxp]   - Patched {} words (0x{:X} bytes)", modified_words, modified_words * 4);
     Ok(())
 }
 
-/// Convenience function: Parses a patch file and applies its first section to a buffer.
 pub fn parse_and_apply_to_buffer<P: AsRef<Path>>(path: P, data: &mut Vec<u8>) -> anyhow::Result<()> {
     let patch = parse_patch_binary(path)?;
     if let Some(section) = patch.sections.first() {
@@ -497,9 +520,13 @@ mod tests {
         assert_eq!(sections[4].records[0].data, vec![0xEE]);
 
         let binary = GxpBinary {
-            header: GxpHeader { 
-                magic: GXP_MAGIC, version: 0, motherboard: MotherboardType::Any, 
-                patch_type: GxpPatchType::Jtag5Section, bootloader: BootloaderId::None, offset: 0 
+            header: GxpHeader {
+                magic: GXP_MAGIC,
+                version: 0,
+                motherboard: MotherboardType::Any,
+                patch_type: GxpPatchType::Jtag5Section,
+                bootloader: BootloaderId::None,
+                offset: 0,
             },
             sections: sections.clone(),
             is_legacy: false,
@@ -528,15 +555,15 @@ mod tests {
             writeln!(file, "    AA BB").unwrap();
             writeln!(file, "    CC DD # Multi-line").unwrap();
         }
-        
+
         let section = parse_gxs_source(test_path).unwrap();
         let _ = std::fs::remove_file(test_path);
 
         assert_eq!(section.records.len(), 2);
-        
+
         assert_eq!(section.records[0].address, 0x1234);
         assert_eq!(section.records[0].data, vec![0x11, 0x22, 0x33]);
-        
+
         assert_eq!(section.records[1].address, 0x5678);
         assert_eq!(section.records[1].data, vec![0xAA, 0xBB, 0xCC, 0xDD]);
     }

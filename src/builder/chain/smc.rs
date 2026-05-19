@@ -1,18 +1,30 @@
 /*
-    smc.rs - Handling for Xbox 360 SMC.
+  smc.rs - Handling for Xbox 360 SMC.
 
-    This file was originally taken from xenon-bltool, but at this point, contains more code from Swizzy's x360Utils
-    and the various buildpy scripts floating around.
+  Copyright (c) 2026 gxBuild Contributors and Developers
 
-    Modified in 2026 by Exposure / Zach for GGX
-    Licensed under GPLv2 (inherited from xenon-bltool).
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
 */
 
-use zerocopy::{FromBytes, IntoBytes};
 use super::BootloaderHeader;
 use crate::builder::deps::excrypt::{self, ExCryptRsa};
-use crate::core::data::blocks::NandLayout;
+use crate::core::images::blocks::NandLayout;
 use log::info;
+use zerocopy::{FromBytes, IntoBytes};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SmcType {
@@ -31,6 +43,8 @@ pub struct SmcMetadata {
     pub type_byte: u8,
     pub major_version: u8,
     pub minor_version: u8,
+    pub lockdown_value: u8,
+    pub pairing_data: [u8; 3],
 }
 
 #[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
@@ -49,24 +63,27 @@ pub struct Smc {
 
 impl Smc {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload) = SmcHeader::read_from_prefix(data)
-            .map_err(|_| "Failed to parse SMC header")?;
-        let mut smc = Self {
-            header: header.clone(),
-            data: payload.to_vec(),
-            metadata: None,
-        };
+        let (header, payload) = SmcHeader::read_from_prefix(data).map_err(|_| "Failed to parse SMC header")?;
+        let mut smc = Self { header: header.clone(), data: payload.to_vec(), metadata: None };
         smc.populate_metadata();
         Ok(smc)
     }
 
     pub fn populate_metadata(&mut self) {
-        if self.data.len() < 0x103 { return; }
-        
+        if self.data.len() < 0x103 {
+            return;
+        }
+
         let type_byte = self.data[0x100];
         let major = self.data[0x101];
         let minor = self.data[0x102];
         let identified_type = self.identify_type();
+
+        let ldv = self.data[0x103];
+        let mut pd = [0u8; 3];
+        if self.data.len() >= 0x107 {
+            pd.copy_from_slice(&self.data[0x104..0x107]);
+        }
 
         self.metadata = Some(SmcMetadata {
             smc_type: identified_type,
@@ -74,10 +91,12 @@ impl Smc {
             type_byte,
             major_version: major,
             minor_version: minor,
+            lockdown_value: ldv,
+            pairing_data: pd,
         });
 
         if let Some(meta) = &self.metadata {
-            info!("[smc] Metadata: [{:?}] Type 0x{:02X}, Ver {}.{}", meta.smc_type, meta.type_byte, meta.major_version, meta.minor_version);
+            info!("[smc] Metadata: [{:?}] Type 0x{:02X}, Ver {}.{:02}", meta.smc_type, meta.type_byte, meta.major_version, meta.minor_version);
         }
     }
 
@@ -86,7 +105,9 @@ impl Smc {
         let mut glitch_patched = false;
         let mut retail_found = false;
 
-        if self.data.len() < 8 { return identified; }
+        if self.data.len() < 8 {
+            return identified;
+        }
 
         for i in 0..self.data.len() - 6 {
             match self.data[i] {
@@ -132,10 +153,9 @@ impl Smc {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
 
-        if let Ok(hash) = excrypt::rot_sum_sha(
-            &IntoBytes::as_bytes(&self.header.header)[..0x10],
-            &self.data[..(size_aligned as usize - std::mem::size_of::<SmcHeader>())],
-        ) {
+        if let Ok(hash) =
+            excrypt::rot_sum_sha(&IntoBytes::as_bytes(&self.header.header)[..0x10], &self.data[..(size_aligned as usize - std::mem::size_of::<SmcHeader>())])
+        {
             sha_out.copy_from_slice(&hash);
         }
     }
@@ -180,14 +200,22 @@ impl RawSmc {
     }
 
     pub fn populate_metadata(&mut self) {
-        if self.data.len() < 0x103 { return; }
-        
+        if self.data.len() < 0x103 {
+            return;
+        }
+
         let type_byte = self.data[0x100];
         let major = self.data[0x101];
         let minor = self.data[0x102];
-        
+
         // Use Smc's structural logic for identification if possible
         let identified_type = self.identify_type();
+
+        let ldv = self.data[0x103];
+        let mut pd = [0u8; 3];
+        if self.data.len() >= 0x107 {
+            pd.copy_from_slice(&self.data[0x104..0x107]);
+        }
 
         self.metadata = Some(SmcMetadata {
             smc_type: identified_type,
@@ -195,7 +223,16 @@ impl RawSmc {
             type_byte,
             major_version: major,
             minor_version: minor,
+            lockdown_value: ldv,
+            pairing_data: pd,
         });
+
+        if major != 0 && major != 0xFF {
+            info!("[smc] Identified Version: {}.{:02} (Type: 0x{:02X}, Offset: 0x101)", major, minor, type_byte);
+        } else {
+            // For debugging garbage versions
+            info!("[smc] Raw Version Bytes at 0x100: {:02X} {:02X} {:02X}", type_byte, major, minor);
+        }
     }
 
     pub fn identify_type(&self) -> SmcType {
@@ -203,7 +240,9 @@ impl RawSmc {
         let mut glitch_patched = false;
         let mut retail_found = false;
 
-        if self.data.len() < 8 { return identified; }
+        if self.data.len() < 8 {
+            return identified;
+        }
 
         for i in 0..self.data.len() - 6 {
             match self.data[i] {
@@ -246,61 +285,72 @@ impl RawSmc {
     }
 
     pub fn is_scrambled(&self) -> bool {
-        if self.data.len() < 4 { return false; }
+        if self.data.len() < 4 {
+            return false;
+        }
         self.data[0..4] == [0x04, 0x20, 0x69, 0x69]
     }
 
     pub fn decrypt(&mut self) {
+        // RGH3 scrambling is applied to the ciphertext in the NAND.
+        // We must unscramble BEFORE decryption to keep the rolling key state in sync.
+        self.unscramble();
         smc_crypt(&mut self.data, false);
-        
-        let mut is_retail = false;
-        if let Some(ref meta) = self.metadata {
-            if meta.smc_type == SmcType::Retail { is_retail = true; }
-        }
-        
-        if !is_retail {
-            self.unscramble();
-        }
-        
         self.populate_metadata();
     }
 
     pub fn encrypt(&mut self) {
         let mut is_retail = false;
+        self.populate_metadata();
         if let Some(ref meta) = self.metadata {
-            if meta.smc_type == SmcType::Retail { is_retail = true; }
+            if meta.smc_type == SmcType::Retail {
+                is_retail = true;
+            }
         }
-        
+
+        smc_crypt(&mut self.data, true);
+
+        // RGH3 scrambling is applied to the ciphertext.
         if !is_retail {
             self.scramble();
         }
-        smc_crypt(&mut self.data, true);
     }
 
     pub fn unscramble(&mut self) {
-        if self.data.len() < 8 { return; }
-        if !self.is_scrambled() { return; }
+        if self.data.len() < 8 {
+            return;
+        }
+        if !self.is_scrambled() {
+            return;
+        }
         let len = self.data.len();
         let mut real_header = [0u8; 4];
         real_header.copy_from_slice(&self.data[len - 8..len - 4]);
         self.data[0..4].copy_from_slice(&real_header);
-        for i in 0..8 { self.data[len - 8 + i] = 0; }
+        for i in 0..8 {
+            self.data[len - 8 + i] = 0;
+        }
         info!("[smc] Unscrambled (RGH3)");
     }
 
     pub fn scramble(&mut self) {
-        if self.data.len() < 8 { return; }
-        if self.is_scrambled() { return; }
+        if self.data.len() < 8 {
+            return;
+        }
+        if self.is_scrambled() {
+            return;
+        }
         let len = self.data.len();
         let mut real_header = [0u8; 4];
         real_header.copy_from_slice(&self.data[0..4]);
         self.data[0..4].copy_from_slice(&[0x04, 0x20, 0x69, 0x69]);
         self.data[len - 8..len - 4].copy_from_slice(&real_header);
-        for i in 0..4 { self.data[len - 4 + i] = 0; }
+        for i in 0..4 {
+            self.data[len - 4 + i] = 0;
+        }
         info!("[smc] Scrambled (RGH3)");
     }
 }
-
 
 /// 64KB SMC Configuration Partition.
 #[derive(Clone)]
@@ -320,8 +370,8 @@ impl SmcConfig {
     pub fn get_scan_address(layout: &NandLayout) -> u32 {
         match layout {
             NandLayout::Emmc => 0x02FFC000,
-            NandLayout::Bb   => 0x3DF0000,
-            _                => 0xF70000,
+            NandLayout::Bb => 0x3DF0000,
+            _ => 0xF70000,
         }
     }
 
@@ -331,8 +381,8 @@ impl SmcConfig {
     pub fn get_logical_address(layout: &NandLayout) -> u32 {
         match layout {
             NandLayout::Emmc => 0x0,
-            NandLayout::Bb   => 0x3DF0000,
-            _                => 0xF70000,
+            NandLayout::Bb => 0x3DF0000,
+            _ => 0xF70000,
         }
     }
 
@@ -372,16 +422,22 @@ impl SmcConfig {
     pub fn set_fan_speed(&mut self, is_gpu: bool, mode_manual: bool, speed_pct: u8) {
         let offset = if is_gpu { 0x12 } else { 0x11 };
         let mut val = speed_pct & 0x7F;
-        if mode_manual { val |= 0x80; }
+        if mode_manual {
+            val |= 0x80;
+        }
         self.data[offset] = val;
     }
 
     pub fn set_thermal_targets(&mut self, cpu: u8, gpu: u8, ram: u8) {
-        self.data[0x29] = cpu; self.data[0x2A] = gpu; self.data[0x2B] = ram;
+        self.data[0x29] = cpu;
+        self.data[0x2A] = gpu;
+        self.data[0x2B] = ram;
     }
 
     pub fn set_thermal_limits(&mut self, cpu: u8, gpu: u8, ram: u8) {
-        self.data[0x2C] = cpu; self.data[0x2D] = gpu; self.data[0x2E] = ram;
+        self.data[0x2C] = cpu;
+        self.data[0x2D] = gpu;
+        self.data[0x2E] = ram;
     }
 
     pub fn set_mac_address(&mut self, mac: &[u8; 6]) {
@@ -390,9 +446,11 @@ impl SmcConfig {
 
     pub fn set_regions(&mut self, video: u16, game: u16, dvd: u8) {
         let v_bytes = video.to_be_bytes();
-        self.data[0x22A] = v_bytes[0]; self.data[0x22B] = v_bytes[1];
+        self.data[0x22A] = v_bytes[0];
+        self.data[0x22B] = v_bytes[1];
         let g_bytes = game.to_be_bytes();
-        self.data[0x22C] = g_bytes[0]; self.data[0x22D] = g_bytes[1];
+        self.data[0x22C] = g_bytes[0];
+        self.data[0x22D] = g_bytes[1];
         self.data[0x237] = dvd;
     }
 
@@ -405,15 +463,18 @@ fn smc_crypt(data: &mut [u8], encrypt: bool) {
     let mut key: [u32; 4] = [0x42, 0x75, 0x4E, 0x79];
     for i in 0..data.len() {
         let ciphertext_byte;
-        if encrypt { 
+        if encrypt {
             ciphertext_byte = data[i] ^ (key[i & 3] & 0xFF) as u8;
         } else {
             ciphertext_byte = data[i];
         }
         let mod_val = (ciphertext_byte as u32).wrapping_mul(0xFB);
-        if !encrypt { data[i] ^= (key[i & 3] & 0xFF) as u8; }
-        else { data[i] = ciphertext_byte; }
-        key[(i+1)&3] = key[(i+1)&3].wrapping_add(mod_val);
-        key[(i+2)&3] = key[(i+2)&3].wrapping_add(mod_val >> 8);
+        if !encrypt {
+            data[i] ^= (key[i & 3] & 0xFF) as u8;
+        } else {
+            data[i] = ciphertext_byte;
+        }
+        key[(i + 1) & 3] = key[(i + 1) & 3].wrapping_add(mod_val);
+        key[(i + 2) & 3] = key[(i + 2) & 3].wrapping_add(mod_val >> 8);
     }
 }

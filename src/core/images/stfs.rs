@@ -1,30 +1,44 @@
 /*
-    stfs.rs - STFS (PIRS) extraction tool for Xbox 360 content packages.
-    Based on extract360.py by Rene Ladan.
-    
-    Modified in 2026 by Exposure / Zach for gxBuild.
-    Licensed under GPLv2 (inherited from xenon-bltool).
+  stfs.rs - STFS (PIRS) extraction tool for Xbox 360 content packages.
+
+  Copyright (c) 2026 gxBuild Contributors and Developers
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
 */
 
+use log::info;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::fs;
-use log::{info};
-use zerocopy::{FromBytes, IntoBytes, KnownLayout, Immutable, byteorder::{U16, U32, BigEndian}};
+use std::path::{Path, PathBuf};
+use zerocopy::{
+    byteorder::{BigEndian, U16, U32},
+    FromBytes, Immutable, IntoBytes, KnownLayout,
+};
 
 use crate::builder::chain::cf::BootloaderCf;
 use crate::builder::chain::cg::BootloaderCg;
 
-pub const ONE_BL_KEY: [u8; 16] = [
-    0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7,
-    0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA,
-];
+pub const ONE_BL_KEY: [u8; 16] = [0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA];
 
 #[derive(FromBytes, IntoBytes, KnownLayout, Immutable, Clone, Copy)]
 #[repr(C)]
 pub struct StfsHeader {
     pub magic: [u8; 4], // "PIRS"
-    // ... many fields follow, but we mainly care about the directory start logic
+                        // ... many fields follow, but we mainly care about the directory start logic
 }
 
 #[derive(FromBytes, IntoBytes, KnownLayout, Immutable, Clone, Copy)]
@@ -77,20 +91,42 @@ impl<'a> StfsContainer<'a> {
         Ok(Self { data })
     }
 
+    fn directory_layout(&self) -> Result<(usize, u32, usize), String> {
+        if self.data.len() < 0xC034 {
+            return Err("STFS container too small to read directory metadata".to_string());
+        }
+
+        let pathind_peek = u16::from_be_bytes(self.data[0xC032..0xC034].try_into().map_err(|_| "Failed to read STFS path index")?);
+        let start_offset = if pathind_peek == 0xFFFF { 0xC000 } else { 0xD000 };
+        let multiplier = if start_offset == 0xC000 { 0x1000 } else { 0x2000 };
+
+        let first_clust_end = start_offset + 0x31;
+        if self.data.len() < first_clust_end {
+            return Err("STFS container too small to read directory cluster count".to_string());
+        }
+
+        let first_clust = u16::from_le_bytes(
+            self.data[start_offset + 0x2F..first_clust_end]
+                .try_into()
+                .map_err(|_| "Failed to read STFS directory cluster count")?,
+        ) as usize;
+        let dir_len = 0x1000usize.checked_mul(first_clust).ok_or_else(|| "STFS directory size overflow".to_string())?;
+        let dir_end = start_offset.checked_add(dir_len).ok_or_else(|| "STFS directory offset overflow".to_string())?;
+        if dir_end > self.data.len() {
+            return Err("STFS directory extends beyond container bounds".to_string());
+        }
+
+        Ok((start_offset, multiplier, dir_end))
+    }
 
     pub fn extract_all(&self, target_dir: &Path) -> Result<(), String> {
         if !target_dir.exists() {
             fs::create_dir_all(target_dir).map_err(|e| e.to_string())?;
         }
 
-        // Determine directory start offset (0xC000 or 0xD000)
-        let pathind_peek = u16::from_be_bytes(self.data[0xC032..0xC034].try_into().unwrap());
-        let start_offset = if pathind_peek == 0xFFFF { 0xC000 } else { 0xD000 };
-        let multiplier = if start_offset == 0xC000 { 0x1000 } else { 0x2000 };
+        let (start_offset, multiplier, dir_end) = self.directory_layout()?;
+        let dir_data = &self.data[start_offset..dir_end];
 
-        let first_clust = u16::from_le_bytes(self.data[start_offset + 0x2F..start_offset + 0x31].try_into().unwrap()) as usize;
-        let dir_data = &self.data[start_offset..start_offset + (0x1000 * first_clust)];
-        
         let mut paths: HashMap<u16, PathBuf> = HashMap::new();
         paths.insert(0xFFFF, target_dir.to_path_buf());
 
@@ -100,7 +136,9 @@ impl<'a> StfsContainer<'a> {
                 .map(|(e, _)| e)
                 .map_err(|_| "Failed to parse directory entry")?;
 
-            if entry.namelen == 0 { break; }
+            if entry.namelen == 0 {
+                break;
+            }
 
             let name = entry.get_name();
             let pathind = entry.pathind.get();
@@ -124,13 +162,13 @@ impl<'a> StfsContainer<'a> {
 
                     let real_start = (start_offset as u32 + (cluster_idx * 0x1000) + skipped) as usize;
                     let chunk_size = std::cmp::min(0x1000, file_len);
-                    
+
                     if real_start + chunk_size > self.data.len() {
                         return Err(format!("File '{}' extends beyond image bounds", name));
                     }
 
                     file_data.extend_from_slice(&self.data[real_start..real_start + chunk_size]);
-                    
+
                     cluster_idx += 1;
                     file_len -= chunk_size;
                 }
@@ -144,16 +182,12 @@ impl<'a> StfsContainer<'a> {
     }
 
     pub fn extract_to_memory(&self) -> Result<HashMap<String, Vec<u8>>, String> {
-        // Determine directory start offset (0xC000 or 0xD000)
-        let pathind_peek = u16::from_be_bytes(self.data[0xC032..0xC034].try_into().unwrap());
-        let start_offset = if pathind_peek == 0xFFFF { 0xC000 } else { 0xD000 };
-        let multiplier = if start_offset == 0xC000 { 0x1000 } else { 0x2000 };
+        let (start_offset, multiplier, dir_end) = self.directory_layout()?;
 
         info!("[builder] STFS extract_to_memory: start_offset=0x{:x}, multiplier=0x{:x}", start_offset, multiplier);
 
-        let first_clust = u16::from_le_bytes(self.data[start_offset + 0x2F..start_offset + 0x31].try_into().unwrap()) as usize;
-        let dir_data = &self.data[start_offset..start_offset + (0x1000 * first_clust)];
-        
+        let dir_data = &self.data[start_offset..dir_end];
+
         let mut results = HashMap::new();
 
         for i in 0..(dir_data.len() / 64) {
@@ -162,8 +196,12 @@ impl<'a> StfsContainer<'a> {
                 .map(|(e, _)| e)
                 .map_err(|_| "Failed to parse directory entry")?;
 
-            if entry.namelen == 0 { break; }
-            if entry.is_directory() { continue; } // FlashFS in the update context is a flat file set
+            if entry.namelen == 0 {
+                break;
+            }
+            if entry.is_directory() {
+                continue;
+            } // FlashFS in the update context is a flat file set
 
             let mut name = entry.get_name();
             // Truncate $flash_ prefix if present
@@ -184,13 +222,13 @@ impl<'a> StfsContainer<'a> {
 
                 let real_start = (start_offset as u32 + (cluster_idx * 0x1000) + skipped) as usize;
                 let chunk_size = std::cmp::min(0x1000, file_len);
-                
+
                 if real_start + chunk_size > self.data.len() {
                     return Err(format!("File '{}' extends beyond image bounds", name));
                 }
 
                 file_data.extend_from_slice(&self.data[real_start..real_start + chunk_size]);
-                
+
                 cluster_idx += 1;
                 file_len -= chunk_size;
             }
@@ -209,10 +247,7 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
         return Err("xboxupd buffer too small to check magic".to_string());
     }
     if &xboxupd_bytes[0..2] != b"CF" {
-        return Err(format!(
-            "Invalid xboxupd magic: Expected 'CF' (0x4346), found 0x{:02X}{:02X}. Potential STFS misalignment.",
-            xboxupd_bytes[0], xboxupd_bytes[1]
-        ));
+        return Err(format!("Invalid xboxupd magic: Expected 'CF' (0x4346), found 0x{:02X}{:02X}. Potential STFS misalignment.", xboxupd_bytes[0], xboxupd_bytes[1]));
     }
 
     // 1. Parse CF
@@ -228,7 +263,7 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
     info!("[builder] Parsing xboxupd: CF at offset 0, size=0x{:x}", cf.header.size.get());
     cf.populate_metadata();
     let meta = cf.metadata.as_ref().ok_or("Failed to populate CF metadata")?;
-    let cf_size = cf.header.size.get() as usize;
+    let cf_size = (cf.header.size.get() as usize + 0xF) & !0xF;
 
     if xboxupd_bytes.len() < cf_size {
         return Err("xboxupd buffer too small to contain CG payload".to_string());
@@ -246,7 +281,7 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
 
     cg.populate_metadata();
 
-    // 3. Compare RotSum 
+    // 3. Compare RotSum
     let mut cg_rotsum = [0u8; 0x14];
     cg.calculate_rotsum(&mut cg_rotsum);
 
@@ -256,4 +291,16 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
 
     info!("[builder] xboxupd parsed OK: CF v{} -> CG v{} ({} bytes)", cf.header.version.get(), cg.header.version.get(), xboxupd_bytes.len());
     Ok((cf, cg))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StfsContainer;
+
+    #[test]
+    fn short_pirs_container_returns_error() {
+        let container = StfsContainer::new(b"PIRS").unwrap();
+
+        assert!(container.extract_to_memory().is_err());
+    }
 }
