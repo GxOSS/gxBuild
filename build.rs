@@ -31,17 +31,11 @@ fn main() {
         format!("{}/excrypt_aes.c", excrypt_path),
         format!("{}/excrypt_bn.c", excrypt_path),
         format!("{}/excrypt_bn_sig.c", excrypt_path),
-        format!("{}/excrypt_des.c", excrypt_path),
         format!("{}/excrypt_ecc.c", excrypt_path),
-        format!("{}/excrypt_md5.c", excrypt_path),
         format!("{}/excrypt_parve.c", excrypt_path),
+        format!("{}/excrypt_rc4.c", excrypt_path),
         format!("{}/excrypt_sha2.c", excrypt_path),
         format!("{}/rijndael.c", excrypt_path),
-        /*
-        format!("{}/lzxd.c", mspack_path),
-        format!("{}/system.c", mspack_path),
-        format!("{}/lzx-delta.c", xenia_path),
-        */
     ]);
 
     build_c.include(excrypt_path);
