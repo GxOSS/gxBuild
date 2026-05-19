@@ -272,8 +272,8 @@ pub struct PendingAssets<'a> {
 }
 
 pub fn apply_xe_ini(mut nand: NandSkeleton, ini: XeBuildIni, pending: PendingAssets<'_>) -> Result<NandSkeleton, IniError> {
-    nand.clear_bootloaders();
-    nand.clear_update();
+    nand.bootloaders.clear();
+    nand.update.clear();
 
     if !pending.bootloaders.is_empty() {
         info!("[ini] Applying {} discovered bootloader assets from memory...", pending.bootloaders.len());

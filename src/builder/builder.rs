@@ -1425,6 +1425,13 @@ impl NandSkeleton {
                 let data = cg.serialize();
                 logical_image[cg_off..cg_off + data.len()].copy_from_slice(&data);
             }
+
+            // Zero the second slot — JTAG path is always single-slot.
+            let slot1_start = target_cf_offset + 0x10000;
+            let slot1_end = (slot1_start + 0x10000).min(logical_image.len());
+            if slot1_start < logical_image.len() {
+                logical_image[slot1_start..slot1_end].fill(0xFF);
+            }
         }
 
         // 5. FlashFS & Layout Calculation
@@ -1699,6 +1706,17 @@ impl NandSkeleton {
                 return Err(format!("CF0 overflow at 0x{:X}: need 0x{:X} bytes", cf0_offset, cf0d.len()));
             }
             logical_image[cf0_offset..cf0_offset + cf0d.len()].copy_from_slice(&cf0d);
+
+            // If there is no second slot, zero it out so stale CF1/CG1 bytes from
+            // the input NAND image are not carried into the output.
+            if cf1.is_none() {
+                let slot1_start = target_cf_offset + 0x10000;
+                let slot1_end = (slot1_start + 0x10000).min(logical_image.len());
+                if slot1_start < logical_image.len() {
+                    logical_image[slot1_start..slot1_end].fill(0xFF);
+                    info!("[builder] Cleared second CF/CG slot (0x{:X}..0x{:X}) — no CF1 present", slot1_start, slot1_end);
+                }
+            }
 
             let mut next_offset = cf0_offset + cf0d.len();
 
