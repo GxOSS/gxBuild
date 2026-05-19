@@ -41,92 +41,92 @@ pub struct GgxArgs {
     pub mode: Option<GgxMode>,
 
     /// Target image type
-    #[arg(short = 't', long = "type")]
+    #[arg(short = 't', long = "type", global = true)]
     pub build_type: Option<CliBuildType>,
 
     /// 32 character CPU hex key (override, can be elsewhere)
-    #[arg(short = 'p', long = "cpukey")]
+    #[arg(short = 'p', long = "cpukey", global = true)]
     pub cpu_key: Option<String>,
 
     /// 32 character 1BL hex key (override, can be elsewhere)
-    #[arg(short = 'b', long = "1blkey")]
+    #[arg(short = 'b', long = "1blkey", global = true)]
     pub bl_key: Option<String>,
 
     /// Console motherboard type
-    #[arg(short = 'c', long = "console")]
+    #[arg(short = 'c', long = "console", global = true)]
     pub console: Option<CliConsoleType>,
 
     /// INI directory - contains _retail.ini, bootloaders, flashfs/ (defaults to .)
-    #[arg(short = 'd', long = "build")]
+    #[arg(short = 'd', long = "build", global = true)]
     pub data_dir: Option<PathBuf>,
 
     /// Folder for shared bootloaders (defaults to <ini_dir>/../common)
-    #[arg(short = 'm', long = "common")]
+    #[arg(short = 'm', long = "common", global = true)]
     pub common_dir: Option<PathBuf>,
 
     /// Data directory - nand dump, cpu key, smc, fcrt, keyvault (defaults to ./data)
-    #[arg(short = 'f', long = "data")]
+    #[arg(short = 'f', long = "data", global = true)]
     pub fw_dir: Option<PathBuf>,
 
     /// Outputs SHA-1 of final image to <file>
-    #[arg(short = 's', long = "sha")]
+    #[arg(short = 's', long = "sha", global = true)]
     pub sha_file: Option<PathBuf>,
 
     /// Set xeBuild options (e.g. -o nomobile;cputemp=80)
-    #[arg(short = 'o', long = "options", value_parser = parse_key_val)]
+    #[arg(short = 'o', long = "options", value_parser = parse_key_val, global = true)]
     pub options: Vec<Vec<(String, String)>>,
 
     /// Append addon patches or RGLP (.bin file name)
-    #[arg(short = 'a', long = "addon")]
+    #[arg(short = 'a', long = "addon", global = true)]
     pub addons: Vec<String>,
 
     /// Adds _<ext> into firmware ini and patches file names
-    #[arg(short = 'i', long = "fwext")]
+    #[arg(short = 'i', long = "fwext", global = true)]
     pub ini_ext: Option<String>,
 
     /// Adds _<ext> into ini bl section name and patches file names
-    #[arg(short = 'r', long = "iniext")]
+    #[arg(short = 'r', long = "iniext", global = true)]
     pub bl_ext: Option<String>,
 
     /// Adds raw patch to NAND (format: file,offset)
-    #[arg(short = '8', long = "raw")]
+    #[arg(short = '8', long = "raw", global = true)]
     pub raw_patches: Vec<String>,
 
     /// Show version mapped natively by clap.
 
     /// Optional source NAND image
-    #[arg(short = 'l', long = "image")]
+    #[arg(short = 'l', long = "image", global = true)]
     pub source_nand: Option<PathBuf>,
 
     /// Optional system update file (e.g. xboxupd.bin)
-    #[arg(short = 'u', long = "update")]
+    #[arg(short = 'u', long = "update", global = true)]
     pub xboxupd: Option<PathBuf>,
 
     /// Set preset for build
-    #[arg(short = 'e', long = "preset")]
+    #[arg(short = 'e', long = "preset", global = true)]
     pub preset: Option<String>,
 
     /// Direct session access
-    #[arg(short = 'n', long = "cmd")]
+    #[arg(short = 'n', long = "cmd", global = true)]
     pub cmd: Option<String>,
 
     /// Format of output image (system, full, xell, shadow)
-    #[arg(short = 'h', long = "format")]
+    #[arg(short = 'h', long = "format", global = true)]
     pub format: Option<String>,
 
     /// Output directory / location of file
-    #[arg(short = 'g', long = "output-dir")]
+    #[arg(short = 'g', long = "output-dir", global = true)]
     pub output_dir: Option<PathBuf>,
 
     /// Optional output image name
     pub output: Option<PathBuf>,
 
     /// Force XSB layout
-    #[arg(short = 'x', long = "xsb")]
+    #[arg(short = 'x', long = "xsb", global = true)]
     pub xsb: bool,
 
     /// Build full NAND image (not just system portion)
-    #[arg(long = "fullimage")]
+    #[arg(long = "fullimage", global = true)]
     pub full_image: bool,
 
     /// Run a Rhai script file
@@ -149,10 +149,6 @@ pub enum GgxMode {
     },
     /// Perform dump loading and verification
     Extract,
-    /// Client mode - flash over network
-    Client,
-    /// Update mode - update patches over network
-    Update,
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq)]
@@ -226,8 +222,6 @@ pub fn ggx_cli() {
     let mode_str = match &args.mode {
         Some(GgxMode::Build { .. }) | None => "build",
         Some(GgxMode::Extract) => "extract",
-        Some(GgxMode::Client) => "client",
-        Some(GgxMode::Update) => "update",
     };
 
     let mut is_verbose = false;
@@ -261,13 +255,10 @@ pub fn ggx_cli() {
             }
         }
         Some(GgxMode::Extract) => {
-            session.extract_all(args.output_dir.clone().unwrap_or_else(|| std::path::PathBuf::from(".")));
-        }
-        Some(GgxMode::Client) => {
-            info!("[cli] Client mode selected.");
-        }
-        Some(GgxMode::Update) => {
-            info!("[cli] Update mode not fully implemented yet.");
+            if let Err(e) = handle_extract(&args, &mut session) {
+                error!("[cli] Extract Setup Failed: {}", e);
+                session_prepared = false;
+            }
         }
     }
 
@@ -733,6 +724,74 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         .clone()
         .unwrap_or_else(|| args.output_dir.clone().unwrap_or_else(|| PathBuf::from("updflash.bin")));
     session.build(output_path.clone(), 0); // Target 0 for now
+
+    Ok(())
+}
+
+fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
+    // -f = data directory (nand dump, cpu key)
+    let data_dir = args.fw_dir.clone().unwrap_or_else(|| PathBuf::from("mydata"));
+
+    // -o options: nomobile
+    for group in &args.options {
+        for (k, v) in group {
+            if k.eq_ignore_ascii_case("nomobile") {
+                session.options.nomobile = Some(v.eq_ignore_ascii_case("true"));
+            }
+        }
+    }
+
+    // -l = source NAND image, else auto-discover from data dir
+    let nand_path = if let Some(p) = &args.source_nand {
+        p.clone()
+    } else {
+        let candidates = [
+            data_dir.join("nanddump.bin"),
+            data_dir.join("nanddump1.bin"),
+            data_dir.join("nanddump2.bin"),
+            data_dir.join("nanddump"),
+            data_dir.join("updflash.bin"),
+        ];
+        candidates
+            .into_iter()
+            .find(|p| p.exists())
+            .ok_or_else(|| anyhow::anyhow!("No NAND image found. Provide one via -l/--image or place it in the data dir (-f/--data)."))?
+    };
+
+    // -p = CPU key string, else auto-discover cpukey.bin / cpukey.txt from data dir
+    if let Some(key) = &args.cpu_key {
+        session.set_cpukey(key.clone());
+    } else {
+        let key_bin = data_dir.join("cpukey.bin");
+        let key_txt = data_dir.join("cpukey.txt");
+        if key_bin.exists() {
+            if let Ok(bytes) = std::fs::read(&key_bin) {
+                if bytes.len() >= 16 {
+                    let mut key = [0u8; 16];
+                    key.copy_from_slice(&bytes[..16]);
+                    session.parse_keybin(Some(key));
+                    info!("[cli] Extract: loaded CPU key from {:?}", key_bin);
+                }
+            }
+        } else if key_txt.exists() {
+            if let Ok(text) = std::fs::read_to_string(&key_txt) {
+                let clean = text.trim().to_string();
+                if clean.len() >= 32 {
+                    session.set_cpukey(clean);
+                    info!("[cli] Extract: loaded CPU key from {:?}", key_txt);
+                }
+            }
+        } else {
+            anyhow::bail!("No CPU Key provided. Use -p/--cpukey or place cpukey.txt/cpukey.bin in the data dir (-f/--data).");
+        }
+    }
+
+    // -g = output directory, defaults to mydata/
+    let output_dir = args.output_dir.clone().unwrap_or_else(|| data_dir.clone());
+
+    info!("[cli] Extract: NAND={:?}, Output={:?}", nand_path, output_dir);
+    session.enqueue(InternalCommand::ParseImage { path: nand_path, key: None });
+    session.extract_all(output_dir);
 
     Ok(())
 }
