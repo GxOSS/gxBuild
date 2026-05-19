@@ -735,35 +735,56 @@ impl IniSearch {
                     }
                 }
 
-                // Tier 1: mydata folder (resolve with original path hint for relative traversal)
+                // Probe candidates: exact basename, then basename+"1", basename+"2" (xeBuild
+                // stores e.g. "bootanim.xexp1" on disk when the INI names "bootanim.xexp").
+                let disk_candidates = [basename.clone(), format!("{}1", basename), format!("{}2", basename)];
+
+                // Tier 1: mydata folder (resolve with original path hint for relative traversal,
+                // then fall back to suffixed basenames)
                 if found_content.is_none() {
-                    let p = resolve_robust(&mydata, filename);
-                    if p.exists() {
-                        let c = std::fs::read(&p)?;
-                        if check_crc32_simple(&c, &basename, &entry.hash, "mydata", unsafe_mode).is_some() {
-                            found_content = Some(c);
+                    // Try the original hint path first (handles "..\launch.xex" style entries)
+                    let hint_path = resolve_robust(&mydata, filename);
+                    let paths: Vec<std::path::PathBuf> = std::iter::once(hint_path)
+                        .chain(disk_candidates.iter().skip(1).map(|c| mydata.join(c)))
+                        .collect();
+                    for p in paths {
+                        if p.exists() {
+                            let c = std::fs::read(&p)?;
+                            if check_crc32_simple(&c, &basename, &entry.hash, "mydata", unsafe_mode).is_some() {
+                                found_content = Some(c);
+                                break;
+                            }
                         }
                     }
                 }
 
-                // Tier 2: Build folder (resolve with original path hint)
+                // Tier 2: Build folder
                 if found_content.is_none() {
-                    let p = resolve_robust(&build, filename);
-                    if p.exists() {
-                        let c = std::fs::read(&p)?;
-                        if check_crc32_simple(&c, &basename, &entry.hash, "Build", unsafe_mode).is_some() {
-                            found_content = Some(c);
+                    let hint_path = resolve_robust(&build, filename);
+                    let paths: Vec<std::path::PathBuf> = std::iter::once(hint_path)
+                        .chain(disk_candidates.iter().skip(1).map(|c| build.join(c)))
+                        .collect();
+                    for p in paths {
+                        if p.exists() {
+                            let c = std::fs::read(&p)?;
+                            if check_crc32_simple(&c, &basename, &entry.hash, "Build", unsafe_mode).is_some() {
+                                found_content = Some(c);
+                                break;
+                            }
                         }
                     }
                 }
 
-                // Tier 3: build/flashfs subfolder (basename only)
+                // Tier 3: build/flashfs subfolder
                 if found_content.is_none() && flashfs_folder.is_dir() {
-                    let p = flashfs_folder.join(&basename);
-                    if p.exists() {
-                        let c = std::fs::read(&p)?;
-                        if check_crc32_simple(&c, &basename, &entry.hash, "Build/flashfs", unsafe_mode).is_some() {
-                            found_content = Some(c);
+                    for cand in &disk_candidates {
+                        let p = flashfs_folder.join(cand);
+                        if p.exists() {
+                            let c = std::fs::read(&p)?;
+                            if check_crc32_simple(&c, &basename, &entry.hash, "Build/flashfs", unsafe_mode).is_some() {
+                                found_content = Some(c);
+                                break;
+                            }
                         }
                     }
                 }
@@ -785,13 +806,16 @@ impl IniSearch {
                     }
                 }
 
-                // Tier 6: Common folder (basename only)
+                // Tier 6: Common folder
                 if found_content.is_none() {
-                    let p = common.join(&basename);
-                    if p.exists() {
-                        let c = std::fs::read(&p)?;
-                        if check_crc32_simple(&c, &basename, &entry.hash, "Common", unsafe_mode).is_some() {
-                            found_content = Some(c);
+                    for cand in &disk_candidates {
+                        let p = common.join(cand);
+                        if p.exists() {
+                            let c = std::fs::read(&p)?;
+                            if check_crc32_simple(&c, &basename, &entry.hash, "Common", unsafe_mode).is_some() {
+                                found_content = Some(c);
+                                break;
+                            }
                         }
                     }
                 }
