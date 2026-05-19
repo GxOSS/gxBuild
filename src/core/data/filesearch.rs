@@ -744,9 +744,7 @@ impl IniSearch {
                 if found_content.is_none() {
                     // Try the original hint path first (handles "..\launch.xex" style entries)
                     let hint_path = resolve_robust(&mydata, filename);
-                    let paths: Vec<std::path::PathBuf> = std::iter::once(hint_path)
-                        .chain(disk_candidates.iter().skip(1).map(|c| mydata.join(c)))
-                        .collect();
+                    let paths: Vec<std::path::PathBuf> = std::iter::once(hint_path).chain(disk_candidates.iter().skip(1).map(|c| mydata.join(c))).collect();
                     for p in paths {
                         if p.exists() {
                             let c = std::fs::read(&p)?;
@@ -761,9 +759,7 @@ impl IniSearch {
                 // Tier 2: Build folder
                 if found_content.is_none() {
                     let hint_path = resolve_robust(&build, filename);
-                    let paths: Vec<std::path::PathBuf> = std::iter::once(hint_path)
-                        .chain(disk_candidates.iter().skip(1).map(|c| build.join(c)))
-                        .collect();
+                    let paths: Vec<std::path::PathBuf> = std::iter::once(hint_path).chain(disk_candidates.iter().skip(1).map(|c| build.join(c))).collect();
                     for p in paths {
                         if p.exists() {
                             let c = std::fs::read(&p)?;
@@ -791,11 +787,7 @@ impl IniSearch {
 
                 // Tier 4: Build folder STFS (FlashFS assets extracted during bootloader discovery)
                 if found_content.is_none() {
-                    let cand_names = [
-                        lower_basename.clone(),
-                        format!("{}1", lower_basename),
-                        format!("{}2", lower_basename),
-                    ];
+                    let cand_names = [lower_basename.clone(), format!("{}1", lower_basename), format!("{}2", lower_basename)];
                     for cand in &cand_names {
                         if let Some(c) = result.flashfs_assets.get(cand).cloned() {
                             if check_crc32_simple(&c, &basename, &entry.hash, "Build STFS", unsafe_mode).is_some() {

@@ -673,7 +673,17 @@ impl Session {
         let hint = self.build_type.as_ref().map(|t| format!("_{}.ini", t));
 
         match crate::core::data::xeini::parse_xe_ini_str(content, target, hint.as_deref()) {
-            Ok(ini) => match IniSearch::new(ini.clone(), &ini_dir, &common_dir, &data_dir, &payloads_dir, &smc_dir, &self.active_nand, self.options.gxunsafe, self.options.nofcrt) {
+            Ok(ini) => match IniSearch::new(
+                ini.clone(),
+                &ini_dir,
+                &common_dir,
+                &data_dir,
+                &payloads_dir,
+                &smc_dir,
+                &self.active_nand,
+                self.options.gxunsafe,
+                self.options.nofcrt,
+            ) {
                 Ok(search) => {
                     self.bootloader_assets.extend(search.result.bootloader_assets);
                     self.security_assets.extend(search.result.security_assets);
@@ -1248,7 +1258,16 @@ impl Session {
         result
     }
 
-    pub fn parse_ini(&mut self, path: impl AsRef<Path>, target: String, ini_base: impl AsRef<Path>, common: impl AsRef<Path>, data: impl AsRef<Path>, payloads: impl AsRef<Path>, smc: impl AsRef<Path>) {
+    pub fn parse_ini(
+        &mut self,
+        path: impl AsRef<Path>,
+        target: String,
+        ini_base: impl AsRef<Path>,
+        common: impl AsRef<Path>,
+        data: impl AsRef<Path>,
+        payloads: impl AsRef<Path>,
+        smc: impl AsRef<Path>,
+    ) {
         self.enqueue(InternalCommand::ParseIni {
             path: path.as_ref().to_path_buf(),
             target,
