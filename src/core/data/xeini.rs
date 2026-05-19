@@ -75,11 +75,7 @@ pub struct BuildIniEntry {
 pub fn strip_flashfs_path_indicator(name: &str) -> String {
     let trimmed = name.trim();
     // Take the last component after splitting on both Windows and Unix separators.
-    trimmed
-        .rsplit(|c| c == '\\' || c == '/')
-        .next()
-        .unwrap_or(trimmed)
-        .to_string()
+    trimmed.rsplit(|c| c == '\\' || c == '/').next().unwrap_or(trimmed).to_string()
 }
 
 #[derive(Debug, Clone, Default)]

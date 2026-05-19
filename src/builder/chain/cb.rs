@@ -426,9 +426,7 @@ impl BootloaderCb {
         //   message[0x20..0x30] = CB_A bldr header (16 bytes) with wFlags (offset 0x6/0x7) cleared
         // (Note: RGBuildPP uses CB_B's own header here instead — the two implementations differ.
         //  We match J-Runner since its computed PD/LDV are the reference values.)
-        let mut cb_a_hdr_copy: [u8; 16] = zerocopy::IntoBytes::as_bytes(cb_a_hdr)
-            .try_into()
-            .unwrap();
+        let mut cb_a_hdr_copy: [u8; 16] = zerocopy::IntoBytes::as_bytes(cb_a_hdr).try_into().unwrap();
         cb_a_hdr_copy[0x6] = 0; // Clear wFlags low byte
         cb_a_hdr_copy[0x7] = 0; // Clear wFlags high byte
 
