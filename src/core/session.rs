@@ -38,6 +38,8 @@ pub enum InternalCommand {
         ini_base: PathBuf,
         common: PathBuf,
         data: PathBuf,
+        payloads: PathBuf,
+        smc: PathBuf,
     },
     ParseImage {
         path: PathBuf,
@@ -664,12 +666,14 @@ impl Session {
 
         let ini_dir = self.ini_dir.clone().unwrap_or_else(|| PathBuf::from("."));
         let common_dir = self.common_dir.clone().unwrap_or_else(|| ini_dir.join("../common"));
-        let data_dir = self.data_dir.clone().unwrap_or_else(|| PathBuf::from("data"));
+        let data_dir = self.data_dir.clone().unwrap_or_else(|| PathBuf::from("mydata"));
+        let payloads_dir = ini_dir.join("../payloads");
+        let smc_dir = ini_dir.join("../smc");
 
         let hint = self.build_type.as_ref().map(|t| format!("_{}.ini", t));
 
         match crate::core::data::xeini::parse_xe_ini_str(content, target, hint.as_deref()) {
-            Ok(ini) => match IniSearch::new(ini.clone(), &ini_dir, &common_dir, &data_dir, &self.active_nand, self.options.gxunsafe, self.options.nofcrt) {
+            Ok(ini) => match IniSearch::new(ini.clone(), &ini_dir, &common_dir, &data_dir, &payloads_dir, &smc_dir, &self.active_nand, self.options.gxunsafe, self.options.nofcrt) {
                 Ok(search) => {
                     self.bootloader_assets.extend(search.result.bootloader_assets);
                     self.security_assets.extend(search.result.security_assets);
@@ -726,8 +730,10 @@ impl Session {
         use std::collections::HashSet;
 
         let ini_dir = self.ini_dir.clone().unwrap_or_else(|| PathBuf::from("."));
-        let data_dir = self.data_dir.clone().unwrap_or_else(|| PathBuf::from("data"));
+        let data_dir = self.data_dir.clone().unwrap_or_else(|| PathBuf::from("mydata"));
         let common_dir = self.common_dir.clone().unwrap_or_else(|| ini_dir.join("../common"));
+        let payloads_dir = ini_dir.join("../payloads");
+        let smc_dir = ini_dir.join("../smc");
         let output_path = self.output_path.clone().unwrap_or_else(|| PathBuf::from("updflash.bin"));
 
         // Load options.ini from the data dir FIRST, then merge user overrides
@@ -912,7 +918,7 @@ impl Session {
 
         // Enqueue INI parsing (Only if not already loaded via string)
         if !self.build_ini_loaded {
-            self.parse_ini(&ini_path, console_section, &ini_dir, &common_dir, &data_dir);
+            self.parse_ini(&ini_path, console_section, &ini_dir, &common_dir, &data_dir, &payloads_dir, &smc_dir);
         }
 
         // Addon patches
@@ -1242,13 +1248,15 @@ impl Session {
         result
     }
 
-    pub fn parse_ini(&mut self, path: impl AsRef<Path>, target: String, ini_base: impl AsRef<Path>, common: impl AsRef<Path>, data: impl AsRef<Path>) {
+    pub fn parse_ini(&mut self, path: impl AsRef<Path>, target: String, ini_base: impl AsRef<Path>, common: impl AsRef<Path>, data: impl AsRef<Path>, payloads: impl AsRef<Path>, smc: impl AsRef<Path>) {
         self.enqueue(InternalCommand::ParseIni {
             path: path.as_ref().to_path_buf(),
             target,
             ini_base: ini_base.as_ref().to_path_buf(),
             common: common.as_ref().to_path_buf(),
             data: data.as_ref().to_path_buf(),
+            payloads: payloads.as_ref().to_path_buf(),
+            smc: smc.as_ref().to_path_buf(),
         });
     }
 
@@ -1450,12 +1458,12 @@ impl Session {
                     error!("[session] No active NAND loaded to build!");
                 }
             }
-            InternalCommand::ParseIni { path, target, ini_base, common, data } => {
+            InternalCommand::ParseIni { path, target, ini_base, common, data, payloads, smc } => {
                 info!("[session] Parsing INI for target {}...", target);
                 if let Some(nand) = self.active_nand.take() {
                     match crate::core::data::xeini::parse_xe_ini(&path, &target) {
                         Ok(ini) => {
-                            match IniSearch::new(ini.clone(), &ini_base, &common, &data, &self.active_nand, self.options.gxunsafe, self.options.nofcrt) {
+                            match IniSearch::new(ini.clone(), &ini_base, &common, &data, &payloads, &smc, &self.active_nand, self.options.gxunsafe, self.options.nofcrt) {
                                 Ok(search) => {
                                     // Route each pool to its typed session pool
                                     self.bootloader_assets.extend(search.result.bootloader_assets);
@@ -1835,7 +1843,7 @@ impl Session {
                 if self.options.nomobile.unwrap_or(false) {
                     return Ok(());
                 }
-                let data_dir = self.data_dir.clone().unwrap_or_else(|| PathBuf::from("data"));
+                let data_dir = self.data_dir.clone().unwrap_or_else(|| PathBuf::from("mydata"));
                 if let Some(nand) = &mut self.active_nand {
                     nand.mobile.apply_data_folder_tier(&data_dir);
                 }

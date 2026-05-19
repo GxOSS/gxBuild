@@ -167,7 +167,9 @@ pub struct IniSearch {
     pub ini: XeBuildIni,
     pub build: PathBuf,
     pub common: PathBuf,
-    pub data: PathBuf,
+    pub mydata: PathBuf,
+    pub payloads: PathBuf,
+    pub smc: PathBuf,
     pub unsafe_mode: Option<bool>,
     pub result: IniSearchResult,
 }
@@ -177,7 +179,9 @@ impl IniSearch {
         ini: XeBuildIni,
         build: impl AsRef<Path>,
         common: impl AsRef<Path>,
-        data: impl AsRef<Path>,
+        mydata: impl AsRef<Path>,
+        payloads: impl AsRef<Path>,
+        smc: impl AsRef<Path>,
         nand: &Option<NandSkeleton>,
         unsafe_mode: Option<bool>,
         nofcrt: Option<bool>,
@@ -199,7 +203,9 @@ impl IniSearch {
 
         let build = build.as_ref().to_path_buf();
         let common = common.as_ref().to_path_buf();
-        let data = data.as_ref().to_path_buf();
+        let mydata = mydata.as_ref().to_path_buf();
+        let payloads = payloads.as_ref().to_path_buf();
+        let smc_dir = smc.as_ref().to_path_buf();
         let flashfs_folder = build.join("flashfs");
         // Auto Patcher
         // Patches Priority: 1. Build/bin Folder, 2. Build/../bin Folder
@@ -297,6 +303,27 @@ impl IniSearch {
         }
         ini.patch.path = patch_path.clone();
 
+        // Helper: check CRC32 against expected hash; returns true if pass (or no hash), logs/warns/errors on mismatch.
+        // Returns None to signal "move to next tier" on mismatch without unsafe_mode.
+        let check_crc32_simple = |data: &[u8], filename: &str, expected: &Option<String>, tier: &str, unsafe_mode: bool| -> Option<bool> {
+            if let Some(exp) = expected {
+                let mut hasher = crc32fast::Hasher::new();
+                hasher.update(data);
+                let actual = format!("{:08x}", hasher.finalize());
+                if actual.to_lowercase() == exp.to_lowercase() {
+                    Some(true)
+                } else if unsafe_mode {
+                    warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Got: {} in {} Tier). Continuing...", filename, exp, actual, tier);
+                    Some(true)
+                } else {
+                    info!("[ini] Hash mismatch for {} in {} Tier, trying next tier...", filename, tier);
+                    None
+                }
+            } else {
+                Some(true)
+            }
+        };
+
         // security and extra
         if !ini.security.is_empty() {
             let mut sec_paths = Vec::new();
@@ -310,84 +337,53 @@ impl IniSearch {
                 let mut found_content: Option<Vec<u8>> = None;
                 let mut found_path: Option<PathBuf> = None;
 
-                // NAND Image
-                if let Some(n) = nand {
-                    let nand_data = match lower_name.as_str() {
-                        "keyvault.bin" | "kv.bin" => Some(n.extra.keyvault.clone()),
-                        "fcrt.bin" => n.extra.fcrt.clone(),
-                        _ => None,
-                    };
-                    if let Some(c) = nand_data {
-                        if let Some(expected) = &entry.hash {
-                            let mut hasher = crc32fast::Hasher::new();
-                            hasher.update(&c);
-                            let actual = format!("{:08x}", hasher.finalize());
-                            if actual.to_lowercase() == expected.to_lowercase() {
+                // Tier 0: NAND Image
+                if found_content.is_none() {
+                    if let Some(n) = nand {
+                        let nand_data = match lower_name.as_str() {
+                            "keyvault.bin" | "kv.bin" => Some(n.extra.keyvault.clone()),
+                            "fcrt.bin" => n.extra.fcrt.clone(),
+                            _ => None,
+                        };
+                        if let Some(c) = nand_data {
+                            if check_crc32_simple(&c, filename, &entry.hash, "NAND Image", unsafe_mode).is_some() {
                                 found_content = Some(c);
                                 found_path = Some(PathBuf::from("NAND_IMAGE"));
-                            } else if unsafe_mode {
-                                warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in NAND Image Tier). Continuing...", filename, expected, actual);
-                                found_content = Some(c);
-                                found_path = Some(PathBuf::from("NAND_IMAGE"));
-                            } else {
-                                info!("[ini] Hash mismatch for {} in NAND Image Tier, seeking fallback...", filename);
                             }
-                        } else {
-                            found_content = Some(c);
-                            found_path = Some(PathBuf::from("NAND_IMAGE"));
                         }
                     }
                 }
 
-                // Data Folder
+                // Tier 1: mydata folder
                 if found_content.is_none() {
-                    let cand = resolve_robust(&data, filename);
+                    let cand = resolve_robust(&mydata, filename);
                     if cand.exists() {
                         let c = std::fs::read(&cand)?;
-                        if let Some(expected) = &entry.hash {
-                            let mut hasher = crc32fast::Hasher::new();
-                            hasher.update(&c);
-                            let actual = format!("{:08x}", hasher.finalize());
-                            if actual.to_lowercase() == expected.to_lowercase() {
-                                found_content = Some(c.clone());
-                                found_path = Some(cand);
-                            } else if unsafe_mode {
-                                warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Data Folder Tier). Continuing...", filename, expected, actual);
-                                found_content = Some(c.clone());
-                                found_path = Some(cand);
-                            } else {
-                                info!("[ini] Hash mismatch for {} in Data Folder Tier, seeking fallback...", filename);
-                            }
-                        } else {
+                        if check_crc32_simple(&c, filename, &entry.hash, "mydata", unsafe_mode).is_some() {
                             found_content = Some(c);
                             found_path = Some(cand);
                         }
                     }
                 }
 
-                // Common Folder (Security only)
+                // Tier 2: Build folder
+                if found_content.is_none() {
+                    let cand = resolve_robust(&build, filename);
+                    if cand.exists() {
+                        let c = std::fs::read(&cand)?;
+                        if check_crc32_simple(&c, filename, &entry.hash, "Build", unsafe_mode).is_some() {
+                            found_content = Some(c);
+                            found_path = Some(cand);
+                        }
+                    }
+                }
+
+                // Tier 6: Common folder
                 if found_content.is_none() {
                     let cand = resolve_robust(&common, filename);
                     if cand.exists() {
                         let c = std::fs::read(&cand)?;
-                        if let Some(expected) = &entry.hash {
-                            let mut hasher = crc32fast::Hasher::new();
-                            hasher.update(&c);
-                            let actual = format!("{:08x}", hasher.finalize());
-                            if actual.to_lowercase() == expected.to_lowercase() {
-                                found_content = Some(c);
-                                found_path = Some(cand);
-                            } else if unsafe_mode {
-                                warn!(
-                                    "[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Common Folder Tier). Continuing...",
-                                    filename, expected, actual
-                                );
-                                found_content = Some(c);
-                                found_path = Some(cand);
-                            } else {
-                                return Err(FilesearchError::HashMismatch(filename.to_string()));
-                            }
-                        } else {
+                        if check_crc32_simple(&c, filename, &entry.hash, "Common", unsafe_mode).is_some() {
                             found_content = Some(c);
                             found_path = Some(cand);
                         }
@@ -404,14 +400,14 @@ impl IniSearch {
                         warn!("[ini] odd.bin not found during discovery, skipping with warning.");
                         continue;
                     }
-                    warn!("[ini] All tiers failed for priority asset: {}", filename);
+                    warn!("[ini] All tiers failed for security asset: {}", filename);
                     return Err(FilesearchError::FileNotFound(filename.clone()));
                 }
             }
             result.security = Some(sec_paths);
         }
 
-        // SMC and Payloads
+        // SMC: Tier 1 = mydata, Tier 2 = smc folder (peer of build/common/mydata)
         let section_base = ini.name.split('_').next().unwrap_or(&ini.name);
         let platform_clean = if section_base.ends_with("bl") {
             &section_base[..section_base.len() - 2]
@@ -420,29 +416,33 @@ impl IniSearch {
         }
         .to_uppercase();
 
-        let smc_path = data.join("SMC.bin");
-
-        let smc_filename2 = format!("{}_CLEAN.bin", platform_clean);
-        let smc_path2 = data.join(&smc_filename2);
-
-        if smc_path.exists() {
-            if let Ok(c) = std::fs::read(&smc_path) {
-                info!("[ini] Discovered SMC.bin");
-                result.security_assets.insert("smc.bin".to_string(), c);
+        {
+            let smc_names = ["SMC.bin".to_string(), format!("{}_CLEAN.bin", platform_clean)];
+            let smc_search_dirs = [mydata.clone(), smc_dir.clone()];
+            let mut smc_found = false;
+            'smc: for dir in &smc_search_dirs {
+                for name in &smc_names {
+                    let p = dir.join(name);
+                    if p.exists() {
+                        if let Ok(c) = std::fs::read(&p) {
+                            info!("[ini] Discovered SMC: {}", p.display());
+                            result.security_assets.insert("smc.bin".to_string(), c);
+                            smc_found = true;
+                            break 'smc;
+                        }
+                    }
+                }
             }
-        } else if smc_path2.exists() {
-            if let Ok(c) = std::fs::read(&smc_path2) {
-                info!("[ini] Discovered clean SMC for platform {}", platform_clean);
-                result.security_assets.insert("smc.bin".to_string(), c);
+            if !smc_found {
+                return Err(FilesearchError::NoSmcOrCleanBin(platform_clean));
             }
-        } else {
-            return Err(FilesearchError::NoSmcOrCleanBin(platform_clean));
         }
 
+        // Payloads: Tier 5 = payloads folder ONLY
         for entry in &ini.payloads {
             let filename = &entry.filename;
             let lower_name = filename.to_lowercase();
-            let cand = data.join(filename);
+            let cand = payloads.join(filename);
             if cand.exists() {
                 if let Ok(c) = std::fs::read(&cand) {
                     if let Some(expected) = &entry.hash {
@@ -455,7 +455,7 @@ impl IniSearch {
                                 return Err(FilesearchError::HashMismatch(filename.to_string()));
                             }
                         } else {
-                            info!("[ini] Discovered payload in data folder: {}", cand.display());
+                            info!("[ini] Discovered payload in payloads folder: {}", cand.display());
                             info!("[ini] Payload {} passed CRC32: {}", filename, actual);
                             result.bootloader_assets.insert(lower_name, c);
                         }
@@ -570,31 +570,31 @@ impl IniSearch {
                     }
                 }
 
-                // Build Folder (direct)
+                // Tier 1: mydata folder
+                if found_content.is_none() {
+                    let cand = resolve_robust(&mydata, filename);
+                    if cand.exists() {
+                        let c = std::fs::read(&cand)?;
+                        if check_hash!(c, filename, "mydata") {
+                            found_content = Some(c);
+                            found_path = Some(cand);
+                        }
+                    }
+                }
+
+                // Tier 2: Build folder
                 if found_content.is_none() {
                     let cand = resolve_robust(&build, filename);
                     if cand.exists() {
                         let c = std::fs::read(&cand)?;
-                        if check_hash!(c, filename, "Build Folder") {
+                        if check_hash!(c, filename, "Build") {
                             found_content = Some(c);
                             found_path = Some(cand);
                         }
                     }
                 }
 
-                // Common Folder
-                if found_content.is_none() {
-                    let cand = common.join(filename);
-                    if cand.exists() {
-                        let c = std::fs::read(&cand)?;
-                        if check_hash!(c, filename, "Common Folder") {
-                            found_content = Some(c);
-                            found_path = Some(cand);
-                        }
-                    }
-                }
-
-                // xboxupd.bin / STFS - Update only
+                // Tier 4: Build folder STFS (CF, CG only)
                 if is_update && found_content.is_none() {
                     let p_xboxupd = build.join("xboxupd.bin");
                     if p_xboxupd.exists() {
@@ -603,7 +603,7 @@ impl IniSearch {
                                 result.bootloader_assets.insert(expected_cf.clone(), cf.serialize());
                                 result.bootloader_assets.insert(expected_cg.clone(), cg.serialize());
                                 if let Some(c) = result.bootloader_assets.get(&lower_name).cloned() {
-                                    if check_hash!(c, filename, "xboxupd.bin") {
+                                    if check_hash!(c, filename, "Build STFS (xboxupd.bin)") {
                                         found_content = Some(c);
                                         found_path = Some(p_xboxupd);
                                     }
@@ -646,6 +646,18 @@ impl IniSearch {
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+
+                // Tier 6: Common folder
+                if found_content.is_none() {
+                    let cand = common.join(filename);
+                    if cand.exists() {
+                        let c = std::fs::read(&cand)?;
+                        if check_hash!(c, filename, "Common") {
+                            found_content = Some(c);
+                            found_path = Some(cand);
                         }
                     }
                 }
@@ -703,100 +715,69 @@ impl IniSearch {
             let mut flashfs = FlashFS::new();
             for entry in &ini.flashfs {
                 let filename = &entry.filename;
-                let lower_filename = filename.to_lowercase();
-                if lower_filename == "sysupdate.xexp1" || lower_filename == "sysupdate.xexp2" {
+                let basename = strip_flashfs_path_indicator(filename);
+                let lower_basename = basename.to_lowercase();
+                if lower_basename == "sysupdate.xexp1" || lower_basename == "sysupdate.xexp2" {
                     info!("[ini] Unconditionally bypassing file discovery for {}", filename);
                     continue;
                 }
                 let mut found_content: Option<Vec<u8>> = None;
 
-                // NAND Image
-                if let Some(n) = nand {
-                    if let Some(n_entry) = n.flashfs.root.entries.iter().find(|e| e.file_name.to_lowercase() == filename.to_lowercase()) {
-                        let c = n_entry.data.clone();
-                        if let Some(expected) = &entry.hash {
-                            let mut hasher = crc32fast::Hasher::new();
-                            hasher.update(&c);
-                            let actual = format!("{:08x}", hasher.finalize());
-                            if actual.to_lowercase() == expected.to_lowercase() {
+                // Tier 0: NAND FlashFS (match by basename)
+                if found_content.is_none() {
+                    if let Some(n) = nand {
+                        if let Some(n_entry) = n.flashfs.root.entries.iter().find(|e| e.file_name.to_lowercase() == lower_basename) {
+                            let c = n_entry.data.clone();
+                            if check_crc32_simple(&c, &basename, &entry.hash, "NAND FlashFS", unsafe_mode).is_some() {
                                 found_content = Some(c);
-                            } else if unsafe_mode {
-                                warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in NAND FlashFS Tier). Continuing...", filename, expected, actual);
-                                found_content = Some(c);
-                            } else {
-                                info!("[ini] Hash mismatch for {} in NAND FlashFS Tier", filename);
                             }
-                        } else {
+                        }
+                    }
+                }
+
+                // Tier 1: mydata folder (resolve with original path hint for relative traversal)
+                if found_content.is_none() {
+                    let p = resolve_robust(&mydata, filename);
+                    if p.exists() {
+                        let c = std::fs::read(&p)?;
+                        if check_crc32_simple(&c, &basename, &entry.hash, "mydata", unsafe_mode).is_some() {
                             found_content = Some(c);
                         }
                     }
                 }
 
-                // Local Folder
+                // Tier 2: Build folder (resolve with original path hint)
                 if found_content.is_none() {
-                    let candidates = [filename.clone(), format!("{}1", filename), format!("{}2", filename)];
-                    let paths = [flashfs_folder.clone(), build.clone(), data.clone()];
-                    for p_base in &paths {
-                        for cand in &candidates {
-                            let p = resolve_robust(p_base, cand);
-                            if p.exists() {
-                                let c = std::fs::read(&p)?;
-                                if let Some(expected) = &entry.hash {
-                                    let mut hasher = crc32fast::Hasher::new();
-                                    hasher.update(&c);
-                                    let actual = format!("{:08x}", hasher.finalize());
-                                    if actual.to_lowercase() == expected.to_lowercase() {
-                                        found_content = Some(c);
-                                        break;
-                                    } else if unsafe_mode {
-                                        warn!(
-                                            "[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Folder Tier). Continuing...",
-                                            filename, expected, actual
-                                        );
-                                        found_content = Some(c);
-                                        break;
-                                    } else {
-                                        info!("[ini] Hash mismatch for {} ({}) in Folder Tier", filename, cand);
-                                    }
-                                } else {
-                                    found_content = Some(c);
-                                    break;
-                                }
-                            }
-                        }
-                        if found_content.is_some() {
-                            break;
+                    let p = resolve_robust(&build, filename);
+                    if p.exists() {
+                        let c = std::fs::read(&p)?;
+                        if check_crc32_simple(&c, &basename, &entry.hash, "Build", unsafe_mode).is_some() {
+                            found_content = Some(c);
                         }
                     }
                 }
 
-                // Memory / STFS
+                // Tier 3: build/flashfs subfolder (basename only)
+                if found_content.is_none() && flashfs_folder.is_dir() {
+                    let p = flashfs_folder.join(&basename);
+                    if p.exists() {
+                        let c = std::fs::read(&p)?;
+                        if check_crc32_simple(&c, &basename, &entry.hash, "Build/flashfs", unsafe_mode).is_some() {
+                            found_content = Some(c);
+                        }
+                    }
+                }
+
+                // Tier 4: Build folder STFS (FlashFS assets extracted during bootloader discovery)
                 if found_content.is_none() {
                     let cand_names = [
-                        filename.to_lowercase(),
-                        format!("{}1", filename.to_lowercase()),
-                        format!("{}2", filename.to_lowercase()),
+                        lower_basename.clone(),
+                        format!("{}1", lower_basename),
+                        format!("{}2", lower_basename),
                     ];
                     for cand in &cand_names {
                         if let Some(c) = result.flashfs_assets.get(cand).cloned() {
-                            if let Some(expected) = &entry.hash {
-                                let mut hasher = crc32fast::Hasher::new();
-                                hasher.update(&c);
-                                let actual = format!("{:08x}", hasher.finalize());
-                                if actual.to_lowercase() == expected.to_lowercase() {
-                                    found_content = Some(c);
-                                    break;
-                                } else if unsafe_mode {
-                                    warn!(
-                                        "[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in Memory/STFS Tier). Continuing...",
-                                        filename, expected, actual
-                                    );
-                                    found_content = Some(c);
-                                    break;
-                                } else {
-                                    info!("[ini] Hash mismatch for {} in Memory/STFS Tier", filename);
-                                }
-                            } else {
+                            if check_crc32_simple(&c, &basename, &entry.hash, "Build STFS", unsafe_mode).is_some() {
                                 found_content = Some(c);
                                 break;
                             }
@@ -804,18 +785,25 @@ impl IniSearch {
                     }
                 }
 
+                // Tier 6: Common folder (basename only)
+                if found_content.is_none() {
+                    let p = common.join(&basename);
+                    if p.exists() {
+                        let c = std::fs::read(&p)?;
+                        if check_crc32_simple(&c, &basename, &entry.hash, "Common", unsafe_mode).is_some() {
+                            found_content = Some(c);
+                        }
+                    }
+                }
+
                 if let Some(c) = found_content {
-                    let lower = filename.to_lowercase();
-                    // No bootloader filter needed here: the [flashfs] INI section only names
-                    // filesystem assets. Routing is enforced by section membership, not by prefix.
-                    // Strip any path indicator (e.g. "..\") here — the on-NAND 0x16-byte name
-                    // field must be a plain basename. The original `filename` was used for all
-                    // discovery tiers above.
+                    // Strip path indicator for the on-NAND 0x16-byte name field; original
+                    // filename was used for all discovery tiers above.
                     let mut fs_entry = FileSystemEntry::new(0);
-                    fs_entry.file_name = strip_flashfs_path_indicator(filename);
+                    fs_entry.file_name = basename.clone();
                     fs_entry.data = c.clone();
                     flashfs.root.entries.push(fs_entry);
-                    result.flashfs_assets.insert(lower, c);
+                    result.flashfs_assets.insert(lower_basename, c);
                 } else {
                     return Err(FilesearchError::FileNotFound(filename.to_string()));
                 }
@@ -823,7 +811,7 @@ impl IniSearch {
             result.flashfs = Some(flashfs);
         }
 
-        Ok(IniSearch { ini, build, common, data, unsafe_mode: Some(unsafe_mode), result })
+        Ok(IniSearch { ini, build, common, mydata, payloads, smc: smc_dir, unsafe_mode: Some(unsafe_mode), result })
     }
 }
 

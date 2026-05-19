@@ -331,7 +331,9 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     let ini_dir = args.data_dir.clone().unwrap_or_else(|| PathBuf::from("."));
 
     // -f = data directory (nand dump, cpu key, smc, fcrt, keyvault)
-    let data_dir = args.fw_dir.clone().unwrap_or_else(|| PathBuf::from("data"));
+    let data_dir = args.fw_dir.clone().unwrap_or_else(|| PathBuf::from("mydata"));
+    let payloads_dir = ini_dir.join("../payloads");
+    let smc_dir = ini_dir.join("../smc");
 
     // -m = common directory (shared bootloaders, defaults to <ini_dir>/../common)
     let resolved_common_dir = args.common_dir.clone().unwrap_or_else(|| ini_dir.join("../common"));
@@ -647,7 +649,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     }
 
     // Enqueue INI Parsing
-    session.parse_ini(&ini_path, console_section, &ini_dir, &resolved_common_dir, &data_dir);
+    session.parse_ini(&ini_path, console_section, &ini_dir, &resolved_common_dir, &data_dir, &payloads_dir, &smc_dir);
 
     // 1BL Key Warning
     if args.bl_key.is_some() {
