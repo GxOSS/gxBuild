@@ -210,13 +210,7 @@ pub fn parse_xe_ini_str(content: &str, target_section: &str, filename_hint: Opti
                 expected_hash = hash_storage.as_deref();
             }
 
-            // FlashFS entry names live in a flat 0x16-byte field on-NAND; strip any
-            // path indicator (e.g. "..\launch.xex" → "launch.xex"). The filesearch
-            // tier already probes build/, build/flashfs/, and data/ by basename, so
-            // the "..\" hint is redundant for disk discovery.
-            let stripped = strip_flashfs_path_indicator(&filename);
-
-            flashfs_entries.push(resolve(&stripped, expected_hash, 0)?);
+            flashfs_entries.push(resolve(&filename, expected_hash, 0)?);
         }
     }
 
@@ -506,13 +500,13 @@ cba_9188.bin = 00000000
         ";
         let parsed = parse_xe_ini_str(content, "trinity", None).unwrap();
         assert_eq!(parsed.flashfs.len(), 3);
-        // The "..\\" path indicator must be stripped: only the basename is
-        // stored, since the on-NAND FlashFS entry is a flat 0x16-byte name.
-        assert_eq!(parsed.flashfs[0].filename, "launch.xex");
+        // BuildIniEntry retains the original path so filesearch can use it for
+        // disk discovery; stripping to basename happens later in filesearch.
+        assert_eq!(parsed.flashfs[0].filename, "..\\launch.xex");
         assert_eq!(parsed.flashfs[0].hash, None);
-        assert_eq!(parsed.flashfs[1].filename, "lhelper.xex");
+        assert_eq!(parsed.flashfs[1].filename, "..\\lhelper.xex");
         assert_eq!(parsed.flashfs[1].hash, None);
-        assert_eq!(parsed.flashfs[2].filename, "launch.ini");
+        assert_eq!(parsed.flashfs[2].filename, "..\\launch.ini");
         assert_eq!(parsed.flashfs[2].hash, None);
     }
 

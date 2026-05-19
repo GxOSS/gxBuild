@@ -21,7 +21,7 @@
 */
 use crate::builder::builder::NandSkeleton;
 use crate::builder::filesystem::flashfs::{FileSystemEntry, FlashFS};
-use crate::core::data::xeini::XeBuildIni;
+use crate::core::data::xeini::{strip_flashfs_path_indicator, XeBuildIni};
 use log::{info, warn};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -808,8 +808,11 @@ impl IniSearch {
                     let lower = filename.to_lowercase();
                     // No bootloader filter needed here: the [flashfs] INI section only names
                     // filesystem assets. Routing is enforced by section membership, not by prefix.
+                    // Strip any path indicator (e.g. "..\") here — the on-NAND 0x16-byte name
+                    // field must be a plain basename. The original `filename` was used for all
+                    // discovery tiers above.
                     let mut fs_entry = FileSystemEntry::new(0);
-                    fs_entry.file_name = filename.clone();
+                    fs_entry.file_name = strip_flashfs_path_indicator(filename);
                     fs_entry.data = c.clone();
                     flashfs.root.entries.push(fs_entry);
                     result.flashfs_assets.insert(lower, c);

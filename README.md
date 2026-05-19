@@ -36,7 +36,7 @@ Coming Soon
 
 ✓ = Tested Working
 
-| Platform | Retail Single | Retail Split | ArgonData | AudClamp | RJTAG | Glitch1 | Glitch2 | Glitch3 | Glitch2.3 | XDKBuild | RGBuild |
+| Platform | Retail Single | Retail Split | Argon / Aud | JTAG FJZ | RJTAG | Glitch1 | Glitch2 | Glitch3 | Glitch2.3 | XDKBuild | RGBuild |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | 
 | Xenon |  |  |  |  |  |  |  |  |  |  |  |
 | Zephyr |  |  |  |  |  |  |  |  |  |  |  |
