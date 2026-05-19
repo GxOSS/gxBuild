@@ -391,6 +391,8 @@ pub fn add_spare(
 
                 let mut spare = [0u8; 16];
                 let val = (i / 32) + block_number_base;
+                let reserve_start = layout.reserve_start(0);
+                let is_reserve = val >= reserve_start;
 
                 // JTAG syscall injection into Page 1 spare (offset 10, Big Endian)
                 if i == 1 {
@@ -401,7 +403,12 @@ pub fn add_spare(
                     }
                 }
 
-                if let Some(fs) = mobile_meta.and_then(|m| m.get(&i)).or_else(|| fs_meta.and_then(|m| m.get(&val))) {
+                if is_reserve {
+                    // Reserve/config region: mark spare[5] = 0x00 (bad block marker for MetaType0/1).
+                    // CheckIsBadBlock returns true when BadBlock != 0xFF, so xeBuild/x360Utils will
+                    // skip the LBA check for these blocks entirely rather than flagging bad LBA.
+                    spare[5] = 0x00;
+                } else if let Some(fs) = mobile_meta.and_then(|m| m.get(&i)).or_else(|| fs_meta.and_then(|m| m.get(&val))) {
                     spare[5] = 0xFF;
                     spare[7] = (fs.size & 0xFF) as u8;
                     spare[8] = ((fs.size >> 8) & 0xFF) as u8;

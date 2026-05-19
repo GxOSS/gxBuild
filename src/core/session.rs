@@ -689,6 +689,13 @@ impl Session {
                     self.security_assets.extend(search.result.security_assets);
                     self.flashfs_assets.extend(search.result.flashfs_assets);
 
+                    // Security files that live in the FlashFS (not at fixed offsets).
+                    for name in &["fcrt.bin", "crl.bin", "dae.bin", "extended.bin", "secdata.bin", "odd.bin"] {
+                        if let Some(data) = self.security_assets.get(*name).cloned() {
+                            self.flashfs_assets.entry(name.to_string()).or_insert(data);
+                        }
+                    }
+
                     let nand = self.active_nand.take().unwrap_or_else(|| {
                         let console = self.console_type.clone().unwrap_or("Jasper".to_string());
                         let layout = match console.to_lowercase().as_str() {
@@ -1479,42 +1486,53 @@ impl Session {
             }
             InternalCommand::ParseIni { path, target, ini_base, common, data, payloads, smc } => {
                 info!("[session] Parsing INI for target {}...", target);
-                if let Some(nand) = self.active_nand.take() {
-                    match crate::core::data::xeini::parse_xe_ini(&path, &target) {
-                        Ok(ini) => {
-                            match IniSearch::new(ini.clone(), &ini_base, &common, &data, &payloads, &smc, &self.active_nand, self.options.gxunsafe, self.options.nofcrt) {
-                                Ok(search) => {
-                                    // Route each pool to its typed session pool
-                                    self.bootloader_assets.extend(search.result.bootloader_assets);
-                                    self.security_assets.extend(search.result.security_assets);
-                                    self.flashfs_assets.extend(search.result.flashfs_assets);
+                let mut nand_ref = self.active_nand.take();
+                if nand_ref.is_none() {
+                    return Err("No active NAND skeleton active to apply INI map onto!".to_string());
+                }
+                match crate::core::data::xeini::parse_xe_ini(&path, &target) {
+                    Ok(ini) => {
+                        match IniSearch::new(ini.clone(), &ini_base, &common, &data, &payloads, &smc, &nand_ref, self.options.gxunsafe, self.options.nofcrt) {
+                            Ok(search) => {
+                                // Route each pool to its typed session pool
+                                self.bootloader_assets.extend(search.result.bootloader_assets);
+                                self.security_assets.extend(search.result.security_assets);
+                                self.flashfs_assets.extend(search.result.flashfs_assets);
 
-                                    // Apply bootloaders using the improved apply_xe_ini
-                                    let pending = crate::core::data::xeini::PendingAssets { bootloaders: &self.bootloader_assets, security: &self.security_assets };
-                                    match crate::core::data::xeini::apply_xe_ini(nand, ini, pending) {
-                                        Ok(updated_nand) => {
-                                            self.active_nand = Some(updated_nand);
-                                            info!("[session] INI bootloaders and assets applied to NAND skeleton.");
-                                        }
-                                        Err(e) => {
-                                            error!("[session] Failed to apply INI data: {}", e);
-                                            return Err(format!("Applied INI data failed: {}", e));
-                                        }
+                                // Security files that live in the FlashFS (not at fixed offsets).
+                                // Promote them into flashfs_assets so FinalizeFlashfs/build_from_memory
+                                // packs them in after a valid block_map exists.
+                                for name in &["fcrt.bin", "crl.bin", "dae.bin", "extended.bin", "secdata.bin", "odd.bin"] {
+                                    if let Some(data) = self.security_assets.get(*name).cloned() {
+                                        self.flashfs_assets.entry(name.to_string()).or_insert(data);
                                     }
                                 }
-                                Err(e) => {
-                                    error!("[session] Configuration discovery failed: {}", e);
-                                    return Err(format!("Discovery failed: {}", e));
+
+                                // Apply bootloaders using the improved apply_xe_ini
+                                let nand = nand_ref.take().unwrap();
+                                let pending = crate::core::data::xeini::PendingAssets { bootloaders: &self.bootloader_assets, security: &self.security_assets };
+                                match crate::core::data::xeini::apply_xe_ini(nand, ini, pending) {
+                                    Ok(updated_nand) => {
+                                        self.active_nand = Some(updated_nand);
+                                        info!("[session] INI bootloaders and assets applied to NAND skeleton.");
+                                    }
+                                    Err(e) => {
+                                        error!("[session] Failed to apply INI data: {}", e);
+                                        return Err(format!("Applied INI data failed: {}", e));
+                                    }
                                 }
                             }
-                        }
-                        Err(e) => {
-                            self.active_nand = Some(nand);
-                            return Err(format!("Failed parsing INI descriptors: {}", e));
+                            Err(e) => {
+                                self.active_nand = nand_ref;
+                                error!("[session] Configuration discovery failed: {}", e);
+                                return Err(format!("Discovery failed: {}", e));
+                            }
                         }
                     }
-                } else {
-                    return Err("No active NAND skeleton active to apply INI map onto!".to_string());
+                    Err(e) => {
+                        self.active_nand = nand_ref;
+                        return Err(format!("Failed parsing INI descriptors: {}", e));
+                    }
                 }
             }
             InternalCommand::ParseImage { path, key } => {

@@ -262,6 +262,17 @@ impl FileSystemRoot {
             }
         }
 
+        // Load file data for each entry from its block chain.
+        // Collect (block_number, size) first to avoid borrow conflict with get_chain_data(&self).
+        let to_load: Vec<(usize, u16, usize)> = self.entries.iter().enumerate()
+            .filter(|(_, e)| e.block_number > 0 && e.size > 0)
+            .map(|(i, e)| (i, e.block_number, e.size as usize))
+            .collect();
+        for (i, block_number, size) in to_load {
+            let raw = self.get_chain_data(image, layout, block_number);
+            self.entries[i].data = if raw.len() >= size { raw[..size].to_vec() } else { raw };
+        }
+
         // Calibrate BlockOffset for Big-Block NANDs by searching for .xex headers
         if *layout == NandLayout::Bb {
             self.calibrate_block_offset(image, layout);
@@ -338,10 +349,6 @@ impl FileSystemRoot {
                 root.entries.push(new_entry);
             }
         }
-        if root.block_number == -1 {
-            root.block_number = root.allocate_new_block(image, layout, 1, fs_start_block) as i32;
-        }
-        root.write_logical(image, layout);
         Ok(root)
     }
 
@@ -356,10 +363,6 @@ impl FileSystemRoot {
             root.set_entry_data(image, layout, &mut new_entry, content);
             root.entries.push(new_entry);
         }
-        if root.block_number == -1 {
-            root.block_number = root.allocate_new_block(image, layout, 1, fs_start_block) as i32;
-        }
-        root.write_logical(image, layout);
         Ok(root)
     }
 

@@ -1724,16 +1724,26 @@ impl NandSkeleton {
                 // 16-byte align CG after CF
                 let cg0_offset = (next_offset + 0xF) & !0xF;
                 let max_slot_end = target_cf_offset + 0x10000;
-                let mut cg_to_slot = cg0d.len();
-                if cg0_offset + cg_to_slot > max_slot_end {
-                    cg_to_slot = max_slot_end - cg0_offset;
+                if cg0_offset >= max_slot_end {
+                    warn!("[builder] CG0 starts at 0x{:X} which is past slot end 0x{:X}, skipping", cg0_offset, max_slot_end);
+                    // Still advance past this slot so CF1 lands on the next 64KB boundary
+                    next_offset = max_slot_end;
+                } else {
+                    let mut cg_to_slot = cg0d.len();
+                    if cg0_offset + cg_to_slot > max_slot_end {
+                        // CG overflows — write only the slot portion; overflow is in sysupdate.xexp1
+                        cg_to_slot = max_slot_end - cg0_offset;
+                    }
+                    if cg0_offset + cg_to_slot > logical_image.len() {
+                        return Err(format!("CG0 overflow at 0x{:X}: need 0x{:X} bytes", cg0_offset, cg_to_slot));
+                    }
+                    logical_image[cg0_offset..cg0_offset + cg_to_slot].copy_from_slice(&cg0d[0..cg_to_slot]);
+                    // Always advance to slot end so CF1 starts on the next clean 64KB block
+                    next_offset = max_slot_end;
                 }
-
-                if cg0_offset + cg_to_slot > logical_image.len() {
-                    return Err(format!("CG0 overflow at 0x{:X}: need 0x{:X} bytes", cg0_offset, cg_to_slot));
-                }
-                logical_image[cg0_offset..cg0_offset + cg_to_slot].copy_from_slice(&cg0d[0..cg_to_slot]);
-                next_offset = cg0_offset + cg_to_slot;
+            } else {
+                // No CG0 — still advance to slot end so CF1 is placed at the next 64KB boundary
+                next_offset = target_cf_offset + 0x10000;
             }
 
             if let Some(cf1d) = cf1 {
@@ -1749,15 +1759,18 @@ impl NandSkeleton {
                 if let Some(cg1d) = cg1 {
                     let cg1_offset = (next_offset + 0xF) & !0xF;
                     let max_slot_end = cf1_offset + 0x10000;
-                    let mut cg_to_slot = cg1d.len();
-                    if cg1_offset + cg_to_slot > max_slot_end {
-                        cg_to_slot = max_slot_end - cg1_offset;
+                    if cg1_offset >= max_slot_end {
+                        warn!("[builder] CG1 starts at 0x{:X} which is past slot end 0x{:X}, skipping", cg1_offset, max_slot_end);
+                    } else {
+                        let mut cg_to_slot = cg1d.len();
+                        if cg1_offset + cg_to_slot > max_slot_end {
+                            cg_to_slot = max_slot_end - cg1_offset;
+                        }
+                        if cg1_offset + cg_to_slot > logical_image.len() {
+                            return Err(format!("CG1 overflow at 0x{:X}: need 0x{:X} bytes", cg1_offset, cg_to_slot));
+                        }
+                        logical_image[cg1_offset..cg1_offset + cg_to_slot].copy_from_slice(&cg1d[0..cg_to_slot]);
                     }
-
-                    if cg1_offset + cg_to_slot > logical_image.len() {
-                        return Err(format!("CG1 overflow at 0x{:X}: need 0x{:X} bytes", cg1_offset, cg_to_slot));
-                    }
-                    logical_image[cg1_offset..cg1_offset + cg_to_slot].copy_from_slice(&cg1d[0..cg_to_slot]);
                 }
             }
         }

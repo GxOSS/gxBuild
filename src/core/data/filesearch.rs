@@ -563,9 +563,17 @@ impl IniSearch {
                     }
 
                     if let Some(c) = nand_data {
-                        if check_hash!(c, filename, "NAND Image") {
+                        let hash_ok = if let Some(expected) = &entry.hash {
+                            let actual = get_xebuild_crc32(&c, filename);
+                            actual.to_lowercase() == expected.to_lowercase()
+                        } else {
+                            true
+                        };
+                        if hash_ok {
                             found_content = Some(c);
                             found_path = Some(PathBuf::from("NAND_IMAGE"));
+                        } else {
+                            info!("[ini] Hash mismatch for {} in NAND Image Tier, trying next tier...", filename);
                         }
                     }
                 }
