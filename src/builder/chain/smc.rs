@@ -185,7 +185,6 @@ impl Smc {
     }
 }
 
-/// A "Raw" SMC as found in NAND images, which lacks the 0x130 byte signed header.
 #[derive(Clone)]
 pub struct RawSmc {
     pub data: Vec<u8>,
@@ -208,7 +207,6 @@ impl RawSmc {
         let major = self.data[0x101];
         let minor = self.data[0x102];
 
-        // Use Smc's structural logic for identification if possible
         let identified_type = self.identify_type();
 
         let ldv = self.data[0x103];
@@ -292,8 +290,6 @@ impl RawSmc {
     }
 
     pub fn decrypt(&mut self) {
-        // RGH3 scrambling is applied to the ciphertext in the NAND.
-        // We must unscramble BEFORE decryption to keep the rolling key state in sync.
         self.unscramble();
         smc_crypt(&mut self.data, false);
         self.populate_metadata();
@@ -310,7 +306,6 @@ impl RawSmc {
 
         smc_crypt(&mut self.data, true);
 
-        // RGH3 scrambling is applied to the ciphertext.
         if !is_retail {
             self.scramble();
         }
@@ -352,7 +347,6 @@ impl RawSmc {
     }
 }
 
-/// 64KB SMC Configuration Partition.
 #[derive(Clone)]
 pub struct SmcConfig {
     pub data: Box<[u8; 0x10000]>,
@@ -362,11 +356,6 @@ impl SmcConfig {
     pub const SIZE: usize = 0x10000;
     pub const SETTINGS_SIZE: usize = 0x100;
 
-    /// Physical/logical address used when *scanning* for the SMC config partition.
-    /// On eMMC, xeBuild finds this at 0x2FFC000 by scanning the NAND header field.
-    /// (smc_config_offset) is 0x0 on all real Corona dumps; the console does not use
-    /// the header field to locate config on eMMC.
-    /// For SB/BB layouts the header field IS populated and used for booting.
     pub fn get_scan_address(layout: &NandLayout) -> u32 {
         match layout {
             NandLayout::Emmc => 0x02FFC000,
@@ -375,9 +364,6 @@ impl SmcConfig {
         }
     }
 
-    /// Value to write into the NAND header's smc_config_offset field.
-    /// eMMC: 0x0 (field unused - confirmed from emmc-ksb-rginfo.txt: SMC config addr 0x0)
-    /// SB/BB: physical address used by the bootloader to locate the config partition.
     pub fn get_logical_address(layout: &NandLayout) -> u32 {
         match layout {
             NandLayout::Emmc => 0x0,

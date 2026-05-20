@@ -52,7 +52,7 @@ impl BootloaderCg {
     pub fn populate_metadata(&mut self) {
         if self.data.len() < 0x40 {
             return;
-        } // metadata ends at 0x40 relative
+        }
 
         let original_size = BigEndian::read_u32(&self.data[0x10..0x14]);
         let mut original_hash = [0u8; 0x14];
@@ -82,9 +82,7 @@ impl BootloaderCg {
         if self.data.len() < 0x14 {
             return false;
         }
-        // Matches xenon-bltool cg_is_decrypted() (source/cg-handler.c:31):
-        //   return ((BE(hdr->original_size) & 0xFFF) == 0x000);
-        // Real CE kernel sizes are always 4KB-aligned, so this is the canonical check.
+
         (BigEndian::read_u32(&self.data[0x10..0x14]) & 0xFFF) == 0x000
     }
 
@@ -118,7 +116,7 @@ impl BootloaderCg {
     pub fn decrypt(&mut self, cg_hmac: &[u8; 16]) {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
-        let payload_size = (size_aligned - 0x10) as usize; // data after header
+        let payload_size = (size_aligned - 0x10) as usize;
 
         if self.data.len() < payload_size {
             return;
@@ -130,7 +128,6 @@ impl BootloaderCg {
             info!("[builder] CG Decryption Key Derived: {:02x?}", final_key);
 
             if let Ok(mut rc4) = Rc4::new(&final_key) {
-                // Encryption starts at original_size, which is 0x10 rel into payload (absolute 0x20)
                 let _ = rc4.crypt(&mut self.data[0x10..payload_size]);
             }
         }
@@ -139,16 +136,13 @@ impl BootloaderCg {
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
-        let payload_len = (size_aligned - 0x10) as usize; // data after header
+        let payload_len = (size_aligned - 0x10) as usize;
 
         if self.data.len() < payload_len {
             return;
         }
 
-        if let Ok(hash) = excrypt::rot_sum_sha(
-            &IntoBytes::as_bytes(&self.header)[..0x10],
-            &self.data[0x10..payload_len], // Skip key, start at original_size (0x10 rel)
-        ) {
+        if let Ok(hash) = excrypt::rot_sum_sha(&IntoBytes::as_bytes(&self.header)[..0x10], &self.data[0x10..payload_len]) {
             sha_out.copy_from_slice(&hash);
         }
     }

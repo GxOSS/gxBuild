@@ -27,7 +27,7 @@ use zerocopy::{FromBytes, IntoBytes};
 #[repr(C)]
 pub struct BootloaderScHeader {
     pub header: BootloaderHeader,
-    pub signature: [u8; 0x100], // matching EXCRYPT_SIG size
+    pub signature: [u8; 0x100],
 }
 
 #[derive(Clone)]
@@ -45,16 +45,13 @@ impl BootloaderSc {
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
-        let payload_len = (size_aligned - 0x10) as usize; // data after header
+        let payload_len = (size_aligned - 0x10) as usize;
 
         if self.data.len() < payload_len {
             return;
         }
 
-        if let Ok(hash) = excrypt::rot_sum_sha(
-            &IntoBytes::as_bytes(&self.header)[..0x10],
-            &self.data[0x110..payload_len], // Skip key (16) and signature (256), start at payload (0x110 rel)
-        ) {
+        if let Ok(hash) = excrypt::rot_sum_sha(&IntoBytes::as_bytes(&self.header)[..0x10], &self.data[0x110..payload_len]) {
             sha_out.copy_from_slice(&hash);
         }
     }
@@ -85,13 +82,11 @@ impl BootloaderSc {
             decrypt_key.copy_from_slice(&derived_key[..16]);
 
             if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
-                // Encryption starts at signature, which is 0x10 rel into payload (absolute 0x20)
                 let _ = rc4.crypt(&mut self.data[0x10..payload_size]);
             }
         }
     }
 
-    /// Decrypts a stock devkit/devgl SC stage using the standard Zero-Key.
     pub fn decrypt_stock(&mut self) {
         let zero_key = [0u8; 16];
         self.decrypt(&zero_key);

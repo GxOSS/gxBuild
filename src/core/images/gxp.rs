@@ -205,6 +205,7 @@ fn read_patch_sections(mut reader: impl Read, patch_type: GxpPatchType, is_legac
         let amount = u32::from_be_bytes(amt_buf);
 
         // SMC sections in GXP files are GXS
+        // Needs updating for 8081 asm
         let current_section_idx = sections.len();
         let is_byte_mode = if is_legacy {
             false
@@ -258,11 +259,11 @@ pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> 
         };
         (header, false)
     } else {
-        // Legacy format detection
+        // XEPATCH
         file.seek(SeekFrom::Start(0))?;
         let temp_sections = read_patch_sections(&mut file, GxpPatchType::Unknown, true, BootloaderId::None)?;
         let header = GxpHeader::new_legacy(temp_sections.len());
-        // Rewind again so unified loop can read it fully (though we already have them, we rebuild for consistency)
+        // Rewind again so unified loop can read it fully
         file.seek(SeekFrom::Start(0))?;
         (header, true)
     };
@@ -293,7 +294,6 @@ pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> 
     let mut binary =
         GxpBinary { header: header.clone(), sections: sections_raw.clone(), is_legacy, onebl: None, cb: None, cb_a: None, cb_b: None, cd: None, khv: None, smc: None };
 
-    // Route sections based on patch type
     match header.patch_type {
         GxpPatchType::Rgh4Section => {
             if sections_raw.len() >= 4 {
@@ -385,7 +385,6 @@ pub fn parse_gxs_source<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpSection> {
             let addr_str = addr_part.trim().trim_start_matches("0x");
             current_address = Some(u32::from_str_radix(addr_str, 16)?);
 
-            // Initial data on the same line
             for token in data_part.split_whitespace() {
                 current_data.push(u8::from_str_radix(token, 16)?);
             }
@@ -410,17 +409,15 @@ pub fn serialize_records(records: &[PatchRecord]) -> Vec<u8> {
     let mut buf = Vec::new();
     for record in records {
         buf.extend_from_slice(&record.address.to_be_bytes());
-        // Amount is count of 32-bit words for standard patches
         let word_count = (record.data.len() + 3) / 4;
         buf.extend_from_slice(&(word_count as u32).to_be_bytes());
 
         let mut data = record.data.clone();
         if data.len() % 4 != 0 {
-            data.resize((data.len() + 3) & !3, 0); // Align to 4 bytes
+            data.resize((data.len() + 3) & !3, 0);
         }
         buf.extend(data);
     }
-    // Terminator
     buf.extend_from_slice(&0xFFFFFFFFu32.to_be_bytes());
     buf
 }
@@ -432,7 +429,6 @@ pub fn apply_records(records: &[PatchRecord], data: &mut Vec<u8>) -> anyhow::Res
     for record in records {
         let offset = record.address as usize;
 
-        // Safety: 4MB limit to prevent runaway allocation if a patch record is corrupt.
         if offset + record.data.len() > data.len() {
             if offset + record.data.len() > 0x400000 {
                 anyhow::bail!("Patch address 0x{:X} exceeds 4MB safety limit", offset + record.data.len());
@@ -444,7 +440,7 @@ pub fn apply_records(records: &[PatchRecord], data: &mut Vec<u8>) -> anyhow::Res
         modified_words += (record.data.len() as u32 + 3) / 4;
     }
 
-    info!("[gxp]   - Patched {} words (0x{:X} bytes)", modified_words, modified_words * 4);
+    info!("[gxp] patched {} words (0x{:X} bytes)", modified_words, modified_words * 4);
     Ok(())
 }
 

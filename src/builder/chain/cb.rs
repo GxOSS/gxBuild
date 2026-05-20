@@ -26,16 +26,13 @@ use zerocopy::{FromBytes, IntoBytes};
 
 #[derive(Clone, Debug)]
 pub struct CbMetadata {
-    // Basic / Legacy
     pub b_flags: u16,
 
-    // PerBoxData (Offset 0x10 in payload)
     pub pairing_data: [u8; 3],
     pub lockdown_value: u8,
     pub reserved_per_box: [u8; 0xC],
     pub per_box_digest: [u8; 0x10],
 
-    // Chain Metadata (Decrypted)
     pub signature: [u8; 0x100],
     pub rsa_pub_key: [u8; 0x110],
     pub nonce_3bl: [u8; 0x10],
@@ -43,12 +40,10 @@ pub struct CbMetadata {
     pub salt_4bl: [u8; 0xA],
     pub digest_4bl: [u8; 0x14],
 
-    // Hardware/Debug Hooks
     pub post_output_addr: u64,
     pub sb_flash_addr: u64,
     pub soc_mmio_addr: u64,
 
-    // Security/Policy
     pub console_allow: [u8; 4],
 }
 
@@ -61,14 +56,10 @@ pub struct BootloaderCb {
 }
 
 impl BootloaderCb {
-    /// Constructs CB bootloader from raw binary.
     pub fn new(bytes: &[u8]) -> Self {
-        // Parse header from the beginning of the data
         let (header, payload) = match BootloaderHeader::read_from_prefix(bytes) {
             Ok(result) => result,
             Err(_) => {
-                // If parsing fails, create an empty placeholder
-                // This allows construction to succeed even with invalid data
                 let empty_header = BootloaderHeader {
                     magic: zerocopy::byteorder::U16::new(0),
                     version: zerocopy::byteorder::U16::new(0),
@@ -82,7 +73,6 @@ impl BootloaderCb {
         };
 
         let mut cb = Self { header: header.clone(), data: payload.to_vec(), metadata: None, derived_key: None };
-        // Attempt to populate metadata if the size looks like a decrypted or valid CB
         cb.populate_metadata();
         cb
     }
@@ -90,45 +80,31 @@ impl BootloaderCb {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
         let (header, payload) = BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CB header")?;
         let mut cb = Self { header: header.clone(), data: payload.to_vec(), metadata: None, derived_key: None };
-        // Attempt to populate metadata if the size looks like a decrypted or valid CB
         cb.populate_metadata();
         Ok(cb)
     }
 
     pub fn populate_metadata(&mut self) {
-        // is_decrypted() checks CB_A zero-padding. CB_B never has this, so for
-        // post-decrypt_v1 calls use populate_metadata_unchecked directly.
         if !self.is_decrypted() || self.data.len() < 0x3B0 {
             return;
         }
         self.populate_metadata_unchecked();
     }
 
-    /// Populates metadata unconditionally (no is_decrypted guard).
-    /// Use after decrypt_v1 for CB_B, which lacks CB_A's zero-padding region.
     pub fn populate_metadata_unchecked(&mut self) {
         if self.data.len() < 0x3B0 {
             return;
         }
 
-        // J-Runner reads per-box data from decrypted CB_B:
-        // - Pairing data: cb_dec[0x20..0x22] (3 bytes, reversed)
-        // - LDV: cb_dec[0x3B1] (only if <= 16)
-        // Since self.data starts at cb_dec[0x10], we adjust:
-        // - self.data[0x10..0x13] = cb_dec[0x20..0x22] (pairing data)
-        // - self.data[0x3A1] = cb_dec[0x3B1] (LDV)
         let pd_raw: [u8; 3] = self.data[0x10..0x13].try_into().unwrap();
         info!("[cb] PD raw bytes at self.data[0x10..0x13]: {:02x?}", pd_raw);
         let mut pairing_data = pd_raw;
-        pairing_data.reverse(); // J-Runner reverses the 3 bytes
+        pairing_data.reverse();
 
-        // Read LDV from offset 0x3A1 (cb_dec[0x3B1] in J-Runner terms)
         let ldv_raw = self.data.get(0x3A1).copied().unwrap_or(0);
         let mut lockdown_value = if ldv_raw <= 16 { ldv_raw } else { 0 };
         info!("[cb] populate_metadata: PD={:02x?} LDV={} (raw={} at self.data[0x3A1])", pairing_data, lockdown_value, ldv_raw);
 
-        // J-Runner check: if bootloader starts with specific branch, LDV is 0
-        // cb_dec[0x02] and cb_dec[0x03] correspond to the version field in the header.
         if self.header.version.get() == 0x3C48 {
             lockdown_value = 0;
         }
@@ -180,8 +156,6 @@ impl BootloaderCb {
         });
     }
 
-    /// Synchronizes the high-level metadata object back into the raw bootloader payload.
-    /// This ensures that any edits made to the metadata are carried over to the final image.
     pub fn sync_metadata(&mut self) {
         if let Some(ref meta) = self.metadata {
             if self.data.len() < 0x3A4 {
@@ -247,7 +221,6 @@ impl BootloaderCb {
         if self.data.len() < 0x380 {
             return false;
         }
-        // Use the zero-padding chunk (CB[0x270:0x390] relative to 0x10 header offset) to verify success
         self.data[0x260..0x380].iter().all(|&b| b == 0)
     }
 
@@ -260,8 +233,7 @@ impl BootloaderCb {
             return;
         }
 
-        // rotsum covers first 0x10 bytes (header)
-        // and everything from globals (0x130 rel / 0x140 abs) to the end
+        // rotsum covers first 0x10 bytes (header) and everything from globals (0x130 rel / 0x140 abs) to the end
         if let Ok(hash) = excrypt::rot_sum_sha(&IntoBytes::as_bytes(&self.header)[..0x10], &self.data[0x130..payload_len]) {
             sha_out.copy_from_slice(&hash);
         }

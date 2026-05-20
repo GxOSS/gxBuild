@@ -25,7 +25,6 @@ use log::{info, warn};
 use zerocopy::byteorder::{BigEndian, U16};
 use zerocopy::FromBytes;
 
-/// Keyvault record header
 #[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy, Debug)]
 #[repr(C)]
 pub struct KeyvaultRecord {
@@ -35,7 +34,7 @@ pub struct KeyvaultRecord {
     pub unused1: [u8; 0x92],
     pub serial: [u8; 12], // Console serial number (ASCII)
     pub unused2: [u8; 0x50],
-    pub dvd_key: [u8; 16], // DVD encryption key
+    pub dvd_key: [u8; 16],
 }
 
 #[derive(Clone, Debug)]
@@ -60,15 +59,14 @@ pub struct Keyvault {
     pub metadata: Option<KeyvaultMetadata>,
 }
 
-// Offsets for Keyvault patching (including 16-byte HMAC header)
-pub const OFFSET_REGION: usize = 0xC8; // 2 bytes (Big Endian)
-pub const OFFSET_SERIAL: usize = 0xB0; // 12 bytes (ASCIIString)
-pub const OFFSET_DVD_KEY: usize = 0x100; // 16 bytes (Binary)
-pub const OFFSET_CONSOLE_ID: usize = 0x9CA; // 5 bytes (Binary)
-pub const OFFSET_MF_DATE: usize = 0x9E4; // 8 bytes (ASCIIString)
-pub const OFFSET_DRIVE_INQUIRY: usize = 0xC8A; // 40 bytes (Binary)
-pub const OFFSET_OSIG_STR: usize = 0xC92; // 32 bytes (ASCIIString, inside Inquiry)
-pub const OFFSET_FCRT_FLAG: usize = 0x1C; // 2 bytes (Hardware Flags u16 BE) - J-Runner updatekvval() L684
+pub const OFFSET_REGION: usize = 0xC8;
+pub const OFFSET_SERIAL: usize = 0xB0;
+pub const OFFSET_DVD_KEY: usize = 0x100;
+pub const OFFSET_CONSOLE_ID: usize = 0x9CA;
+pub const OFFSET_MF_DATE: usize = 0x9E4;
+pub const OFFSET_DRIVE_INQUIRY: usize = 0xC8A;
+pub const OFFSET_OSIG_STR: usize = 0xC92;
+pub const OFFSET_FCRT_FLAG: usize = 0x1C;
 
 impl Keyvault {
     pub const SIZE: usize = 0x4000;
@@ -79,7 +77,6 @@ impl Keyvault {
         }
         let mut kv = Self { data: data[..Self::SIZE].to_vec(), is_decrypted: false, hashed: false, metadata: None };
 
-        // Automatic detection of pre-decrypted Keyvaults
         if kv.check_decrypted_signatures() {
             info!("[builder] Pre-decrypted Keyvault detected via signatures.");
             kv.is_decrypted = true;
@@ -89,8 +86,6 @@ impl Keyvault {
         Ok(kv)
     }
 
-    /// Parses the raw buffer into the structured metadata view.
-    /// Only works if the Keyvault is decrypted.
     pub fn refresh_metadata(&mut self) -> Result<(), String> {
         if !self.is_decrypted {
             self.metadata = None;
@@ -99,9 +94,6 @@ impl Keyvault {
 
         let record = self.get_record()?;
 
-        // Hardware flags at 0x1C - J-Runner updatekvval() L684:
-        //   (BitConverter.ToUInt16(new byte[2] { kv[0x1D], kv[0x1C] }, 0) & 0x120) != 0
-        //   = big-endian u16 at 0x1C, masked with 0x120 (bits: 0x100 | 0x020)
         let flags = u16::from_be_bytes(self.data[0x1C..0x1E].try_into().unwrap());
 
         let meta = KeyvaultMetadata {
@@ -121,7 +113,6 @@ impl Keyvault {
         Ok(())
     }
 
-    /// Detects if the data is already decrypted.
     fn check_decrypted_signatures(&self) -> bool {
         if self.data.len() < 0x60 {
             return false;
@@ -131,10 +122,9 @@ impl Keyvault {
             return true;
         }
 
-        // Fallback ASCII magic at known decrypted offsets
         if self.data.len() >= 0x2000 {
-            let osig_sig = &self.data[0xC82..0xC86]; // "OSIG"
-            let drm_sig = &self.data[0x1F64..0x1F67]; // "DRM"
+            let osig_sig = &self.data[0xC82..0xC86];
+            let drm_sig = &self.data[0x1F64..0x1F67];
             return (osig_sig == b"OSIG") || (drm_sig == b"DRM");
         }
 
@@ -152,7 +142,6 @@ impl Keyvault {
 
         let original_data = self.data.clone();
 
-        // 1. Try KV1 Decryption
         self.hashed = false;
         let mut kv1_data = self.data.clone();
 
@@ -166,7 +155,6 @@ impl Keyvault {
         let mut rc4 = Rc4::new(&decrypt_key).map_err(|e| format!("RC4 init failed: {}", e))?;
         rc4.crypt(&mut kv1_data[0x10..]).map_err(|e| format!("Decryption failed: {}", e))?;
 
-        // 2. Check if KV1 was correct
         let kv1_valid = {
             let temp_kv = Keyvault { data: kv1_data.clone(), ..self.clone() };
             temp_kv.check_decrypted_signatures()
@@ -190,7 +178,6 @@ impl Keyvault {
             return Ok(());
         }
 
-        // 3. Try KV2 Fallback
         info!("[builder] KV1 decryption invalid or Type 2 signature found. Attempting KV2 (hashed) decryption...");
         let mut kv2_data = original_data.clone();
 
@@ -213,7 +200,6 @@ impl Keyvault {
             return Ok(());
         }
 
-        // 4. Final Fallback: Use KV1 if it was valid
         if kv1_valid {
             warn!("[builder] KV2 decryption failed but KV1 was valid. Falling back to Type 1.");
             self.data = kv1_data;
@@ -228,13 +214,12 @@ impl Keyvault {
 
     pub fn encrypt(&mut self, cpukey: &[u8; 16]) -> Result<(), String> {
         if !self.is_decrypted {
-            return Ok(()); // Already encrypted or never decrypted
+            return Ok(());
         }
 
         if self.hashed {
-            // KV2 / Hashed Encryption (J-Runner Style)
             let mut message = self.data[0x10..].to_vec();
-            message.extend_from_slice(&[0x07, 0x12]); // KV2 secret
+            message.extend_from_slice(&[0x07, 0x12]);
 
             let salt = excrypt::hmac_sha(cpukey, &[&message]).map_err(|e| format!("KV2 salt derivation failed: {}", e))?;
 
@@ -246,7 +231,6 @@ impl Keyvault {
 
             self.data[..16].copy_from_slice(&salt[..16]);
         } else {
-            // KV1 / Standard Encryption
             let mut nonce = [0u8; 16];
             nonce.copy_from_slice(&self.data[..0x10]);
             let hmac_res = excrypt::hmac_sha(cpukey, &[&nonce]).map_err(|e| format!("Key derivation failed: {}", e))?;
@@ -265,8 +249,6 @@ impl Keyvault {
             .map_err(|_| "Failed to map KeyvaultRecord".to_string())
     }
 
-    // High-level accessors for sparse fields not in the Record struct yet
-
     pub fn get_serial(&self) -> String {
         let start = 0xB0;
         let end = start + 12;
@@ -281,7 +263,7 @@ impl Keyvault {
 
     pub fn get_osig(&self) -> String {
         let start = OFFSET_OSIG_STR;
-        let end = start + 28; // J-Runner reads exactly 28 bytes
+        let end = start + 28;
         if self.data.len() >= end {
             String::from_utf8_lossy(&self.data[start..end]).trim_matches(char::from(0)).to_string()
         } else {
@@ -290,7 +272,6 @@ impl Keyvault {
     }
 
     pub fn get_kv_type(&self) -> u8 {
-        // J-Runner Nand.cs:679 - Check 0x1DF8 (XEKEY_SPECIAL_KEYVAULT_SIGNATURE)
         if self.data.len() < 0x1E00 {
             return 1;
         }
@@ -321,8 +302,6 @@ impl Keyvault {
             "Unknown".to_string()
         }
     }
-
-    // --- Patching Methods ---
 
     fn ensure_decrypted(&self) -> Result<(), String> {
         if !self.is_decrypted {
@@ -383,14 +362,8 @@ impl Keyvault {
         Ok(())
     }
 
-    /// Patches the FCRT requirement in the Keyvault.
-    /// Setting this to false (bits cleared) is often required for custom builds
-    /// to bypass mandatory DVD drive matching.
     pub fn apply_fcrt_patch(&mut self, enabled: bool) -> Result<(), String> {
         self.ensure_decrypted()?;
-        // J-Runner updatekvval() L684: FCRT check reads u16 at 0x1C (BE) and tests bits 0x120.
-        // We set/clear those same bits rather than writing the whole field, preserving
-        // any other flags in the hardware flags word.
         let mut flags = u16::from_be_bytes(self.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG + 2].try_into().unwrap());
         if enabled {
             flags |= 0x0120;
@@ -401,8 +374,6 @@ impl Keyvault {
         let _ = self.refresh_metadata();
         Ok(())
     }
-
-    // kv.get_record().map(|r| r.clone())
 }
 
 #[cfg(test)]
@@ -411,7 +382,6 @@ mod tests {
 
     #[test]
     fn test_kv_decryption_detection() {
-        // Primary detection: data[0x40..0x60] all-zero (J-Runner updatekvval() L669)
         let data = vec![0u8; 0x4000];
         let kv = Keyvault::parse(&data).unwrap();
         assert!(kv.is_decrypted, "Should detect decrypted KV via zero-pad region");

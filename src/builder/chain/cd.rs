@@ -91,24 +91,19 @@ impl BootloaderCd {
         if self.data.len() < 0x111 {
             return false;
         }
-        // Matches xenon-bltool cd_is_decrypted(): hdr->idk_yet[0] == 0x00.
-        // The idk_yet field is unnamed in all references; empirically always 0 when decrypted.
         self.data[0x110] == 0x00
     }
 
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
-        let payload_len = (size_aligned - 0x10) as usize; // data after header
+        let payload_len = (size_aligned - 0x10) as usize;
 
         if self.data.len() < payload_len {
             return;
         }
 
-        if let Ok(hash) = excrypt::rot_sum_sha(
-            &IntoBytes::as_bytes(&self.header)[..0x10],
-            &self.data[0x110..payload_len], // Skip key and signature, start at idk_yet (0x110 rel)
-        ) {
+        if let Ok(hash) = excrypt::rot_sum_sha(&IntoBytes::as_bytes(&self.header)[..0x10], &self.data[0x110..payload_len]) {
             sha_out.copy_from_slice(&hash);
         }
     }
@@ -141,17 +136,11 @@ impl BootloaderCd {
             return;
         }
 
-        // Derived key starts with CBB key and Absolute 0x10 key.
-        // Matches xenon-bltool's cd_decrypt: writes derived key back into data[0..16] in-place.
         if let Ok(derived_key) = excrypt::hmac_sha(cbb_key, &[&self.data[0..16]]) {
             let mut final_key = [0u8; 16];
             final_key.copy_from_slice(&derived_key[..16]);
             info!("[builder] CD Decryption Key Derived: {:02x?}", final_key);
 
-            // Optional CPU Key second-pass HMAC.
-            // Present in xenon-bltool cd_decrypt() (source/cd-handler.c:64-65).
-            // Currently always called with cpu_key = None for all known retail layouts.
-            // Would be needed if a CD variant requiring a CPU-key second pass were encountered.
             if let Some(key) = cpu_key {
                 if let Ok(derived_key_cpu) = excrypt::hmac_sha(key, &[&final_key]) {
                     final_key.copy_from_slice(&derived_key_cpu[..16]);
@@ -160,7 +149,6 @@ impl BootloaderCd {
 
             self.derived_key = Some(final_key);
             if let Ok(mut rc4) = Rc4::new(&final_key) {
-                // Encryption starts at signature, which is 0x10 rel into payload (absolute 0x20)
                 let _ = rc4.crypt(&mut self.data[0x10..payload_size]);
             }
         }

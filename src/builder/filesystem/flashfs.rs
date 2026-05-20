@@ -264,7 +264,10 @@ impl FileSystemRoot {
 
         // Load file data for each entry from its block chain.
         // Collect (block_number, size) first to avoid borrow conflict with get_chain_data(&self).
-        let to_load: Vec<(usize, u16, usize)> = self.entries.iter().enumerate()
+        let to_load: Vec<(usize, u16, usize)> = self
+            .entries
+            .iter()
+            .enumerate()
             .filter(|(_, e)| e.block_number > 0 && e.size > 0)
             .map(|(i, e)| (i, e.block_number, e.size as usize))
             .collect();

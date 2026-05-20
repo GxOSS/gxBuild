@@ -99,8 +99,6 @@ fn get_xebuild_crc32(data: &[u8], filename: &str) -> String {
         return format!("{:08x}", crc32fast::hash(data));
     }
 
-    // Determine the actual checksum length from the loader header (offset 0xC)
-    // xeBuild truncates all bootloaders to the size explicitly declared in the header.
     let mut xe_len = u32::from_be_bytes([data[0x0C], data[0x0D], data[0x0E], data[0x0F]]) as usize;
     if xe_len == 0 || xe_len > data.len() {
         xe_len = data.len();
@@ -108,9 +106,8 @@ fn get_xebuild_crc32(data: &[u8], filename: &str) -> String {
 
     let mut working = data[..xe_len].to_vec();
 
-    // Zero out sensitive/nonce fields per xeBuild rules:
+    // Zero out sensitive/nonce fields per xeBuild
     if lower_name.starts_with("cb") || lower_name.starts_with("sb") {
-        // CB/CB_A/CB_B/CB_X: Zero 0x30 bytes starting at 0x10 (0x10..0x40)
         let start = 0x10;
         let end = std::cmp::min(0x40, working.len());
         if working.len() > start {
@@ -119,7 +116,6 @@ fn get_xebuild_crc32(data: &[u8], filename: &str) -> String {
             }
         }
     } else if lower_name.starts_with("cf") || lower_name.starts_with("sf") {
-        // CF: Zero 0x210 bytes starting at 0x20 (0x20..0x230)
         let start = 0x20;
         let end = std::cmp::min(0x230, working.len());
         if working.len() > start {
@@ -134,7 +130,6 @@ fn get_xebuild_crc32(data: &[u8], filename: &str) -> String {
         || lower_name.starts_with("cg")
         || lower_name.starts_with("sg")
     {
-        // CD, CE, CG: Zero 0x10 bytes starting at 0x10 (0x10..0x20)
         let start = 0x10;
         let end = std::cmp::min(0x20, working.len());
         if working.len() > start {
@@ -154,12 +149,8 @@ pub struct IniSearchResult {
     pub update: Option<DiscoveredUpdate>,
     pub rebooter_update: Option<DiscoveredUpdate>,
     pub flashfs: Option<FlashFS>,
-    /// Assets from the [main] section: bootloader binaries + CF/CG update loaders.
     pub bootloader_assets: HashMap<String, Vec<u8>>,
-    /// Assets from the [security] section: smc.bin, kv.bin, fcrt.bin, odd.bin.
     pub security_assets: HashMap<String, Vec<u8>>,
-    /// Assets from the [flashfs] section: XEX/XEX2/dat files to pack into FlashFS.
-    /// Never contains bootloader binaries - routing is enforced by section membership.
     pub flashfs_assets: HashMap<String, Vec<u8>>,
 }
 
@@ -303,8 +294,6 @@ impl IniSearch {
         }
         ini.patch.path = patch_path.clone();
 
-        // Helper: check CRC32 against expected hash; returns true if pass (or no hash), logs/warns/errors on mismatch.
-        // Returns None to signal "move to next tier" on mismatch without unsafe_mode.
         let check_crc32_simple = |data: &[u8], filename: &str, expected: &Option<String>, tier: &str, unsafe_mode: bool| -> Option<bool> {
             if let Some(exp) = expected {
                 let mut hasher = crc32fast::Hasher::new();
@@ -407,7 +396,7 @@ impl IniSearch {
             result.security = Some(sec_paths);
         }
 
-        // SMC: Tier 1 = mydata, Tier 2 = smc folder (peer of build/common/mydata)
+        // SMC: Tier 1 = mydata, Tier 2 = smc folder
         let section_base = ini.name.split('_').next().unwrap_or(&ini.name);
         let platform_clean = if section_base.ends_with("bl") {
             &section_base[..section_base.len() - 2]
@@ -468,7 +457,6 @@ impl IniSearch {
             }
         }
 
-        // Bootloaders and Update Discovery
         if !ini.main.is_empty() {
             result.bootloaders = Some(DiscoveredBootloaders::new());
             if ini.rebooter {
@@ -516,7 +504,6 @@ impl IniSearch {
 
                 let is_update = lower_name.starts_with("cf_") || lower_name.starts_with("sf_") || lower_name.starts_with("cg_") || lower_name.starts_with("sg_");
 
-                // crc32
                 macro_rules! check_hash {
                     ($c:expr, $name:expr, $tier:expr) => {
                         if let Some(expected) = &entry.hash {
@@ -672,7 +659,6 @@ impl IniSearch {
 
                 // Need to add rebooter patching
                 if let Some(mut c) = found_content {
-                    // Apply Patch after confirmation
                     if let Some(ref parsed_patch) = xe_patch {
                         if Some(&lower_name) == target_cb.as_ref() {
                             if let Some(ref cb_patch) = parsed_patch.cb {
@@ -718,7 +704,6 @@ impl IniSearch {
             }
         }
 
-        // FlashFS Tiered Discovery
         if !ini.flashfs.is_empty() {
             let mut flashfs = FlashFS::new();
             for entry in &ini.flashfs {
@@ -731,7 +716,7 @@ impl IniSearch {
                 }
                 let mut found_content: Option<Vec<u8>> = None;
 
-                // Tier 0: NAND FlashFS (match by basename)
+                // Tier 0: NAND FlashFS
                 if found_content.is_none() {
                     if let Some(n) = nand {
                         if let Some(n_entry) = n.flashfs.root.entries.iter().find(|e| e.file_name.to_lowercase() == lower_basename) {
@@ -743,12 +728,10 @@ impl IniSearch {
                     }
                 }
 
-                // Probe candidates: exact basename, then basename+"1", basename+"2" (xeBuild
-                // stores e.g. "bootanim.xexp1" on disk when the INI names "bootanim.xexp").
+                // Probe candidates: exact basename, then basename+"1", basename+"2"
                 let disk_candidates = [basename.clone(), format!("{}1", basename), format!("{}2", basename)];
 
-                // Tier 1: mydata folder (resolve with original path hint for relative traversal,
-                // then fall back to suffixed basenames)
+                // Tier 1: mydata folder
                 if found_content.is_none() {
                     // Try the original hint path first (handles "..\launch.xex" style entries)
                     let hint_path = resolve_robust(&mydata, filename);
@@ -806,7 +789,7 @@ impl IniSearch {
                     }
                 }
 
-                // Tier 6: Common folder
+                // Tier 5: Common folder
                 if found_content.is_none() {
                     for cand in &disk_candidates {
                         let p = common.join(cand);

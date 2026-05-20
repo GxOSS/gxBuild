@@ -111,24 +111,19 @@ impl BootloaderCe {
         if self.data.len() < 0x20 {
             return false;
         }
-        // `unknown` field is at relative 0x1C (absolute 0x2C); zero in all decrypted retail CEs.
-        // Matches xenon-bltool ce_is_decrypted().
         &self.data[0x1C..0x20] == &[0, 0, 0, 0]
     }
 
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
-        let payload_len = (size_aligned - 0x10) as usize; // data after header
+        let payload_len = (size_aligned - 0x10) as usize;
 
         if self.data.len() < payload_len {
             return;
         }
 
-        if let Ok(hash) = excrypt::rot_sum_sha(
-            &IntoBytes::as_bytes(&self.header)[..0x10],
-            &self.data[0x10..payload_len], // Skip key, start at target_address (0x10 rel)
-        ) {
+        if let Ok(hash) = excrypt::rot_sum_sha(&IntoBytes::as_bytes(&self.header)[..0x10], &self.data[0x10..payload_len]) {
             sha_out.copy_from_slice(&hash);
         }
     }
@@ -139,7 +134,6 @@ impl BootloaderCe {
         info!("[builder] {} size: 0x{:x}", indicator, self.header.size.get());
 
         if self.is_decrypted() {
-            // Decrypted fields: target_address at 0x10, uncompressed_size at 0x18 (rel payload)
             let target_address = RealBigEndian::read_u64(&self.data[0x10..0x18]);
             let uncompressed_size = RealBigEndian::read_u32(&self.data[0x18..0x1C]);
 
@@ -165,14 +159,11 @@ impl BootloaderCe {
             info!("[builder] CE Decryption Key Derived: {:02x?}", final_key);
 
             if let Ok(mut rc4) = Rc4::new(&final_key) {
-                // Encryption starts at target_address, which is 0x10 rel into payload (absolute 0x20)
                 let _ = rc4.crypt(&mut self.data[0x10..payload_size]);
             }
         }
 
         // After decryption, the payload after the CE header metadata is the LZX compressed buffer
-        // Metadata in CE payload after the key: target_address(8), uncompressed_size(4), unknown(4) = 16 bytes (0x10)
-        // Total plain/metadata before compressed data: 0x20 (key + target info)
         if self.data.len() >= 0x20 {
             self.data_ce = Some(self.data[0x20..payload_size].to_vec());
         }
@@ -280,9 +271,6 @@ impl BootloaderCe {
     */
 
     pub fn serialize(&self) -> Vec<u8> {
-        // Always serialize the raw payload (self.data).
-        // data_ce is a transient working buffer populated only after decrypt() - it must
-        // not be the serialization source. All other bootloaders (cb, cd, cf, cg) use self.data.
         let mut out = IntoBytes::as_bytes(&self.header).to_vec();
         out.extend_from_slice(&self.data);
         out

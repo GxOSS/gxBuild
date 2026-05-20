@@ -27,25 +27,25 @@ use zerocopy::{FromBytes, IntoBytes};
 
 #[derive(Clone, Debug)]
 pub struct CfMetadata {
-    // Stage 1 (Plain - Offset 0x0 in payload / 0x10 Absolute)
+    // Plain - Offset 0x0 in payload / 0x10 Absolute
     pub source_version: u16,
     pub target_version: u16,
     pub reserved_prefix: u32,
     pub cg_size: u32,
     pub hmac_salt: [u8; 16],
 
-    // Stage 2 (Decrypted - 7BL Bridge - Offset 0x20 in payload / 0x30 Absolute)
+    // Decrypted - 7BL Bridge - Offset 0x20 in payload / 0x30 Absolute
     pub cg_blocks_used: u16,
     pub cg_block_numbers: Vec<u16>, // 223 entries
 
-    // Stage 2 (Decrypted - PerBoxData)
+    // Decrypted - PerBoxData
     pub reserved_per_box: [u8; 0x2B],
     pub update_slot: u8,
     pub pairing_data: [u8; 3],
     pub lockdown_value: u8,
     pub per_box_digest: [u8; 0x10],
 
-    // Stage 2 (Decrypted - Chain Bridge)
+    // Decrypted - Chain Bridge
     pub signature: [u8; 0x100],
     pub cg_nonce: [u8; 0x10],
     pub cg_digest: [u8; 0x14],
@@ -67,22 +67,17 @@ impl BootloaderCf {
     }
 
     pub fn populate_metadata(&mut self) {
-        // verify_decrypted() checks reserved_per_box zeros — unreliable for all CFs.
-        // After decrypt() use populate_metadata_unchecked instead.
         if !self.is_decrypted() || self.data.len() < 0x344 {
             return;
         }
         self.populate_metadata_unchecked();
     }
 
-    /// Populates metadata unconditionally (no is_decrypted guard).
-    /// Use after decrypt() since verify_decrypted() can fail for valid CFs.
     pub fn populate_metadata_unchecked(&mut self) {
         if self.data.len() < 0x344 {
             return;
         }
 
-        // Stage 1 (Plain)
         let source_version = BigEndian::read_u16(&self.data[0x0..0x2]);
         let target_version = BigEndian::read_u16(&self.data[0x4..0x6]);
         let reserved_prefix = BigEndian::read_u32(&self.data[0x8..0xC]);
@@ -90,7 +85,6 @@ impl BootloaderCf {
         let mut hmac_salt = [0u8; 16];
         hmac_salt.copy_from_slice(&self.data[0x10..0x20]);
 
-        // Stage 2 (Decrypted region starts at 0x20)
         let cg_blocks_used = BigEndian::read_u16(&self.data[0x20..0x22]);
         let mut cg_block_numbers = Vec::with_capacity(223);
         for i in 0..223 {
@@ -104,7 +98,7 @@ impl BootloaderCf {
 
         let mut pairing_data = [0u8; 3];
         pairing_data.copy_from_slice(&self.data[0x20C..0x20F]);
-        pairing_data.reverse(); // J-Runner reverses the 3 bytes
+        pairing_data.reverse();
 
         let lockdown_value = self.data[0x20F];
         let mut per_box_digest = [0u8; 0x10];
@@ -144,14 +138,12 @@ impl BootloaderCf {
                 return;
             }
 
-            // Stage 1
             BigEndian::write_u16(&mut self.data[0x0..0x2], meta.source_version);
             BigEndian::write_u16(&mut self.data[0x4..0x6], meta.target_version);
             BigEndian::write_u32(&mut self.data[0x8..0xC], meta.reserved_prefix);
             BigEndian::write_u32(&mut self.data[0xC..0x10], meta.cg_size);
             self.data[0x10..0x20].copy_from_slice(&meta.hmac_salt);
 
-            // Stage 2
             BigEndian::write_u16(&mut self.data[0x20..0x22], meta.cg_blocks_used);
             for (i, &block) in meta.cg_block_numbers.iter().enumerate() {
                 if i >= 223 {
@@ -165,7 +157,7 @@ impl BootloaderCf {
             self.data[0x20B] = meta.update_slot;
 
             let mut pd_sync = meta.pairing_data;
-            pd_sync.reverse(); // Reverse back for storage
+            pd_sync.reverse();
             self.data[0x20C..0x20F].copy_from_slice(&pd_sync);
 
             self.data[0x20F] = meta.lockdown_value;
@@ -177,26 +169,20 @@ impl BootloaderCf {
         }
     }
 
+    // Should probably remove this and just call verify_decrypted directly
     pub fn is_decrypted(&self) -> bool {
-        // x360Utils VerifyCFDecrypted(): checks payload[0x1E0..0x200] (absolute 0x1F0..0x210)
-        // - the reserved_per_box padding, always zeros in decrypted CFs.
-        // verify_decrypted() implements this correctly. The old single-byte check
-        // at data[0x20] (first byte of cg_blocks_used) is unreliable - it can be
-        // 0 in encrypted CFs, causing populate_metadata() to read garbage.
         self.verify_decrypted()
     }
 
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
-        let payload_len = size_aligned as usize - 0x10; // total payload size after 0x10 header
+        let payload_len = size_aligned as usize - 0x10;
 
         if self.data.len() < payload_len {
             return;
         }
 
-        // rotsum covers first 0x20 bytes (header + version info)
-        // and everything from cg_hmac (0x320 rel / 0x330 abs) to the end
         let mut combined_header = [0u8; 0x20];
         combined_header[..0x10].copy_from_slice(&IntoBytes::as_bytes(&self.header)[..0x10]);
         combined_header[0x10..].copy_from_slice(&self.data[0x0..0x10]);
@@ -258,35 +244,23 @@ impl BootloaderCf {
     pub fn decrypt(&mut self, onebl_key: &[u8; 16]) {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
-        let payload_size = (size_aligned - 0x10) as usize; // size of data after the header
+        let payload_size = (size_aligned - 0x10) as usize;
 
         if self.data.len() < payload_size {
             return;
         }
 
-        // HMAC key for CF is at Absolute 0x20, which is data[0x10..0x20]
         if let Ok(derived_key) = excrypt::hmac_sha(onebl_key, &[&self.data[0x10..0x20]]) {
             let mut final_key = [0u8; 16];
             final_key.copy_from_slice(&derived_key[..16]);
             info!("[builder] CF Decryption Key Derived: {:02x?}", final_key);
 
             if let Ok(mut rc4) = Rc4::new(&final_key) {
-                // Encryption starts at pairing, which is 0x20 deep into the payload (0x30 deep into file)
                 let _ = rc4.crypt(&mut self.data[0x20..payload_size]);
             }
         }
-        // Do NOT call populate_metadata_unchecked here: this function is used
-        // symmetrically for re-encryption in encrypt_chain. Calling it after
-        // re-encryption would overwrite synced metadata with ciphertext garbage.
-        // decrypt_chain calls populate_metadata_unchecked explicitly after this.
     }
 
-    /// Verifies that a CF bootloader has been successfully decrypted.
-    /// Based on x360Utils Cryptography.VerifyCFDecrypted():
-    /// After decryption, bytes 0x1F0..0x210 (0x20 bytes) should be all zeros.
-    /// This region is part of the `pairing` data in the decrypted CF payload.
-    /// Note: x360Utils offsets are from the full bootloader start (including 16-byte header).
-    /// gxBuild's `data` field is the payload AFTER the header, so we subtract 0x10.
     pub fn verify_decrypted(&self) -> bool {
         if self.data.len() < 0x200 {
             return false;
