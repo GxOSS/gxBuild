@@ -359,7 +359,10 @@ impl FileSystemRoot {
         let mut root = FileSystemRoot::new(fs_start_block as i32, 3, partition_type);
         root.create_defaults(image.len(), layout, fs_start_block);
         info!("[flashfs] Building FlashFS from memory with {} assets...", files.len());
-        for (name, content) in files {
+        let mut ordered_files: Vec<_> = files.iter().collect();
+        ordered_files
+            .sort_by(|(left_name, left_content), (right_name, right_content)| right_content.len().cmp(&left_content.len()).then_with(|| left_name.cmp(right_name)));
+        for (name, content) in ordered_files {
             info!("[flashfs]   * Processing asset: {} (Size: 0x{:X})", name, content.len());
             let mut new_entry = FileSystemEntry::new(0);
             new_entry.file_name = name.clone();
@@ -549,9 +552,8 @@ impl FileSystemRoot {
 
     pub fn set_entry_data(&mut self, image: &mut [u8], layout: &NandLayout, entry: &mut FileSystemEntry, data: &[u8]) {
         if entry.block_number == 0 {
-            let chunk_size = layout.logical_pages_per_block() * 0x200;
-            let needed = (data.len() + chunk_size - 1) / chunk_size;
-            entry.block_number = self.allocate_new_block(image, layout, needed, 0);
+            // flashfs files only need one starting block because the chain can grow later.
+            entry.block_number = self.allocate_new_block(image, layout, 1, 0);
         }
         self.set_chain_data(image, layout, entry.block_number, data);
         entry.size = data.len() as u32;
@@ -929,5 +931,35 @@ impl FlashFS {
         }
 
         fs
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_entry_data_can_span_fragmented_free_blocks() {
+        let layout = NandLayout::Sb;
+        let mut image = vec![0xFF; 0x1000000];
+        let mut root = FileSystemRoot::new(0x4E, 3, 0x30);
+        root.create_defaults(image.len(), &layout, 0x4E);
+
+        // leave only isolated free blocks so no two-block run exists.
+        for block in 0x4F..root.block_map.len() {
+            root.block_map[block] = if block % 2 == 1 { 0x1FFE } else { 0x1FFB };
+        }
+
+        let chunk_size = layout.logical_pages_per_block() * 0x200;
+        let data = vec![0xAB; chunk_size + 0x20];
+        let mut entry = FileSystemEntry::new(0);
+        entry.file_name = "sysupdate.xexp1".to_string();
+
+        root.set_entry_data(&mut image, &layout, &mut entry, &data);
+
+        assert_ne!(entry.block_number, 0);
+        let chain = root.get_block_chain(entry.block_number, root.block_map.len());
+        assert_eq!(chain.len(), 2);
+        assert_ne!(chain[1], chain[0] + 1);
     }
 }
