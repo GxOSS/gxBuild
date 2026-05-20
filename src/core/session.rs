@@ -218,6 +218,26 @@ mod tests {
         session.options.merge(other_opt);
         assert_eq!(session.options.nofcrt, Some(false));
     }
+
+    #[test]
+    fn finalize_flashfs_resets_empty_source_map() {
+        let mut session = Session::new();
+        let mut nand = NandSkeleton::new_blank(NandLayout::Sb);
+        nand.flashfs.root.block_number = 1000;
+        nand.flashfs.root.block_map = vec![0x1FFB; 1024];
+        for block in 1000..1024 {
+            nand.flashfs.root.block_map[block] = 0x1FFE;
+        }
+        session.active_nand = Some(nand);
+
+        session.run_once(InternalCommand::FinalizeFlashfs).unwrap();
+
+        let root = &session.active_nand.as_ref().unwrap().flashfs.root;
+        assert_eq!(root.block_number, 0x4E);
+        assert_eq!(root.block_map[0x4D], 0x1FFB);
+        assert_eq!(root.block_map[0x4E], 0x1FFF);
+        assert_eq!(root.block_map[0x4F], 0x1FFE);
+    }
 }
 
 impl InternalCommand {
@@ -1886,21 +1906,18 @@ impl Session {
                 }
             }
             InternalCommand::FinalizeFlashfs => {
-                if !self.flashfs_assets.is_empty() {
-                    info!("[session] Finalizing FlashFS with {} collected assets...", self.flashfs_assets.len());
-                    if let Some(nand) = &mut self.active_nand {
-                        // Use layout-specific defaults for FlashFS start block, NOT the parsed
-                        // NAND's root block. The original NAND's FlashFS root was placed based
-                        // on its own file content and growth pattern. A new build should start
-                        // fresh at the standard location.
-                        let fs_start: u16 = match nand.layout {
-                            crate::core::images::blocks::NandLayout::Bb => 0x1E0,
-                            crate::core::images::blocks::NandLayout::Emmc => {
-                                crate::builder::filesystem::corona::default_emmc_fs_block(nand.header.fs_addr.get(), &nand.corona_fs)
-                            }
-                            _ => 0x4E,
-                        };
-                        info!("[session] FlashFS start block: 0x{:X} ({})", fs_start, fs_start);
+                if let Some(nand) = &mut self.active_nand {
+                    let fs_start: u16 = match nand.layout {
+                        crate::core::images::blocks::NandLayout::Bb => 0x1E0,
+                        crate::core::images::blocks::NandLayout::Emmc => {
+                            crate::builder::filesystem::corona::default_emmc_fs_block(nand.header.fs_addr.get(), &nand.corona_fs)
+                        }
+                        _ => 0x4E,
+                    };
+
+                    info!("[session] FlashFS start block: 0x{:X} ({})", fs_start, fs_start);
+                    if !self.flashfs_assets.is_empty() {
+                        info!("[session] Finalizing FlashFS with {} collected assets...", self.flashfs_assets.len());
                         match crate::builder::filesystem::flashfs::FileSystemRoot::build_from_memory(&mut nand.image, &nand.layout, &self.flashfs_assets, fs_start, 0x30)
                         {
                             Ok(new_root) => {
@@ -1916,6 +1933,11 @@ impl Session {
                             }
                             Err(e) => return Err(format!("FlashFS Build Error: {}", e)),
                         }
+                    } else {
+                        let mut root = crate::builder::filesystem::flashfs::FileSystemRoot::new(fs_start as i32, 3, 0x30);
+                        root.create_defaults(nand.image.len(), &nand.layout, fs_start);
+                        nand.flashfs.root = root;
+                        info!("[session] Initialized empty FlashFS map for generated build assets.");
                     }
                 }
             }
