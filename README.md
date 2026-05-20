@@ -15,6 +15,11 @@
 
 gxBuild is an Xbox 360 NAND image builder and patcher. It is based on [x360utils](https://github.com/Swizzy/x360Utils), [xenon-bltool](https://github.com/InvoxiPlayGames/xenon-bltool), and [RGBuildPP](https://github.com/emoose/RGBuildPP).
 
+Sister Repos: 
+
+- [gxBuild Support Files](https://github.com/ExposureMG/gxBuild-Support-Files)
+- [gxBuild Patches](https://github.com/ExposureMG/gxBuild-patches)
+
 ## Table of Contents
 
 - [Background](#background)
@@ -99,7 +104,7 @@ cargo build --no-default-features --features ffi,rhai
 
 ## Contributing
 
-See [CONTRIBUTING.md](https://www.google.com/search?q=docs/CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests. Refer to [CREDITS.md](https://www.google.com/search?q=docs/CREDITS.md) to see the history of contributors and projects that made gxBuild possible.
+See [CONTRIBUTING.md](/CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests. Refer to [CREDITS.md](/CREDITS.md) to see the history of contributors and projects that made gxBuild possible.
 
 ## License
 
