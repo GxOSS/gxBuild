@@ -1,5 +1,5 @@
 /*
-    
+
 
     Ported from emoose's RGBuildPP
 */
@@ -411,9 +411,7 @@ impl FileSystemRoot {
             let logical_block_offset = (adjusted_cluster + self.block_offset) as usize * pages_per_block * page_size;
 
             if crate::core::images::blocks::has_spare(image) {
-                if let Some(blk_data) =
-                    crate::core::images::blocks::read_logical_from_physical(image, logical_block_offset / page_size, pages_per_block * page_size, *layout)
-                {
+                if let Some(blk_data) = crate::core::images::blocks::read_logical_from_physical(image, logical_block_offset, pages_per_block * page_size, *layout) {
                     data.extend_from_slice(&blk_data);
                 }
             } else {

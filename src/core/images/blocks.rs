@@ -112,7 +112,7 @@ impl NandLayout {
     }
 }
 
-pub fn read_logical_from_physical(image: &[u8], logical_page: usize, len: usize, layout: NandLayout) -> Option<Vec<u8>> {
+pub fn read_logical_from_physical(image: &[u8], logical_offset: usize, len: usize, layout: NandLayout) -> Option<Vec<u8>> {
     if image.is_empty() || len == 0 {
         return None;
     }
@@ -122,13 +122,16 @@ pub fn read_logical_from_physical(image: &[u8], logical_page: usize, len: usize,
     let mut cur = 0;
 
     while cur < len {
-        let current_logical = logical_page + (cur / logical_page_size);
-        let phys_offset = layout.logical_to_physical(current_logical);
-        let page_offset = current_logical % logical_page_size;
+        let current_logical_offset = logical_offset + cur;
+        let current_page = current_logical_offset / logical_page_size;
+        let page_offset = current_logical_offset % logical_page_size;
+        let phys_page_base = (layout.logical_to_physical(current_page) as usize) * logical_page_size;
+        let phys_offset = phys_page_base + page_offset;
+
         let chunk_len = logical_page_size - page_offset;
         let to_read = std::cmp::min(chunk_len, len - cur);
 
-        if (phys_offset as usize) + to_read > image.len() {
+        if phys_offset + to_read > image.len() {
             result.truncate(cur);
             if result.is_empty() {
                 return None;
@@ -136,8 +139,7 @@ pub fn read_logical_from_physical(image: &[u8], logical_page: usize, len: usize,
             break;
         }
 
-        let src_start = phys_offset as usize + page_offset;
-        result[cur..cur + to_read].copy_from_slice(&image[src_start..src_start + to_read]);
+        result[cur..cur + to_read].copy_from_slice(&image[phys_offset..phys_offset + to_read]);
         cur += to_read;
     }
 
@@ -155,18 +157,19 @@ pub fn write_logical_data(image: &mut [u8], logical_offset: usize, data: &[u8], 
 
     while cur < len {
         let current_logical_byte = logical_offset + cur;
-        let phys_offset = layout.logical_to_physical(current_logical_byte);
-
+        let current_page = current_logical_byte / logical_page_size;
         let page_offset = current_logical_byte % logical_page_size;
+        let phys_page_base = (layout.logical_to_physical(current_page) as usize) * logical_page_size;
+        let phys_offset = phys_page_base + page_offset;
+
         let chunk_len = logical_page_size - page_offset;
         let to_write = std::cmp::min(chunk_len, len - cur);
 
-        if (phys_offset as usize) + to_write > image.len() {
+        if phys_offset + to_write > image.len() {
             break;
         }
 
-        let dest_start = phys_offset as usize;
-        image[dest_start..dest_start + to_write].copy_from_slice(&data[cur..cur + to_write]);
+        image[phys_offset..phys_offset + to_write].copy_from_slice(&data[cur..cur + to_write]);
         cur += to_write;
     }
 }
@@ -347,11 +350,14 @@ pub fn add_spare(
                     result[spare_offset..spare_offset + 0x10].copy_from_slice(&spare);
                 }
 
-                let page_size = layout.page_size();
                 for page_in_chunk in 0..4 {
+                    let page_idx = page_base + page_in_chunk;
+                    if page_idx >= total_pages {
+                        break;
+                    }
                     let page_size_512 = 0x200;
                     let page_start = chunk_offset + (page_in_chunk * page_size_512);
-                    let spare_start = chunk_offset + page_size + (page_in_chunk * 0x10);
+                    let spare_start = chunk_offset + 0x800 + (page_in_chunk * 0x10);
                     let mut page_with_spare = [0u8; 0x210];
                     page_with_spare[..0x200].copy_from_slice(&result[page_start..page_start + 0x200]);
                     page_with_spare[0x200..0x210].copy_from_slice(&result[spare_start..spare_start + 0x10]);
@@ -504,6 +510,9 @@ pub fn promote_layout(image: &[u8], layout: NandLayout) -> NandLayout {
     if layout != NandLayout::Sb {
         return layout;
     }
+    if !has_spare(image) {
+        return layout;
+    }
     if image.len() < 0x210 {
         return layout;
     }
@@ -517,6 +526,9 @@ pub fn promote_layout(image: &[u8], layout: NandLayout) -> NandLayout {
 
 pub fn detect_meta_type(image: &[u8], layout: NandLayout) -> SpareMetaType {
     if layout == NandLayout::Emmc {
+        return SpareMetaType::MetaTypeNone;
+    }
+    if !has_spare(image) {
         return SpareMetaType::MetaTypeNone;
     }
     if image.len() < 0x4410 {
@@ -675,8 +687,8 @@ pub fn is_bad_block(image: &[u8], block_number: usize, layout: &NandLayout) -> b
 
     match layout {
         NandLayout::Bb => {
-            let pages_per_block = block_size / 0x800;
-            for group in 0..pages_per_block {
+            let groups_per_block = block_size / 0x840;
+            for group in 0..groups_per_block {
                 let group_offset = offset + (group * 0x840);
                 if group_offset + 0x840 > image.len() {
                     break;
@@ -900,12 +912,14 @@ impl NandProcessor {
         let mut lba_map = LbaMap::new(total_blocks);
         lba_map.meta_type = meta_type;
 
-        if let Some(mut bm) = BlockMap::new(&working) {
-            if !bm.blocks.is_empty() {
-                for bad in &bm.blocks {
-                    lba_map.bad_blocks.push(bad.block);
+        if has_spare(&working) {
+            if let Some(mut bm) = BlockMap::new(&working) {
+                if !bm.blocks.is_empty() {
+                    for bad in &bm.blocks {
+                        lba_map.bad_blocks.push(bad.block);
+                    }
+                    bm.map_and_heal(&mut working)?;
                 }
-                bm.map_and_heal(&mut working)?;
             }
         }
         let mut clean = remove_spare(&working);
