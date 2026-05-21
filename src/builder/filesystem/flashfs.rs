@@ -6,7 +6,7 @@
 
 use crate::core::images::blocks::*;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use log::{error, info};
+use log::{error, info, warn};
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 
@@ -73,14 +73,10 @@ pub fn get_fs_base_block_for_meta2(image: &[u8], layout: &NandLayout, fs_root_sp
         return 0;
     }
 
-    // Read the spare data from the FS root block's first page
-    let spare_offset = fs_root_spare_page * layout.physical_page_size() + layout.page_size();
-    if spare_offset + 16 > image.len() {
+    let Some(spare) = get_page_spare(image, fs_root_spare_page, layout) else {
         return 0;
-    }
-
-    let spare = &image[spare_offset..spare_offset + 16];
-    let parsed = FsSpareData::parse(spare, layout);
+    };
+    let parsed = FsSpareData::parse(&spare, layout);
 
     let reserved = 0x1E0u32
         .saturating_sub(parsed.fs_page_count as u32)
@@ -394,9 +390,7 @@ impl FileSystemRoot {
         let mut data = Vec::new();
         let pages_per_block = layout.logical_pages_per_block();
 
-        let base_block_offset: u16 = if *layout == NandLayout::Bb {
-            // Find the FS root block's spare data to extract FsPageCount and FsSize
-            // The FS root block is at self.block_number
+        let base_block_offset: u16 = if *layout == NandLayout::Bb && crate::core::images::blocks::has_spare(image) {
             let root_block = self.block_number as usize;
             let root_spare_page = root_block * pages_per_block;
             get_fs_base_block_for_meta2(image, layout, root_spare_page)
@@ -430,29 +424,42 @@ impl FileSystemRoot {
         let logical_block_size = pages_per_block * page_size;
         let total_blocks = layout.total_blocks(image.len());
 
-        // Never allow allocation below block 4 to protect the header/SMC/KV
         let start_search = std::cmp::max(4, minimum_block as usize);
 
-        for x in start_search..total_blocks {
-            let mut cont = false;
-            for i in 0..blocks_needed {
-                if x + i >= self.block_map.len() || (self.block_map[x + i] & 0x7FFF) != 0x1FFE {
-                    cont = true;
+        let init_block = |image: &mut [u8], layout: &NandLayout, logical_offset: usize, logical_block_size: usize| {
+            let zero_block = vec![0u8; logical_block_size];
+            Self::write_data_hybrid(image, logical_offset, &zero_block, layout);
+        };
+
+        if blocks_needed > 1 {
+            for x in start_search..total_blocks {
+                if x + blocks_needed > self.block_map.len() {
                     break;
                 }
+                if (0..blocks_needed).any(|i| (self.block_map[x + i] & 0x7FFF) != 0x1FFE) {
+                    continue;
+                }
+
+                for i in 0..blocks_needed {
+                    let block = x + i;
+                    self.block_map[block] = if i + 1 < blocks_needed { (block + 1) as u16 } else { 0x1FFF };
+                    init_block(image, layout, block * logical_block_size, logical_block_size);
+                }
+
+                return x as u16;
             }
-            if cont {
+        }
+
+        for x in start_search..total_blocks {
+            if x >= self.block_map.len() {
+                break;
+            }
+            if (self.block_map[x] & 0x7FFF) != 0x1FFE {
                 continue;
             }
 
-            // Mark as in-use (0x1FFF = end of chain for now)
             self.block_map[x] = 0x1FFF;
-
-            // Initialize the block with 0 bytes (respecting spare if physical)
-            let zero_block = vec![0u8; logical_block_size];
-            let logical_offset = x * logical_block_size;
-            Self::write_data_hybrid(image, logical_offset, &zero_block, layout);
-
+            init_block(image, layout, x * logical_block_size, logical_block_size);
             return x as u16;
         }
 
@@ -534,8 +541,11 @@ impl FileSystemRoot {
 
     pub fn set_entry_data(&mut self, image: &mut [u8], layout: &NandLayout, entry: &mut FileSystemEntry, data: &[u8]) {
         if entry.block_number == 0 {
-            // flashfs files only need one starting block because the chain can grow later.
             entry.block_number = self.allocate_new_block(image, layout, 1, 0);
+            if entry.block_number == 0 {
+                error!("[flashfs] Failed to allocate starting block for '{}'", entry.file_name);
+                return;
+            }
         }
         self.set_chain_data(image, layout, entry.block_number, data);
         entry.size = data.len() as u32;
@@ -630,14 +640,21 @@ impl FileSystemRoot {
         let root_blocks_needed_for_bmap = (self.block_map.len() + max_bmap_per_root_block - 1) / max_bmap_per_root_block.max(1);
         let root_blocks_needed = root_blocks_needed_for_entries.max(root_blocks_needed_for_bmap).max(1);
 
-        if self.block_number != -1 {
-            self.free_block_chain(self.block_number as u16);
-        }
-
         let mut new_root_chain = Vec::new();
         for _ in 0..root_blocks_needed {
             let blk = self.allocate_new_block(image, layout, 1, 0);
+            if blk == 0 {
+                error!("[flashfs] Failed to allocate new root chain block (need {} blocks)", root_blocks_needed);
+                for b in new_root_chain {
+                    self.free_block_chain(b);
+                }
+                return;
+            }
             new_root_chain.push(blk);
+        }
+
+        if self.block_number != -1 {
+            self.free_block_chain(self.block_number as u16);
         }
 
         for i in 0..new_root_chain.len().saturating_sub(1) {
