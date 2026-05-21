@@ -575,7 +575,7 @@ impl NandSkeleton {
         }
     }
 
-    pub fn prepare_for_assembly(&mut self) {
+    pub fn prepare_for_assembly(&mut self) -> Result<(), String> {
         if self.options.verbose {
             info!("[pfa] === prepare_for_assembly START ===");
             info!("[pfa] input_pd: {:02x?}", self.input_pd);
@@ -602,20 +602,20 @@ impl NandSkeleton {
                 if cb_b.metadata.is_none() {
                     info!("[pfa] CB_B has no metadata — decrypting");
                     if let Some(cb_a) = self.bootloaders.cb_a.as_ref() {
-                        let Some(cb_a_key_slice) = cb_a.data.get(0..16) else {
-                            warn!("[pfa] CB_A is too small to derive CB_B key");
-                            return;
-                        };
-                        let cb_a_key: [u8; 16] = cb_a_key_slice.try_into().unwrap();
-                        let uses_new_crypto = (cb_a.header.flags.get() & 0x1000) != 0;
-                        if uses_new_crypto {
-                            cb_b.decrypt_v2(&cb_a.header, &cb_a_key, &cpukey);
+                        if let Some(cb_a_key_slice) = cb_a.data.get(0..16) {
+                            let cb_a_key: [u8; 16] = cb_a_key_slice.try_into().unwrap();
+                            let uses_new_crypto = (cb_a.header.flags.get() & 0x1000) != 0;
+                            if uses_new_crypto {
+                                cb_b.decrypt_v2(&cb_a.header, &cb_a_key, &cpukey);
+                            } else {
+                                cb_b.decrypt_v1(&cb_a_key, &cpukey);
+                            }
+                            cb_b.populate_metadata_unchecked();
+                            if self.options.verbose {
+                                info!("[pfa] CB_B decrypted, meta: {:?}", cb_b.metadata.as_ref().map(|m| (m.lockdown_value, &m.pairing_data)));
+                            }
                         } else {
-                            cb_b.decrypt_v1(&cb_a_key, &cpukey);
-                        }
-                        cb_b.populate_metadata_unchecked();
-                        if self.options.verbose {
-                            info!("[pfa] CB_B decrypted, meta: {:?}", cb_b.metadata.as_ref().map(|m| (m.lockdown_value, &m.pairing_data)));
+                            warn!("[pfa] CB_A is too small to derive CB_B key");
                         }
                     } else {
                         warn!("[pfa] CB_B needs decrypt but CB_A is missing — cannot derive key");
@@ -736,7 +736,7 @@ impl NandSkeleton {
 
                     let mut entry = crate::builder::filesystem::flashfs::FileSystemEntry::new(0);
                     entry.file_name = "sysupdate.xexp1".to_string();
-                    self.flashfs.root.set_entry_data(&mut self.image, &self.layout, &mut entry, &overflow_data);
+                    self.flashfs.root.set_entry_data(&mut self.image, &self.layout, &mut entry, &overflow_data)?;
                     self.flashfs.root.entries.push(entry.clone());
 
                     if let Some(cf) = self.update.cf_0.as_mut() {
@@ -765,7 +765,7 @@ impl NandSkeleton {
 
                     let mut entry = crate::builder::filesystem::flashfs::FileSystemEntry::new(0);
                     entry.file_name = "sysupdate.xexp2".to_string();
-                    self.flashfs.root.set_entry_data(&mut self.image, &self.layout, &mut entry, &overflow_data);
+                    self.flashfs.root.set_entry_data(&mut self.image, &self.layout, &mut entry, &overflow_data)?;
                     self.flashfs.root.entries.push(entry.clone());
 
                     if let Some(cf) = self.update.cf_1.as_mut() {
@@ -817,6 +817,7 @@ impl NandSkeleton {
                 self.extra.smc[0x104..0x107].copy_from_slice(&meta.pairing_data);
             }
         }
+        Ok(())
     }
 
     pub fn parse_clean(image: Vec<u8>, layout: NandLayout, cpukey: [u8; 16], flashfs: FlashFS) -> Result<Self, String> {
@@ -1425,8 +1426,61 @@ impl NandSkeleton {
             }
         }
 
-        let (fs_addr_calc, smc_config_offset, _phys_fs_block) =
+        let (_fs_addr_calc, smc_config_offset, phys_fs_block) =
             LayoutCalculator::calculate(SouthbridgeType::from(self.options.motherboard), &self.options.image_profile, *layout);
+        let mut target_fs_block = phys_fs_block as i32;
+        if !self.flashfs.root.entries.is_empty() && matches!(layout, NandLayout::Sb | NandLayout::Xsb) && target_fs_block >= 0 {
+            let page_size = 0x200usize;
+            let pages_per_block = layout.logical_pages_per_block();
+            let logical_block_size = pages_per_block * page_size;
+
+            let bm_count = page_size / 2;
+            let fn_count = page_size / 0x20;
+
+            let non_deleted_count = self.flashfs.root.entries.iter().filter(|e| !e.deleted).count();
+            let required_data_blocks: usize = self
+                .flashfs
+                .root
+                .entries
+                .iter()
+                .filter(|e| !e.deleted)
+                .map(|e| {
+                    let len = e.data.len().max(1);
+                    (len + logical_block_size - 1) / logical_block_size
+                })
+                .sum();
+
+            let max_entries_per_root_block = ((pages_per_block + 1) / 2) * fn_count;
+            let max_bmap_per_root_block = (pages_per_block / 2) * bm_count;
+            let total_blocks = layout.total_blocks(logical_image.len());
+
+            let root_blocks_needed_for_entries = (non_deleted_count + max_entries_per_root_block - 1) / max_entries_per_root_block.max(1);
+            let root_blocks_needed_for_bmap = (total_blocks + max_bmap_per_root_block - 1) / max_bmap_per_root_block.max(1);
+            let root_blocks_needed = root_blocks_needed_for_entries.max(root_blocks_needed_for_bmap).max(1);
+
+            let reserve_start = layout.reserve_start(logical_image.len());
+            let config_start = reserve_start.saturating_sub(4);
+            let available_blocks = config_start.saturating_sub(target_fs_block as usize);
+
+            let required_total_blocks = required_data_blocks + root_blocks_needed;
+
+            if required_total_blocks > available_blocks {
+                let sysupdate_end = (target_cf_offset as usize).saturating_add(0x20000);
+                let min_fs_block = ((sysupdate_end + logical_block_size - 1) / logical_block_size) as i32;
+                let desired_start = (config_start as i32).saturating_sub(required_total_blocks as i32);
+                let new_start = desired_start.max(min_fs_block).max(4);
+
+                if new_start < target_fs_block {
+                    warn!(
+                        "[builder] FlashFS target block {} leaves insufficient space (need {} blocks, have {}); moving start to {}",
+                        target_fs_block, required_total_blocks, available_blocks, new_start
+                    );
+                    target_fs_block = new_start;
+                }
+            }
+        }
+
+        let fs_addr_calc = (target_fs_block as u32) * (layout.logical_pages_per_block() as u32) * 0x200;
         header.fs_addr.set(fs_addr_calc);
         header.smc_config_offset.set(smc_config_offset);
 
@@ -1499,8 +1553,19 @@ impl NandSkeleton {
             let mut root = self.flashfs.root.clone();
             let logical_block_size = layout.logical_pages_per_block() * 0x200;
             root.block_number = (fs_addr_calc as usize / logical_block_size) as i32;
+            root.create_defaults(logical_image.len(), layout, root.block_number as u16);
+            for payload in &payload_list.entries {
+                let addr = payload.address as usize;
+                let start_block = addr / logical_block_size;
+                let end_block = (addr + payload.data.len() + logical_block_size - 1) / logical_block_size;
+                for b in start_block..end_block {
+                    if b < root.block_map.len() {
+                        root.block_map[b] = 0x1FFB;
+                    }
+                }
+            }
 
-            root.write_logical(&mut logical_image, layout);
+            root.write_logical(&mut logical_image, layout)?;
             let fs_root_block = root.serialize_logical(*layout);
             logical_image[fs_addr_calc as usize..fs_addr_calc as usize + fs_root_block.len()].copy_from_slice(&fs_root_block);
         }
@@ -1644,7 +1709,66 @@ impl NandSkeleton {
         header.cf_offset.set(target_cf_offset as u32);
         header.kv_addr.set(0x4000); // Enforce Block 1 KV
 
-        let target_fs_block = if phys_fs_block > 0 { phys_fs_block as i32 } else { self.flashfs.root.block_number };
+        let mut target_fs_block = if phys_fs_block > 0 { phys_fs_block as i32 } else { self.flashfs.root.block_number };
+        let reserve_start = layout.reserve_start(logical_image.len()) as i32;
+        if target_fs_block >= reserve_start {
+            warn!(
+                "[builder] FlashFS target block {} is in/after the reserved remap area (>= 0x{:X}); forcing to 0x110 for compatibility",
+                target_fs_block, reserve_start
+            );
+            target_fs_block = 0x110;
+        }
+
+        if !self.flashfs.root.entries.is_empty() && matches!(layout, NandLayout::Sb | NandLayout::Xsb) && target_fs_block >= 0 {
+            let page_size = 0x200usize;
+            let pages_per_block = layout.logical_pages_per_block();
+            let logical_block_size = pages_per_block * page_size;
+
+            let bm_count = page_size / 2;
+            let fn_count = page_size / 0x20;
+
+            let non_deleted_count = self.flashfs.root.entries.iter().filter(|e| !e.deleted).count();
+            let required_data_blocks: usize = self
+                .flashfs
+                .root
+                .entries
+                .iter()
+                .filter(|e| !e.deleted)
+                .map(|e| {
+                    let len = e.data.len().max(1);
+                    (len + logical_block_size - 1) / logical_block_size
+                })
+                .sum();
+
+            let max_entries_per_root_block = ((pages_per_block + 1) / 2) * fn_count;
+            let max_bmap_per_root_block = (pages_per_block / 2) * bm_count;
+            let total_blocks = layout.total_blocks(logical_image.len());
+
+            let root_blocks_needed_for_entries = (non_deleted_count + max_entries_per_root_block - 1) / max_entries_per_root_block.max(1);
+            let root_blocks_needed_for_bmap = (total_blocks + max_bmap_per_root_block - 1) / max_bmap_per_root_block.max(1);
+            let root_blocks_needed = root_blocks_needed_for_entries.max(root_blocks_needed_for_bmap).max(1);
+
+            let reserve_start_u = reserve_start as usize;
+            let config_start = reserve_start_u.saturating_sub(4);
+            let available_blocks = config_start.saturating_sub(target_fs_block as usize);
+
+            let required_total_blocks = required_data_blocks + root_blocks_needed;
+
+            if required_total_blocks > available_blocks {
+                let sysupdate_end = (target_cf_offset as usize).saturating_add(0x20000);
+                let min_fs_block = ((sysupdate_end + logical_block_size - 1) / logical_block_size) as i32;
+                let desired_start = (config_start as i32).saturating_sub(required_total_blocks as i32);
+                let new_start = desired_start.max(min_fs_block).max(4);
+
+                if new_start < target_fs_block {
+                    warn!(
+                        "[builder] FlashFS target block {} leaves insufficient space (need {} blocks, have {}); moving start to {}",
+                        target_fs_block, required_total_blocks, available_blocks, new_start
+                    );
+                    target_fs_block = new_start;
+                }
+            }
+        }
 
         if !self.flashfs.root.entries.is_empty() && target_fs_block >= 0 {
             let fs_logical_addr = (target_fs_block as u32) * (layout.logical_pages_per_block() as u32) * 0x200;
@@ -1856,12 +1980,25 @@ impl NandSkeleton {
                 continue;
             }
 
+            root.create_defaults(logical_image.len(), layout, root.block_number as u16);
+            let logical_block_size = layout.logical_pages_per_block() * 0x200;
+            for payload in &payload_list.entries {
+                let addr = payload.address as usize;
+                let start_block = addr / logical_block_size;
+                let end_block = (addr + payload.data.len() + logical_block_size - 1) / logical_block_size;
+                for b in start_block..end_block {
+                    if b < root.block_map.len() {
+                        root.block_map[b] = 0x1FFB;
+                    }
+                }
+            }
+
             let fs_block = root.block_number as usize;
             let fs_offset = fs_block * layout.logical_pages_per_block() * 0x200;
 
             info!("[builder] Writing FlashFS partition 0x{:02X} at block {} (offset 0x{:08X})", btype, fs_block, fs_offset);
 
-            root.write_logical(&mut logical_image, layout);
+            root.write_logical(&mut logical_image, layout)?;
 
             let fs_root_block = root.serialize_logical(*layout);
 
@@ -1998,6 +2135,11 @@ impl NandSkeleton {
 
     pub fn build(&self, cpukey: [u8; 16]) -> Result<Vec<u8>, String> {
         let mut skel = self.clone();
+        skel.build_in_place(cpukey)
+    }
+
+    pub fn build_in_place(&mut self, cpukey: [u8; 16]) -> Result<Vec<u8>, String> {
+        let skel = self;
         skel.cpukey = Some(cpukey);
         info!("[builder] Starting final image build (Profile: {}, Mode: {:?})...", skel.options.image_profile, skel.options.build_mode);
 
@@ -2092,7 +2234,7 @@ impl NandSkeleton {
                 &cpukey,
             )?;
         } else {
-            skel.prepare_for_assembly();
+            skel.prepare_for_assembly()?;
 
             info!("[builder] Re-encrypting bootloader chain...");
             encrypt_chain(

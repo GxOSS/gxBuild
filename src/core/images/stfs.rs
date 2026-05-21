@@ -31,6 +31,7 @@ use zerocopy::{
 
 use crate::builder::chain::cf::BootloaderCf;
 use crate::builder::chain::cg::BootloaderCg;
+use crate::builder::chain::BootloaderHeader;
 
 pub const ONE_BL_KEY: [u8; 16] = [0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA];
 
@@ -250,8 +251,13 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
         return Err(format!("Invalid xboxupd magic: Expected 'CF' (0x4346), found 0x{:02X}{:02X}. Potential STFS misalignment.", xboxupd_bytes[0], xboxupd_bytes[1]));
     }
 
-    // 1. Parse CF
-    let mut cf = BootloaderCf::parse(xboxupd_bytes)?;
+    // 1. Parse CF (slice to CF size so CF doesn't accidentally include CG bytes)
+    let (cf_header, _) = BootloaderHeader::read_from_prefix(xboxupd_bytes).map_err(|_| "Failed to parse CF header")?;
+    let cf_size = ((cf_header.size.get() as usize) + 0xF) & !0xF;
+    if xboxupd_bytes.len() < cf_size {
+        return Err("xboxupd buffer too small to contain full CF".to_string());
+    }
+    let mut cf = BootloaderCf::parse(&xboxupd_bytes[..cf_size])?;
 
     if !cf.is_decrypted() {
         cf.decrypt(&ONE_BL_KEY);

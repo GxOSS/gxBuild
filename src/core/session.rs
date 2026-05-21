@@ -234,9 +234,9 @@ mod tests {
 
         let root = &session.active_nand.as_ref().unwrap().flashfs.root;
         assert_eq!(root.block_number, 0x4E);
-        assert_eq!(root.block_map[0x4D], 0x1FFB);
         assert_eq!(root.block_map[0x4E], 0x1FFF);
-        assert_eq!(root.block_map[0x4F], 0x1FFE);
+        assert_eq!(root.block_map[0], 0x1FFB);
+        assert_eq!(root.block_map[4], 0x1FFB);
     }
 }
 
@@ -314,6 +314,7 @@ pub struct Session {
     pub bootloader_assets: HashMap<String, Vec<u8>>,
     pub security_assets: HashMap<String, Vec<u8>>,
     pub flashfs_assets: HashMap<String, Vec<u8>>,
+    pub flashfs_allowlist: Option<std::collections::HashSet<String>>,
     pub active_nand: Option<NandSkeleton>,
     pub options: crate::core::data::optini::OptionsIni,
     pub pending_key: Option<[u8; 16]>,
@@ -445,6 +446,7 @@ impl Session {
             bootloader_assets: HashMap::new(),
             security_assets: HashMap::new(),
             flashfs_assets: HashMap::new(),
+            flashfs_allowlist: None,
             active_nand: None,
             options: crate::core::data::optini::OptionsIni::new(),
             pending_key: None,
@@ -1425,7 +1427,8 @@ impl Session {
                         let _ = std::fs::create_dir_all(parent);
                     }
 
-                    match nand.build(cpukey) {
+                    let mut built_nand = nand.clone();
+                    match built_nand.build_in_place(cpukey) {
                         Ok(clean_bytes) => {
                             let mut fs_meta = std::collections::HashMap::new();
                             let page_count_encoded = if layout == crate::core::images::blocks::NandLayout::Bb {
@@ -1438,8 +1441,8 @@ impl Session {
                             };
 
                             let mut all_partitions = std::collections::HashMap::new();
-                            if !nand.flashfs.root.entries.is_empty() {
-                                all_partitions.insert(nand.flashfs.root.partition_type, nand.flashfs.root.clone());
+                            if !built_nand.flashfs.root.entries.is_empty() {
+                                all_partitions.insert(built_nand.flashfs.root.partition_type, built_nand.flashfs.root.clone());
                             }
 
                             for (btype, root) in all_partitions {
@@ -1455,8 +1458,8 @@ impl Session {
                                     let is_free = (block & 0x7FFF) == 0x1FFE;
 
                                     if !is_free {
-                                        let absolute_block = val + (root.block_number as usize);
-                                        let is_root = val == 0;
+                                        let absolute_block = val;
+                                        let is_root = absolute_block == (root.block_number as usize);
 
                                         // Branding: Root block gets the partition type (0x30, 0x31, etc.)
                                         // Data blocks technically can also carry the partition type for better discovery.
@@ -1512,6 +1515,16 @@ impl Session {
                 }
                 match crate::core::data::xeini::parse_xe_ini(&path, &target) {
                     Ok(ini) => {
+                        let mut allow: std::collections::HashSet<String> = std::collections::HashSet::new();
+                        for fs_entry in &ini.flashfs {
+                            let basename = crate::core::data::xeini::strip_flashfs_path_indicator(&fs_entry.filename);
+                            allow.insert(basename.to_lowercase());
+                        }
+                        for name in &["fcrt.bin", "crl.bin", "dae.bin", "extended.bin", "secdata.bin", "odd.bin"] {
+                            allow.insert((*name).to_string());
+                        }
+                        self.flashfs_allowlist = if allow.is_empty() { None } else { Some(allow) };
+
                         match IniSearch::new(ini.clone(), &ini_base, &common, &data, &payloads, &smc, &nand_ref, self.options.gxunsafe, self.options.nofcrt) {
                             Ok(search) => {
                                 // Route each pool to its typed session pool
@@ -1638,7 +1651,15 @@ impl Session {
                         crate::core::images::blocks::NandLayout::Emmc => {
                             crate::builder::filesystem::corona::default_emmc_fs_block(nand.header.fs_addr.get(), &nand.corona_fs)
                         }
-                        _ => 0x4E,
+                        _ => {
+                            let sb: crate::builder::builder::SouthbridgeType = nand.options.motherboard.into();
+                            let (_, _, phys_fs_block) = crate::builder::builder::LayoutCalculator::calculate(sb, &nand.options.image_profile, nand.layout);
+                            if phys_fs_block != 0 {
+                                phys_fs_block as u16
+                            } else {
+                                0x4E
+                            }
+                        }
                     };
                     match crate::builder::filesystem::flashfs::FileSystemRoot::build_from_folder(&mut nand.image, &nand.layout, &path, fs_start, 0x30) {
                         Ok(new_root) => {
@@ -1912,38 +1933,51 @@ impl Session {
                         crate::core::images::blocks::NandLayout::Emmc => {
                             crate::builder::filesystem::corona::default_emmc_fs_block(nand.header.fs_addr.get(), &nand.corona_fs)
                         }
-                        _ => 0x4E,
+                        _ => {
+                            let sb: crate::builder::builder::SouthbridgeType = nand.options.motherboard.into();
+                            let (_, _, phys_fs_block) = crate::builder::builder::LayoutCalculator::calculate(sb, &nand.options.image_profile, nand.layout);
+                            if phys_fs_block != 0 {
+                                phys_fs_block as u16
+                            } else {
+                                0x4E
+                            }
+                        }
                     };
 
                     info!("[session] FlashFS start block: 0x{:X} ({})", fs_start, fs_start);
 
                     let mut merged_flashfs_assets: HashMap<String, Vec<u8>> = HashMap::new();
+                    let mut dropped_assets: Vec<String> = Vec::new();
+                    let mut dropped_count: usize = 0;
                     for (k, v) in &self.flashfs_assets {
-                        merged_flashfs_assets.insert(k.to_lowercase(), v.clone());
+                        let key = k.to_lowercase();
+                        if let Some(allow) = &self.flashfs_allowlist {
+                            if !allow.contains(&key) {
+                                dropped_count += 1;
+                                if dropped_assets.len() < 6 {
+                                    dropped_assets.push(key);
+                                }
+                                continue;
+                            }
+                        }
+                        merged_flashfs_assets.insert(key, v.clone());
                     }
 
                     if !merged_flashfs_assets.is_empty() {
-                        info!("[session] Finalizing FlashFS with {} INI-discovered assets...", merged_flashfs_assets.len());
-                        match crate::builder::filesystem::flashfs::FileSystemRoot::build_from_memory(
-                            &mut nand.image,
-                            &nand.layout,
-                            &merged_flashfs_assets,
-                            fs_start,
-                            0x30,
-                        ) {
-                            Ok(new_root) => {
-                                nand.flashfs.root = new_root;
-                                if matches!(nand.layout, crate::core::images::blocks::NandLayout::Emmc) {
-                                    crate::builder::filesystem::corona::write_back(&mut nand.image, &mut nand.corona_fs, &nand.flashfs.root, &nand.mobile)
-                                        .map_err(|e| format!("Corona metadata write failed: {}", e))?;
-                                    if nand.flashfs.root.block_number >= 0 {
-                                        nand.header.fs_addr.set((nand.flashfs.root.block_number as u32) * 0x200);
-                                    }
-                                }
-                                info!(" -> FlashFS generation complete.");
-                            }
-                            Err(e) => return Err(format!("FlashFS Build Error: {}", e)),
+                        if dropped_count > 0 {
+                            warn!("[session] Dropped {} FlashFS asset(s) not present in INI FlashFS allowlist (e.g. {:?})", dropped_count, dropped_assets);
                         }
+                        info!("[session] Prepared FlashFS with {} INI-discovered assets...", merged_flashfs_assets.len());
+                        let mut root = crate::builder::filesystem::flashfs::FileSystemRoot::new(fs_start as i32, 3, 0x30);
+                        root.create_defaults(nand.image.len(), &nand.layout, fs_start);
+                        for (name, content) in merged_flashfs_assets {
+                            let mut entry = crate::builder::filesystem::flashfs::FileSystemEntry::new(0);
+                            entry.file_name = name;
+                            entry.data = content;
+                            entry.size = entry.data.len() as u32;
+                            root.entries.push(entry);
+                        }
+                        nand.flashfs.root = root;
                     } else {
                         let mut root = crate::builder::filesystem::flashfs::FileSystemRoot::new(fs_start as i32, 3, 0x30);
                         root.create_defaults(nand.image.len(), &nand.layout, fs_start);

@@ -295,12 +295,16 @@ impl FileSystemRoot {
         let total_blocks = image_len / logical_block_size;
         self.block_map = vec![0x1FFE; total_blocks];
 
-        // Reserve the System/Bootloader area (0-3 is critical, 0-fs_start_block for others)
-        let system_limit = std::cmp::max(4, fs_start_block as usize);
-        for i in 0..system_limit {
+        let protect_end = std::cmp::max(4usize, fs_start_block as usize);
+        for i in 0..protect_end {
             if i < self.block_map.len() {
                 self.block_map[i] = 0x1FFB;
             }
+        }
+
+        let reserve_start = layout.reserve_start(image_len);
+        for i in reserve_start..self.block_map.len() {
+            self.block_map[i] = 0x1FFB;
         }
 
         if self.block_number >= 0 && (self.block_number as usize) < self.block_map.len() {
@@ -328,7 +332,7 @@ impl FileSystemRoot {
                 let content = std::fs::read(&path).map_err(|e| e.to_string())?;
                 let mut new_entry = FileSystemEntry::new(0);
                 new_entry.file_name = name;
-                root.set_entry_data(image, layout, &mut new_entry, &content);
+                root.set_entry_data(image, layout, &mut new_entry, &content)?;
                 root.entries.push(new_entry);
             }
         }
@@ -346,7 +350,7 @@ impl FileSystemRoot {
             info!("[flashfs]   * Processing asset: {} (Size: 0x{:X})", name, content.len());
             let mut new_entry = FileSystemEntry::new(0);
             new_entry.file_name = name.clone();
-            root.set_entry_data(image, layout, &mut new_entry, content);
+            root.set_entry_data(image, layout, &mut new_entry, content)?;
             root.entries.push(new_entry);
         }
         Ok(root)
@@ -492,7 +496,7 @@ impl FileSystemRoot {
         Self::write_data_hybrid(image, block_offset, data, layout);
     }
 
-    pub fn set_chain_data(&mut self, image: &mut [u8], layout: &NandLayout, start_block: u16, data: &[u8]) {
+    pub fn set_chain_data(&mut self, image: &mut [u8], layout: &NandLayout, start_block: u16, data: &[u8]) -> Result<(), String> {
         let placeholder;
         let data: &[u8] = if data.is_empty() {
             placeholder = [0u8; 1];
@@ -517,14 +521,14 @@ impl FileSystemRoot {
                         break;
                     }
                 }
-                break;
+                return Ok(());
             } else if chain.len() < needed {
                 // Too short - extend by one block and loop.
                 let curr = *chain.last().unwrap_or(&start_block);
-                let next = self.allocate_new_block(image, layout, 1, 0);
+                let min_alloc = if self.block_number >= 0 { self.block_number as u16 } else { 0 };
+                let next = self.allocate_new_block(image, layout, 1, min_alloc);
                 if next == 0 {
-                    error!("[flashfs] Failed to allocate additional block for chain starting at {}. Required expansion beyond {} blocks", start_block, chain.len());
-                    break;
+                    return Err(format!("FlashFS allocation failure extending chain starting at {} (need {} blocks, have {})", start_block, needed, chain.len()));
                 }
                 info!("[flashfs]   + Expanding chain: {} -> {}", curr, next);
                 self.block_map[curr as usize] = next;
@@ -539,17 +543,18 @@ impl FileSystemRoot {
         }
     }
 
-    pub fn set_entry_data(&mut self, image: &mut [u8], layout: &NandLayout, entry: &mut FileSystemEntry, data: &[u8]) {
+    pub fn set_entry_data(&mut self, image: &mut [u8], layout: &NandLayout, entry: &mut FileSystemEntry, data: &[u8]) -> Result<(), String> {
+        let min_alloc = if self.block_number >= 0 { self.block_number as u16 } else { 0 };
         if entry.block_number == 0 {
-            entry.block_number = self.allocate_new_block(image, layout, 1, 0);
+            entry.block_number = self.allocate_new_block(image, layout, 1, min_alloc);
             if entry.block_number == 0 {
-                error!("[flashfs] Failed to allocate starting block for '{}'", entry.file_name);
-                return;
+                return Err(format!("FlashFS allocation failure allocating starting block for '{}'", entry.file_name));
             }
         }
-        self.set_chain_data(image, layout, entry.block_number, data);
+        self.set_chain_data(image, layout, entry.block_number, data)?;
         entry.size = data.len() as u32;
         entry.data = data.to_vec();
+        Ok(())
     }
 
     pub fn replace_file(&mut self, image: &mut [u8], layout: &NandLayout, name: &str, data: &[u8]) -> Result<(), String> {
@@ -561,7 +566,7 @@ impl FileSystemRoot {
 
         // Use a temporary entry reference to update data
         let mut entry = self.entries[entry_idx].clone();
-        self.set_entry_data(image, layout, &mut entry, data);
+        self.set_entry_data(image, layout, &mut entry, data)?;
         self.entries[entry_idx] = entry;
 
         info!("[flashfs] Replaced asset: {} (New Size: 0x{:X})", name, data.len());
@@ -575,7 +580,7 @@ impl FileSystemRoot {
 
         let mut new_entry = FileSystemEntry::new(0);
         new_entry.file_name = name.to_string();
-        self.set_entry_data(image, layout, &mut new_entry, data);
+        self.set_entry_data(image, layout, &mut new_entry, data)?;
         self.entries.push(new_entry);
 
         info!("[flashfs] Injected new asset: {} (Size: 0x{:X})", name, data.len());
@@ -605,7 +610,7 @@ impl FileSystemRoot {
         self.entries.iter().find(|e| e.file_name == name && !e.deleted).map(|e| e.data.clone())
     }
 
-    pub fn write_logical(&mut self, image: &mut [u8], layout: &NandLayout) {
+    pub fn write_logical(&mut self, image: &mut [u8], layout: &NandLayout) -> Result<(), String> {
         let page_size = layout.page_size();
         let pages_per_block = layout.logical_pages_per_block();
         let logical_block_size = pages_per_block * page_size;
@@ -620,17 +625,18 @@ impl FileSystemRoot {
             }
             non_deleted_count += 1;
 
+            let min_alloc = if self.block_number >= 0 { self.block_number as u16 } else { 0 };
             if self.entries[i].block_number == 0 {
-                let chunk_size = pages_per_block * page_size;
-                let data_len = self.entries[i].data.len();
-                let needed = (data_len + chunk_size - 1) / chunk_size;
-                let blk = self.allocate_new_block(image, layout, needed.max(1), 0);
+                let blk = self.allocate_new_block(image, layout, 1, min_alloc);
+                if blk == 0 {
+                    return Err(format!("FlashFS allocation failure allocating data blocks for '{}'", self.entries[i].file_name));
+                }
                 self.entries[i].block_number = blk;
             }
 
             let blk_num = self.entries[i].block_number;
             let entry_data = self.entries[i].data.clone();
-            self.set_chain_data(image, layout, blk_num, &entry_data);
+            self.set_chain_data(image, layout, blk_num, &entry_data)?;
         }
 
         let max_entries_per_root_block = ((pages_per_block + 1) / 2) * fn_count;
@@ -640,21 +646,33 @@ impl FileSystemRoot {
         let root_blocks_needed_for_bmap = (self.block_map.len() + max_bmap_per_root_block - 1) / max_bmap_per_root_block.max(1);
         let root_blocks_needed = root_blocks_needed_for_entries.max(root_blocks_needed_for_bmap).max(1);
 
-        let mut new_root_chain = Vec::new();
-        for _ in 0..root_blocks_needed {
-            let blk = self.allocate_new_block(image, layout, 1, 0);
+        let mut new_root_chain: Vec<u16> = Vec::new();
+        let root_start = if self.block_number >= 0 { self.block_number as u16 } else { 0 };
+
+        if root_start != 0 {
+            let old_chain = self.get_block_chain(root_start, self.block_map.len());
+            for &b in old_chain.iter().skip(1) {
+                self.free_block_chain(b);
+            }
+            self.block_map[root_start as usize] = 0x1FFF;
+            new_root_chain.push(root_start);
+        }
+
+        while new_root_chain.len() < root_blocks_needed {
+            let blk = self.allocate_new_block(image, layout, 1, root_start);
             if blk == 0 {
                 error!("[flashfs] Failed to allocate new root chain block (need {} blocks)", root_blocks_needed);
-                for b in new_root_chain {
+                for &b in new_root_chain.iter().skip(if root_start != 0 { 1 } else { 0 }) {
                     self.free_block_chain(b);
                 }
-                return;
+                return Err(format!("FlashFS allocation failure allocating root chain (need {} blocks)", root_blocks_needed));
             }
             new_root_chain.push(blk);
         }
 
-        if self.block_number != -1 {
-            self.free_block_chain(self.block_number as u16);
+        if root_start == 0 {
+            self.block_number = new_root_chain[0] as i32;
+            self.version += 1;
         }
 
         for i in 0..new_root_chain.len().saturating_sub(1) {
@@ -664,8 +682,10 @@ impl FileSystemRoot {
             self.block_map[last as usize] = 0x1FFF;
         }
 
-        self.block_number = new_root_chain[0] as i32;
-        self.version += 1;
+        if root_start != 0 {
+            self.block_number = root_start as i32;
+            self.version += 1;
+        }
 
         let mut entry_idx = 0;
         let mut bmap_idx = 0;
@@ -728,6 +748,7 @@ impl FileSystemRoot {
             let logical_start = root_block as usize * pages_per_block * page_size;
             Self::write_data_hybrid(image, logical_start, &root_buffer, layout);
         }
+        Ok(())
     }
 
     fn write_data_hybrid(image: &mut [u8], logical_offset: usize, data: &[u8], layout: &NandLayout) {
@@ -941,12 +962,15 @@ mod tests {
     fn set_entry_data_can_span_fragmented_free_blocks() {
         let layout = NandLayout::Sb;
         let mut image = vec![0xFF; 0x1000000];
-        let mut root = FileSystemRoot::new(0x4E, 3, 0x30);
-        root.create_defaults(image.len(), &layout, 0x4E);
+        let mut root = FileSystemRoot::new(0x110, 3, 0x30);
+        root.create_defaults(image.len(), &layout, 0x110);
 
         // leave only isolated free blocks so no two-block run exists.
-        for block in 0x4F..root.block_map.len() {
-            root.block_map[block] = if block % 2 == 1 { 0x1FFE } else { 0x1FFB };
+        for block in 4..root.block_map.len() {
+            if block == 0x110 {
+                continue;
+            }
+            root.block_map[block] = if block % 2 == 0 { 0x1FFE } else { 0x1FFB };
         }
 
         let chunk_size = layout.logical_pages_per_block() * 0x200;
@@ -954,7 +978,7 @@ mod tests {
         let mut entry = FileSystemEntry::new(0);
         entry.file_name = "sysupdate.xexp1".to_string();
 
-        root.set_entry_data(&mut image, &layout, &mut entry, &data);
+        root.set_entry_data(&mut image, &layout, &mut entry, &data).unwrap();
 
         assert_ne!(entry.block_number, 0);
         let chain = root.get_block_chain(entry.block_number, root.block_map.len());

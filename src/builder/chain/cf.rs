@@ -61,7 +61,15 @@ pub struct BootloaderCf {
 impl BootloaderCf {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
         let (header, payload) = BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CF header")?;
-        let mut cf = Self { header: header.clone(), data: payload.to_vec(), metadata: None };
+        let total_size = ((header.size.get() as usize) + 0xF) & !0xF;
+        if total_size < core::mem::size_of::<BootloaderHeader>() {
+            return Err("Invalid CF size in header".to_string());
+        }
+        if data.len() < total_size {
+            return Err(format!("CF buffer too small: need 0x{:X}, have 0x{:X}", total_size, data.len()));
+        }
+        let payload_len = total_size - core::mem::size_of::<BootloaderHeader>();
+        let mut cf = Self { header: header.clone(), data: payload[..payload_len].to_vec(), metadata: None };
         cf.populate_metadata();
         Ok(cf)
     }
