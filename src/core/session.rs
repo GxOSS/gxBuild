@@ -1916,10 +1916,37 @@ impl Session {
                     };
 
                     info!("[session] FlashFS start block: 0x{:X} ({})", fs_start, fs_start);
-                    if !self.flashfs_assets.is_empty() {
-                        info!("[session] Finalizing FlashFS with {} collected assets...", self.flashfs_assets.len());
-                        match crate::builder::filesystem::flashfs::FileSystemRoot::build_from_memory(&mut nand.image, &nand.layout, &self.flashfs_assets, fs_start, 0x30)
-                        {
+
+                    let mut merged_flashfs_assets: HashMap<String, Vec<u8>> = HashMap::new();
+                    let mut inherited_count = 0usize;
+                    for entry in &nand.flashfs.root.entries {
+                        if entry.deleted || entry.file_name.is_empty() || entry.data.is_empty() {
+                            continue;
+                        }
+                        let key = entry.file_name.to_lowercase();
+                        if self.flashfs_assets.contains_key(&key) {
+                            continue;
+                        }
+                        merged_flashfs_assets.insert(key, entry.data.clone());
+                        inherited_count += 1;
+                    }
+                    for (k, v) in &self.flashfs_assets {
+                        merged_flashfs_assets.insert(k.to_lowercase(), v.clone());
+                    }
+
+                    if !merged_flashfs_assets.is_empty() {
+                        info!(
+                            "[session] Finalizing FlashFS with {} inherited entries and {} override assets...",
+                            inherited_count,
+                            merged_flashfs_assets.len().saturating_sub(inherited_count)
+                        );
+                        match crate::builder::filesystem::flashfs::FileSystemRoot::build_from_memory(
+                            &mut nand.image,
+                            &nand.layout,
+                            &merged_flashfs_assets,
+                            fs_start,
+                            0x30,
+                        ) {
                             Ok(new_root) => {
                                 nand.flashfs.root = new_root;
                                 if matches!(nand.layout, crate::core::images::blocks::NandLayout::Emmc) {

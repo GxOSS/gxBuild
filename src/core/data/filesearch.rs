@@ -524,47 +524,6 @@ impl IniSearch {
                     };
                 }
 
-                // NAND Image
-                if let Some(n) = nand {
-                    let mut nand_data = None;
-                    if lower_name.starts_with("cb") {
-                        if lower_name.starts_with("cba") {
-                            nand_data = n.bootloaders.cb_a.as_ref().map(|b| b.serialize());
-                        } else if lower_name.starts_with("cbb") {
-                            nand_data = n.bootloaders.cb_b.as_ref().map(|b| b.serialize());
-                        } else if lower_name.starts_with("cbx") {
-                            nand_data = n.bootloaders.cb_x.as_ref().map(|b| b.serialize());
-                        } else {
-                            nand_data = n.bootloaders.cb.as_ref().map(|b| b.serialize());
-                        }
-                    } else if lower_name.starts_with("cd") || lower_name.starts_with("sd") {
-                        nand_data = n.bootloaders.cd.as_ref().map(|b| b.serialize());
-                    } else if lower_name.starts_with("ce") || lower_name.starts_with("se") {
-                        nand_data = n.bootloaders.ce.as_ref().map(|b| b.serialize());
-                    } else if lower_name.starts_with("sc") {
-                        nand_data = n.bootloaders.sc.as_ref().map(|b| b.serialize());
-                    } else if lower_name.starts_with("cf") || lower_name.starts_with("sf") {
-                        nand_data = n.update.cf_0.as_ref().map(|b| b.serialize());
-                    } else if lower_name.starts_with("cg") || lower_name.starts_with("sg") {
-                        nand_data = n.update.cg_0.as_ref().map(|b| b.serialize());
-                    }
-
-                    if let Some(c) = nand_data {
-                        let hash_ok = if let Some(expected) = &entry.hash {
-                            let actual = get_xebuild_crc32(&c, filename);
-                            actual.to_lowercase() == expected.to_lowercase()
-                        } else {
-                            true
-                        };
-                        if hash_ok {
-                            found_content = Some(c);
-                            found_path = Some(PathBuf::from("NAND_IMAGE"));
-                        } else {
-                            info!("[ini] Hash mismatch for {} in NAND Image Tier, trying next tier...", filename);
-                        }
-                    }
-                }
-
                 // Tier 1: mydata folder
                 if found_content.is_none() {
                     let cand = resolve_robust(&mydata, filename);
@@ -657,6 +616,65 @@ impl IniSearch {
                     }
                 }
 
+                // Tier 7: NAND Image
+                if found_content.is_none() {
+                    if let Some(n) = nand {
+                        let (bl, upd) = if entry.chain > 0 {
+                            (n.rebooter.as_ref(), n.rebooter_update.as_ref())
+                        } else {
+                            (Some(&n.bootloaders), Some(&n.update))
+                        };
+
+                        let mut nand_data = None;
+                        if lower_name.starts_with("cb") {
+                            if lower_name.starts_with("cba") {
+                                nand_data = bl.and_then(|b| b.cb_a.as_ref()).map(|b| b.serialize());
+                            } else if lower_name.starts_with("cbb") {
+                                nand_data = bl.and_then(|b| b.cb_b.as_ref()).map(|b| b.serialize());
+                            } else if lower_name.starts_with("cbx") {
+                                nand_data = bl.and_then(|b| b.cb_x.as_ref()).map(|b| b.serialize());
+                            } else {
+                                nand_data = bl.and_then(|b| b.cb.as_ref()).map(|b| b.serialize());
+                            }
+                        } else if lower_name.starts_with("cd") || lower_name.starts_with("sd") {
+                            nand_data = bl.and_then(|b| b.cd.as_ref()).map(|b| b.serialize());
+                        } else if lower_name.starts_with("ce") || lower_name.starts_with("se") {
+                            nand_data = bl.and_then(|b| b.ce.as_ref()).map(|b| b.serialize());
+                        } else if lower_name.starts_with("sc") {
+                            nand_data = bl.and_then(|b| b.sc.as_ref()).map(|b| b.serialize());
+                        } else if lower_name.starts_with("cf") || lower_name.starts_with("sf") {
+                            let slot = lower_name
+                                .split('_')
+                                .nth(1)
+                                .and_then(|s| s.split('.').next())
+                                .and_then(|s| s.parse::<usize>().ok())
+                                .unwrap_or(0);
+                            nand_data = match slot {
+                                1 => upd.and_then(|u| u.cf_1.as_ref()).map(|b| b.serialize()),
+                                _ => upd.and_then(|u| u.cf_0.as_ref()).map(|b| b.serialize()),
+                            };
+                        } else if lower_name.starts_with("cg") || lower_name.starts_with("sg") {
+                            let slot = lower_name
+                                .split('_')
+                                .nth(1)
+                                .and_then(|s| s.split('.').next())
+                                .and_then(|s| s.parse::<usize>().ok())
+                                .unwrap_or(0);
+                            nand_data = match slot {
+                                1 => upd.and_then(|u| u.cg_1.as_ref()).map(|b| b.serialize()),
+                                _ => upd.and_then(|u| u.cg_0.as_ref()).map(|b| b.serialize()),
+                            };
+                        }
+
+                        if let Some(c) = nand_data {
+                            if check_hash!(c, filename, "NAND Image") {
+                                found_content = Some(c);
+                                found_path = Some(PathBuf::from("NAND_IMAGE"));
+                            }
+                        }
+                    }
+                }
+
                 // Need to add rebooter patching
                 if let Some(mut c) = found_content {
                     if let Some(ref parsed_patch) = xe_patch {
@@ -715,18 +733,6 @@ impl IniSearch {
                     continue;
                 }
                 let mut found_content: Option<Vec<u8>> = None;
-
-                // Tier 0: NAND FlashFS
-                if found_content.is_none() {
-                    if let Some(n) = nand {
-                        if let Some(n_entry) = n.flashfs.root.entries.iter().find(|e| e.file_name.to_lowercase() == lower_basename) {
-                            let c = n_entry.data.clone();
-                            if check_crc32_simple(&c, &basename, &entry.hash, "NAND FlashFS", unsafe_mode).is_some() {
-                                found_content = Some(c);
-                            }
-                        }
-                    }
-                }
 
                 // Probe candidates: exact basename, then basename+"1", basename+"2"
                 let disk_candidates = [basename.clone(), format!("{}1", basename), format!("{}2", basename)];
@@ -798,6 +804,18 @@ impl IniSearch {
                             if check_crc32_simple(&c, &basename, &entry.hash, "Common", unsafe_mode).is_some() {
                                 found_content = Some(c);
                                 break;
+                            }
+                        }
+                    }
+                }
+
+                // Tier 6: NAND FlashFS
+                if found_content.is_none() {
+                    if let Some(n) = nand {
+                        if let Some(n_entry) = n.flashfs.root.entries.iter().find(|e| e.file_name.to_lowercase() == lower_basename) {
+                            let c = n_entry.data.clone();
+                            if check_crc32_simple(&c, &basename, &entry.hash, "NAND FlashFS", unsafe_mode).is_some() {
+                                found_content = Some(c);
                             }
                         }
                     }

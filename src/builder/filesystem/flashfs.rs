@@ -6,7 +6,7 @@
 
 use crate::core::images::blocks::*;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use log::{error, info, warn};
+use log::{error, info};
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Write};
 
