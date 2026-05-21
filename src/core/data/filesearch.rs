@@ -463,6 +463,17 @@ impl IniSearch {
                 result.rebooter = Some(DiscoveredBootloaders::new());
             }
 
+            let mut allowed_flashfs_from_ini: std::collections::HashSet<String> = std::collections::HashSet::new();
+            if !ini.flashfs.is_empty() {
+                for fs_entry in &ini.flashfs {
+                    let basename = strip_flashfs_path_indicator(&fs_entry.filename);
+                    let lower = basename.to_lowercase();
+                    allowed_flashfs_from_ini.insert(lower.clone());
+                    allowed_flashfs_from_ini.insert(format!("{}1", lower));
+                    allowed_flashfs_from_ini.insert(format!("{}2", lower));
+                }
+            }
+
             let mut expected_cf = "cf_0.bin".to_string();
             let mut expected_cg = "cg_0.bin".to_string();
             let mut target_cb = None;
@@ -582,7 +593,9 @@ impl IniSearch {
                                                                 result.bootloader_assets.insert(expected_cg.clone(), cg.serialize());
                                                             }
                                                         } else {
-                                                            result.flashfs_assets.insert(k_lower, v);
+                                                            if allowed_flashfs_from_ini.contains(&k_lower) {
+                                                                result.flashfs_assets.insert(k_lower, v);
+                                                            }
                                                         }
                                                     }
                                                     if let Some(c) = result.bootloader_assets.get(&lower_name).cloned() {
