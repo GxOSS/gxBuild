@@ -374,11 +374,14 @@ pub fn add_spare(
 
             for i in 0..total_pages {
                 let read_offset = i * page_size;
-                let mut data_block = vec![0u8; page_size];
+                let write_offset = i * p_page_size;
+                let page_slice = &mut result[write_offset..write_offset + p_page_size];
+                page_slice[..page_size].fill(0);
+
                 let bytes_remaining = image.len().saturating_sub(read_offset);
                 if bytes_remaining > 0 {
                     let sz = std::cmp::min(page_size, bytes_remaining);
-                    data_block[..sz].copy_from_slice(&image[read_offset..read_offset + sz]);
+                    page_slice[..sz].copy_from_slice(&image[read_offset..read_offset + sz]);
                 }
 
                 let mut spare = [0u8; 16];
@@ -436,9 +439,6 @@ pub fn add_spare(
                     }
                 }
 
-                let write_offset = i * p_page_size;
-                let page_slice = &mut result[write_offset..write_offset + p_page_size];
-                page_slice[..page_size].copy_from_slice(&data_block);
                 page_slice[page_size..p_page_size].copy_from_slice(&spare);
                 calculate_ecc(page_slice);
             }

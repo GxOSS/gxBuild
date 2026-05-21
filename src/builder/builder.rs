@@ -20,7 +20,7 @@
   3. This notice may not be removed or altered from any source distribution.
 */
 
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use zerocopy::byteorder::{BigEndian, I16, U16, U32};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
@@ -576,23 +576,25 @@ impl NandSkeleton {
     }
 
     pub fn prepare_for_assembly(&mut self) {
-        info!("[pfa] === prepare_for_assembly START ===");
-        info!("[pfa] input_pd: {:02x?}", self.input_pd);
-        info!("[pfa] input_ldv_cb: {:?}", self.input_ldv_cb);
-        info!("[pfa] input_ldv_cf: {:?}", self.input_ldv_cf);
-        info!(
-            "[pfa] cb present: {}, cb_a present: {}, cb_b present: {}",
-            self.bootloaders.cb.is_some(),
-            self.bootloaders.cb_a.is_some(),
-            self.bootloaders.cb_b.is_some()
-        );
-        info!(
-            "[pfa] cb meta: {}, cb_a meta: {}, cb_b meta: {}",
-            self.bootloaders.cb.as_ref().map_or(false, |b| b.metadata.is_some()),
-            self.bootloaders.cb_a.as_ref().map_or(false, |b| b.metadata.is_some()),
-            self.bootloaders.cb_b.as_ref().map_or(false, |b| b.metadata.is_some())
-        );
-        info!("[pfa] cf_0 present: {}, cf_0 meta: {}", self.update.cf_0.is_some(), self.update.cf_0.as_ref().map_or(false, |cf| cf.metadata.is_some()));
+        if self.options.verbose {
+            info!("[pfa] === prepare_for_assembly START ===");
+            info!("[pfa] input_pd: {:02x?}", self.input_pd);
+            info!("[pfa] input_ldv_cb: {:?}", self.input_ldv_cb);
+            info!("[pfa] input_ldv_cf: {:?}", self.input_ldv_cf);
+            info!(
+                "[pfa] cb present: {}, cb_a present: {}, cb_b present: {}",
+                self.bootloaders.cb.is_some(),
+                self.bootloaders.cb_a.is_some(),
+                self.bootloaders.cb_b.is_some()
+            );
+            info!(
+                "[pfa] cb meta: {}, cb_a meta: {}, cb_b meta: {}",
+                self.bootloaders.cb.as_ref().map_or(false, |b| b.metadata.is_some()),
+                self.bootloaders.cb_a.as_ref().map_or(false, |b| b.metadata.is_some()),
+                self.bootloaders.cb_b.as_ref().map_or(false, |b| b.metadata.is_some())
+            );
+            info!("[pfa] cf_0 present: {}, cf_0 meta: {}", self.update.cf_0.is_some(), self.update.cf_0.as_ref().map_or(false, |cf| cf.metadata.is_some()));
+        }
 
         // Decrypt newly assigned bootloaders individually
         if let Some(cpukey) = self.cpukey {
@@ -600,15 +602,21 @@ impl NandSkeleton {
                 if cb_b.metadata.is_none() {
                     info!("[pfa] CB_B has no metadata — decrypting");
                     if let Some(cb_a) = self.bootloaders.cb_a.as_ref() {
-                        let cb_a_key: [u8; 16] = cb_a.data[0..16].try_into().unwrap_or([0u8; 16]);
+                        let Some(cb_a_key_slice) = cb_a.data.get(0..16) else {
+                            warn!("[pfa] CB_A is too small to derive CB_B key");
+                            return;
+                        };
+                        let cb_a_key: [u8; 16] = cb_a_key_slice.try_into().unwrap();
                         let uses_new_crypto = (cb_a.header.flags.get() & 0x1000) != 0;
                         if uses_new_crypto {
-                            cb_b.decrypt_v2(&cb_a.header.clone(), &cb_a_key, &cpukey);
+                            cb_b.decrypt_v2(&cb_a.header, &cb_a_key, &cpukey);
                         } else {
                             cb_b.decrypt_v1(&cb_a_key, &cpukey);
                         }
                         cb_b.populate_metadata_unchecked();
-                        info!("[pfa] CB_B decrypted, meta: {:?}", cb_b.metadata.as_ref().map(|m| (m.lockdown_value, &m.pairing_data)));
+                        if self.options.verbose {
+                            info!("[pfa] CB_B decrypted, meta: {:?}", cb_b.metadata.as_ref().map(|m| (m.lockdown_value, &m.pairing_data)));
+                        }
                     } else {
                         warn!("[pfa] CB_B needs decrypt but CB_A is missing — cannot derive key");
                     }
@@ -708,7 +716,7 @@ impl NandSkeleton {
         // Resize image so FlashFS block allocation succeeds
         let expected_size = self.total_blocks * self.layout.logical_pages_per_block() * 0x200;
         if self.image.len() != expected_size {
-            self.image.resize(expected_size, 0);
+            self.image.resize(expected_size, 0xFF);
         }
 
         // Handle CG splitting for FlashFS
@@ -1293,7 +1301,7 @@ impl NandSkeleton {
 
         let mut logical_image = self.image.clone();
         if logical_image.len() != expected_size {
-            logical_image.resize(expected_size, 0);
+            logical_image.resize(expected_size, 0xFF);
         }
 
         let mut header = self.header.clone();
@@ -1303,12 +1311,23 @@ impl NandSkeleton {
             NandLayout::Emmc => 0x800,
             _ => 0x1000,
         };
-        if !self.extra.smc.is_empty() {
+        if smc_len > 0 {
+            if target_smc_offset + smc_len > logical_image.len() {
+                return Err(format!("SMC write out of bounds: offset 0x{:X} + size 0x{:X} > image 0x{:X}", target_smc_offset, smc_len, logical_image.len()));
+            }
             logical_image[target_smc_offset..target_smc_offset + smc_len].copy_from_slice(&self.extra.smc);
         }
 
-        let kv_offset = 0x4000;
+        let kv_offset = 0x4000usize;
         if !self.extra.keyvault.is_empty() {
+            if kv_offset + self.extra.keyvault.len() > logical_image.len() {
+                return Err(format!(
+                    "Keyvault write out of bounds: offset 0x{:X} + size 0x{:X} > image 0x{:X}",
+                    kv_offset,
+                    self.extra.keyvault.len(),
+                    logical_image.len()
+                ));
+            }
             logical_image[kv_offset..kv_offset + self.extra.keyvault.len()].copy_from_slice(&self.extra.keyvault);
         }
 
@@ -1520,7 +1539,7 @@ impl NandSkeleton {
 
         let mut logical_image = self.image.clone();
         if logical_image.len() != expected_size {
-            logical_image.resize(expected_size, 0);
+            logical_image.resize(expected_size, 0xFF);
         }
 
         let mut header = self.header.clone();
@@ -1530,7 +1549,11 @@ impl NandSkeleton {
             NandLayout::Emmc => 0x800,
             _ => 0x1000,
         };
-        let target_smc_offset = if smc_len > 0 { 0x4000 - smc_len } else { smc_default_offset };
+        let target_smc_offset = if smc_len > 0 {
+            0x4000usize.checked_sub(smc_len).ok_or_else(|| format!("SMC too large: 0x{:X} bytes", smc_len))?
+        } else {
+            smc_default_offset
+        };
 
         let bootchain_start = 0x8000;
         let mut curr_bl = bootchain_start;
@@ -1630,10 +1653,21 @@ impl NandSkeleton {
         }
 
         let kv_offset = header.kv_addr.get() as usize;
-        if !self.extra.smc.is_empty() {
+        if smc_len > 0 {
+            if target_smc_offset + smc_len > logical_image.len() {
+                return Err(format!("SMC write out of bounds: offset 0x{:X} + size 0x{:X} > image 0x{:X}", target_smc_offset, smc_len, logical_image.len()));
+            }
             logical_image[target_smc_offset..target_smc_offset + smc_len].copy_from_slice(&self.extra.smc);
         }
         if !self.extra.keyvault.is_empty() {
+            if kv_offset + self.extra.keyvault.len() > logical_image.len() {
+                return Err(format!(
+                    "Keyvault write out of bounds: offset 0x{:X} + size 0x{:X} > image 0x{:X}",
+                    kv_offset,
+                    self.extra.keyvault.len(),
+                    logical_image.len()
+                ));
+            }
             logical_image[kv_offset..kv_offset + self.extra.keyvault.len()].copy_from_slice(&self.extra.keyvault);
         }
 
@@ -1868,12 +1902,23 @@ impl NandSkeleton {
             NandLayout::Emmc => 0x800,
             _ => 0x1000,
         };
-        if !self.extra.smc.is_empty() {
+        if smc_len > 0 {
+            if target_smc_offset + smc_len > logical_image.len() {
+                return Err(format!("SMC write out of bounds: offset 0x{:X} + size 0x{:X} > image 0x{:X}", target_smc_offset, smc_len, logical_image.len()));
+            }
             logical_image[target_smc_offset..target_smc_offset + smc_len].copy_from_slice(&self.extra.smc);
         }
 
-        let kv_offset = 0x4000;
+        let kv_offset = 0x4000usize;
         if !self.extra.keyvault.is_empty() {
+            if kv_offset + self.extra.keyvault.len() > logical_image.len() {
+                return Err(format!(
+                    "Keyvault write out of bounds: offset 0x{:X} + size 0x{:X} > image 0x{:X}",
+                    kv_offset,
+                    self.extra.keyvault.len(),
+                    logical_image.len()
+                ));
+            }
             logical_image[kv_offset..kv_offset + self.extra.keyvault.len()].copy_from_slice(&self.extra.keyvault);
         }
 
@@ -1964,7 +2009,10 @@ impl NandSkeleton {
         };
 
         if let Some(pd) = target_pd {
-            info!("[builder] Synchronizing Pairing Data: {:02x?}", pd);
+            info!("[builder] Synchronizing Pairing Data");
+            if skel.options.verbose {
+                debug!("[builder] Pairing Data: {:02x?}", pd);
+            }
 
             if let Some(cb) = skel.bootloaders.cb_a.as_mut().or(skel.bootloaders.cb.as_mut()) {
                 if let Some(meta) = cb.metadata.as_mut() {
