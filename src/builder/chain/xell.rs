@@ -31,8 +31,8 @@ pub mod constants {
 
     pub const OFFSET_XELL_1F: u32 = 0x000C_0000;
     pub const OFFSET_XELL_2F: u32 = 0x00E2_A600;
-    pub const OFFSET_XELL_GG: u32 = 0x0007_4000;
-    pub const OFFSET_DEFAULT: u32 = 0x0007_4000;
+    pub const OFFSET_XELL_GG: u32 = 0x0007_0000;
+    pub const OFFSET_DEFAULT: u32 = 0x0007_0000;
 
     pub const MAGIC_XELL_LOWER: &[u8; 4] = b"Xell";
     pub const MAGIC_XELL_UPPER: &[u8; 4] = b"XeLL";
@@ -66,6 +66,8 @@ impl fmt::Display for XellType {
 pub enum XellError {
     #[error("payload data is completely empty")]
     EmptyData,
+    #[error("xellous payloads are not supported; use XeLL Reloaded instead")]
+    XellousUnsupported,
     #[error("unknown XeLL variant")]
     UnknownType,
 }
@@ -83,6 +85,11 @@ impl Xell {
             return Err(XellError::EmptyData);
         }
 
+        let lower_payload: Vec<u8> = data.iter().map(|b| b.to_ascii_lowercase()).collect();
+        if lower_payload.windows(b"xellous".len()).any(|w| w == b"xellous") {
+            return Err(XellError::XellousUnsupported);
+        }
+
         let mut xell_type = XellType::XellUnknown;
 
         // check filename first
@@ -94,23 +101,19 @@ impl Xell {
                 xell_type = XellType::Xell1f;
             } else if lower.contains("xell-2f") {
                 xell_type = XellType::Xell2f;
-            } else if lower.contains("xellous") {
-                xell_type = XellType::Xellous;
             } else if lower.contains("reloaded") {
                 xell_type = XellType::XellReloaded;
             }
         }
 
         // check magic byte and size
-        if xell_type == XellType::XellUnknown && data.len() >= 4 {
+        if (xell_type == XellType::XellUnknown || xell_type == XellType::XellReloaded) && data.len() >= 4 {
             let magic = &data[0..4];
             let len = data.len();
 
-            xell_type = match magic {
-                m if m == constants::MAGIC_XELL_LOWER && len == constants::SIZE_XELLOUS => XellType::Xellous,
-                m if m == constants::MAGIC_XELL_UPPER && (len == constants::SIZE_RELOADED || len == constants::SIZE_LEGACY_GG) => XellType::XellReloaded,
-                _ => XellType::XellUnknown,
-            };
+            if magic == constants::MAGIC_XELL_UPPER && (len == constants::SIZE_RELOADED || len == constants::SIZE_LEGACY_GG) {
+                xell_type = XellType::XellReloaded;
+            }
         }
 
         Ok(Self { data: data.to_vec(), xell_type })
@@ -122,16 +125,29 @@ impl Xell {
     }
 
     /// return the target offset for the XeLL variant
-    pub fn get_target_offset(&self, image_profile: &str) -> Result<u32, XellError> {
+    pub fn get_target_offset(&self, layout: crate::core::images::blocks::NandLayout, image_profile: &str, has_vfuses: bool, cf_offset: u32, patch_slot_size: u32) -> Result<u32, XellError> {
+        let profile = image_profile.to_ascii_lowercase();
+        let is_rgloader = profile.contains("rgloader") || profile.contains("glitchr") || profile.contains("glitch2r") || profile.contains("rgl");
+
         match self.xell_type {
             XellType::Xell1f => Ok(constants::OFFSET_XELL_1F),
             XellType::Xell2f => Ok(constants::OFFSET_XELL_2F),
             XellType::XellGg => Ok(constants::OFFSET_XELL_GG),
-            XellType::Xellous | XellType::XellReloaded => Ok(if image_profile.eq_ignore_ascii_case("bigblock") || image_profile.eq_ignore_ascii_case("bb") {
-                constants::OFFSET_XELL_2F
-            } else {
-                constants::OFFSET_XELL_GG
-            }),
+            XellType::Xellous | XellType::XellReloaded => {
+                if is_rgloader {
+                    return Ok(0x0010_0000);
+                }
+
+                if has_vfuses {
+                    if layout == crate::core::images::blocks::NandLayout::Bb {
+                        return Ok(0x00B8_0000);
+                    }
+
+                    return Ok(cf_offset.saturating_add(patch_slot_size.saturating_mul(2)));
+                }
+
+                Ok(constants::OFFSET_XELL_GG)
+            }
             XellType::XellUnknown => Err(XellError::UnknownType),
         }
     }

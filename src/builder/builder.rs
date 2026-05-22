@@ -953,13 +953,14 @@ impl NandSkeleton {
         };
 
         let mut final_flashfs = flashfs;
-        let fs_addr = header.fs_addr.get();
-        if fs_addr > 0 {
-            let logical_block_size = layout.logical_pages_per_block() * 0x200;
-            let fs_block = (fs_addr as usize) / logical_block_size;
-            info!("[builder] Found FlashFS root in header at 0x{:08X} (Block {})", fs_addr, fs_block);
-            final_flashfs.root.block_number = fs_block as i32;
-            final_flashfs.root.read(&image, &layout);
+        if matches!(layout, NandLayout::Sb | NandLayout::Xsb) {
+            let sb = SouthbridgeType::from(motherboard);
+            let chain_profile = if bl_mut.cb_b.is_some() { "split" } else { "single" };
+            let (_fs_root_addr, _smc_cfg, phys_fs_block) = LayoutCalculator::calculate(sb, chain_profile, layout);
+            if phys_fs_block > 0 {
+                final_flashfs.root.block_number = phys_fs_block as i32;
+                final_flashfs.root.read(&image, &layout);
+            }
         }
 
         let total_blocks = layout.total_blocks(image.len());
@@ -1467,7 +1468,7 @@ impl NandSkeleton {
             }
         }
 
-        let (_fs_addr_calc, smc_config_offset, phys_fs_block) =
+        let (fs_addr_calc, smc_config_offset, phys_fs_block) =
             LayoutCalculator::calculate(SouthbridgeType::from(self.options.motherboard), &self.options.image_profile, *layout);
         let mut target_fs_block = phys_fs_block as i32;
         if !self.flashfs.root.entries.is_empty() && matches!(layout, NandLayout::Sb | NandLayout::Xsb) && target_fs_block >= 0 {
@@ -1506,7 +1507,9 @@ impl NandSkeleton {
             let required_total_blocks = required_data_blocks + root_blocks_needed;
 
             if required_total_blocks > available_blocks {
-                let sysupdate_end = (target_cf_offset as usize).saturating_add(0x20000);
+                let patch_slots = if self.options.dualpatchslots || self.update.cf_1.is_some() { 2usize } else { 1usize };
+                let patch_slot_size = patch_slots.saturating_mul(0x10000);
+                let sysupdate_end = (target_cf_offset as usize).saturating_add(patch_slot_size);
                 let min_fs_block = ((sysupdate_end + logical_block_size - 1) / logical_block_size) as i32;
                 let desired_start = (config_start as i32).saturating_sub(required_total_blocks as i32);
                 let new_start = desired_start.max(min_fs_block).max(4);
@@ -1521,25 +1524,40 @@ impl NandSkeleton {
             }
         }
 
-        let fs_addr_calc = (target_fs_block as u32) * (layout.logical_pages_per_block() as u32) * 0x200;
-        header.fs_addr.set(fs_addr_calc);
         header.smc_config_offset.set(smc_config_offset);
 
-        let mut final_payloads = self.payloads.clone();
-        if let Some(records) = &self.bootloaders.khvpatch {
-            if !self.options.khv_apply && self.options.build_mode != BuildMode::Normal {
-                let header_size = self.options.khv_header_size;
-                let mut patch_binary = vec![0u8; header_size as usize];
-                patch_binary.extend(crate::core::images::gxp::serialize_records(records));
+        let patch_slot_size: u32 = 0x10000;
+        header.fs_addr.set(patch_slot_size);
 
-                final_payloads.insert(
-                    0,
-                    PayloadEntry { address: 0, size: patch_binary.len() as u32, description: "xeBuild KHV Patches".to_string(), data: patch_binary, fixed_address: None },
-                );
+        let has_vfuses = self.payloads.iter().any(|p| p.description.eq_ignore_ascii_case("virtual fuses"));
+        let patch_stream_start = (header.cf_offset.get() as usize)
+            .saturating_add(patch_slot_size as usize)
+            .saturating_add(if has_vfuses { 0x60 } else { 0x10 });
+
+        let mut khv_len = 0usize;
+        if let Some(records) = &self.bootloaders.khvpatch {
+            if !self.options.khv_apply {
+                let patch_stream = crate::core::images::gxp::serialize_records(records);
+                khv_len = patch_stream.len();
+                if patch_stream_start + khv_len > logical_image.len() {
+                    return Err(format!("KHV patch stream overflow at 0x{:X}: need 0x{:X} bytes", patch_stream_start, khv_len));
+                }
+                logical_image[patch_stream_start..patch_stream_start + khv_len].copy_from_slice(&patch_stream);
+                info!("[builder] Injected KHV patch stream at 0x{:08X} (Size: 0x{:X})", patch_stream_start, khv_len);
+
+                let logical_block_size = layout.logical_pages_per_block() * 0x200;
+                let start_block = patch_stream_start / logical_block_size;
+                let end_block = (patch_stream_start + khv_len + logical_block_size - 1) / logical_block_size;
+                for b in start_block..end_block {
+                    if b < self.flashfs.root.block_map.len() {
+                        self.flashfs.root.block_map[b] = 0x1FFB;
+                    }
+                }
             }
         }
 
-        let mut current_payload_offset = (header.cf_offset.get() + header.fs_addr.get() + 0x60) as usize;
+        let mut final_payloads = self.payloads.clone();
+        let mut current_payload_offset = (patch_stream_start + khv_len + 0x1F) & !0x1F;
         let mut payload_list = PayloadList::new();
 
         for payload in &mut final_payloads {
@@ -1590,10 +1608,16 @@ impl NandSkeleton {
             }
         }
 
-        if !self.flashfs.root.entries.is_empty() && fs_addr_calc > 0 {
+        let fs_addr_effective = if target_fs_block >= 0 {
+            (target_fs_block as u32) * (layout.logical_pages_per_block() as u32) * 0x200
+        } else {
+            fs_addr_calc
+        };
+
+        if !self.flashfs.root.entries.is_empty() && fs_addr_effective > 0 {
             let mut root = self.flashfs.root.clone();
             let logical_block_size = layout.logical_pages_per_block() * 0x200;
-            root.block_number = (fs_addr_calc as usize / logical_block_size) as i32;
+            root.block_number = (fs_addr_effective as usize / logical_block_size) as i32;
             root.create_defaults(logical_image.len(), layout, root.block_number as u16);
             for payload in &payload_list.entries {
                 let addr = payload.address as usize;
@@ -1608,7 +1632,7 @@ impl NandSkeleton {
 
             root.write_logical(&mut logical_image, layout)?;
             let fs_root_block = root.serialize_logical(*layout);
-            logical_image[fs_addr_calc as usize..fs_addr_calc as usize + fs_root_block.len()].copy_from_slice(&fs_root_block);
+            logical_image[fs_addr_effective as usize..fs_addr_effective as usize + fs_root_block.len()].copy_from_slice(&fs_root_block);
             self.flashfs.root = root;
         }
 
@@ -1627,13 +1651,17 @@ impl NandSkeleton {
 
         if self.options.image_profile == "onef" {
             if let Some(xell) = self.bootloaders.xell.as_ref() {
-                let xell_offset = xell.get_target_offset(&self.options.image_profile).map_err(|e| e.to_string())? as usize;
+                let xell_offset = xell
+                    .get_target_offset(self.layout, &self.options.image_profile, false, 0, 0x10000)
+                    .map_err(|e| e.to_string())? as usize;
                 info!("[builder] JTAG Chain 1: Injecting XeLL-1F payload at 0x{:08X}", xell_offset);
                 logical_image[xell_offset..xell_offset + xell.data.len()].copy_from_slice(&xell.data);
             }
         } else if let Some(rebooter) = &self.rebooter {
             if let Some(xell) = rebooter.xell.as_ref() {
-                let xell_offset = xell.get_target_offset(&self.options.image_profile).map_err(|e| e.to_string())? as usize;
+                let xell_offset = xell
+                    .get_target_offset(self.layout, &self.options.image_profile, false, 0, 0x10000)
+                    .map_err(|e| e.to_string())? as usize;
                 info!("[builder] JTAG Chain 1: Injecting XeLL-2F payload at 0x{:08X}", xell_offset);
                 logical_image[xell_offset..xell_offset + xell.data.len()].copy_from_slice(&xell.data);
             }
@@ -1718,10 +1746,21 @@ impl NandSkeleton {
             curr_bl += data.len();
         }
 
+        let build_profile = self.options.image_profile.clone();
+        let build_profile_l = build_profile.to_ascii_lowercase();
+
         let forensic_cf_default = match layout {
             NandLayout::Bb => 0x80000,
             NandLayout::Emmc => 0xB0000,
-            _ => 0x70000,
+            NandLayout::Sb | NandLayout::Xsb => {
+                if build_profile_l == "glitch2m" || build_profile_l.contains("glitch2m") || build_profile_l == "devgl" || build_profile_l == "xdkbuild" {
+                    0xD0000
+                } else if build_profile_l.contains("glitch") || build_profile_l.contains("glitchr") || build_profile_l.contains("glitch2r") {
+                    0xB0000
+                } else {
+                    0x70000
+                }
+            }
         };
 
         // If the bootchain has realigned/extended into the CF area, shift CF to the next 64KB block
@@ -1743,10 +1782,9 @@ impl NandSkeleton {
         }
 
         let sb_type = SouthbridgeType::from(self.options.motherboard);
-        let (fs_addr, smc_config_offset, phys_fs_block) = LayoutCalculator::calculate(sb_type, &self.options.image_profile, self.layout);
-
-        header.fs_addr = U32::new(fs_addr);
+        let (_fs_root_addr, smc_config_offset, phys_fs_block) = LayoutCalculator::calculate(sb_type, &self.options.image_profile, self.layout);
         header.smc_config_offset = U32::new(smc_config_offset);
+
 
         header.smc_boot_offset.set(target_smc_offset as u32);
         header.smc_boot_size.set(smc_len as u32);
@@ -1799,7 +1837,9 @@ impl NandSkeleton {
             let required_total_blocks = required_data_blocks + root_blocks_needed;
 
             if required_total_blocks > available_blocks {
-                let sysupdate_end = (target_cf_offset as usize).saturating_add(0x20000);
+                let patch_slots = if self.options.dualpatchslots || self.update.cf_1.is_some() { 2usize } else { 1usize };
+                let patch_slot_size = patch_slots.saturating_mul(0x10000);
+                let sysupdate_end = (target_cf_offset as usize).saturating_add(patch_slot_size);
                 let min_fs_block = ((sysupdate_end + logical_block_size - 1) / logical_block_size) as i32;
                 let desired_start = (config_start as i32).saturating_sub(required_total_blocks as i32);
                 let new_start = desired_start.max(min_fs_block).max(4);
@@ -1816,8 +1856,7 @@ impl NandSkeleton {
 
         if !self.flashfs.root.entries.is_empty() && target_fs_block >= 0 {
             let fs_logical_addr = (target_fs_block as u32) * (layout.logical_pages_per_block() as u32) * 0x200;
-            header.fs_addr.set(fs_logical_addr);
-            info!("[builder] Updated FlashFS root address in header: 0x{:08X} (Block {})", fs_logical_addr, target_fs_block);
+            info!("[builder] FlashFS root logical addr: 0x{:08X} (Block {})", fs_logical_addr, target_fs_block);
         }
 
         let kv_offset = header.kv_addr.get() as usize;
@@ -1846,13 +1885,23 @@ impl NandSkeleton {
 
         if let Some(cf0d) = cf0 {
             let cf0_offset = target_cf_offset;
+            let reserve_two_slots = build_profile_l == "jtag"
+                || build_profile_l == "1f"
+                || build_profile_l == "2f"
+                || build_profile_l == "devgl"
+                || build_profile_l == "devkit"
+                || build_profile_l == "xdkbuild"
+                || build_profile_l.contains("glitch");
+
+            let desired_patch_slots = if reserve_two_slots { 2 } else { if cf1.is_some() { 2 } else { 1 } };
+
             if self.options.dualpatchslots {
                 if cf1.is_none() || cg1.is_none() {
                     return Err("dualpatchslots is enabled but CF1/CG1 is missing".to_string());
                 }
                 header.patch_slots.set(2);
             } else {
-                header.patch_slots.set(if cf1.is_some() { 2 } else { 1 });
+                header.patch_slots.set(desired_patch_slots);
             }
 
             if cf0_offset + cf0d.len() > logical_image.len() {
@@ -1862,7 +1911,7 @@ impl NandSkeleton {
 
             // If there is no second slot, zero it out so stale CF1/CG1 bytes from
             // the input NAND image are not carried into the output.
-            if !self.options.dualpatchslots && cf1.is_none() {
+            if !self.options.dualpatchslots && cf1.is_none() && header.patch_slots.get() >= 2 {
                 let slot1_start = target_cf_offset + 0x10000;
                 let slot1_end = (slot1_start + 0x10000).min(logical_image.len());
                 if slot1_start < logical_image.len() {
@@ -1929,35 +1978,55 @@ impl NandSkeleton {
             }
         }
 
+        let has_vfuses = self.payloads.iter().any(|p| p.description.eq_ignore_ascii_case("virtual fuses"));
+        let patch_slot_size: u32 = 0x10000;
+
         let xell_payloads = [(self.bootloaders.xell.as_ref(), false), (self.rebooter.as_ref().and_then(|r| r.xell.as_ref()), true)];
 
         for (xell_opt, _is_rebooter) in xell_payloads {
             if let Some(xell) = xell_opt {
                 let x_type = xell.identify();
-                let xell_offset = xell.get_target_offset(&self.options.image_profile).map_err(|e| e.to_string())? as usize;
+                let xell_offset = xell
+                    .get_target_offset(*layout, &build_profile, has_vfuses, header.cf_offset.get(), patch_slot_size)
+                    .map_err(|e| e.to_string())? as usize;
                 if xell_offset + xell.data.len() > logical_image.len() {
                     return Err(format!("XeLL ({:?}) overflow at 0x{:X}: need 0x{:X} bytes", x_type, xell_offset, xell.data.len()));
                 }
-                info!("[builder] Injecting XeLL payload ({:?}) at hardcoded offset 0x{:08X}", x_type, xell_offset);
+                info!("[builder] Injecting XeLL payload ({:?}) at offset 0x{:08X}", x_type, xell_offset);
                 logical_image[xell_offset..xell_offset + xell.data.len()].copy_from_slice(&xell.data);
             }
         }
 
-        let mut final_payloads = self.payloads.clone();
-        if let Some(records) = &self.bootloaders.khvpatch {
-            if !self.options.khv_apply && self.options.build_mode != BuildMode::Normal {
-                let header_size = self.options.khv_header_size;
-                let mut patch_binary = vec![0u8; header_size as usize];
-                patch_binary.extend(crate::core::images::gxp::serialize_records(records));
+        header.fs_addr.set(patch_slot_size);
 
-                final_payloads.insert(
-                    0,
-                    PayloadEntry { address: 0, size: patch_binary.len() as u32, description: "xeBuild KHV Patches".to_string(), data: patch_binary, fixed_address: None },
-                );
+        let patch_stream_start = (header.cf_offset.get() as usize)
+            .saturating_add(patch_slot_size as usize)
+            .saturating_add(if has_vfuses { 0x60 } else { 0x10 });
+
+        let mut khv_len = 0usize;
+        if let Some(records) = &self.bootloaders.khvpatch {
+            if !self.options.khv_apply {
+                let patch_stream = crate::core::images::gxp::serialize_records(records);
+                khv_len = patch_stream.len();
+                if patch_stream_start + khv_len > logical_image.len() {
+                    return Err(format!("KHV patch stream overflow at 0x{:X}: need 0x{:X} bytes", patch_stream_start, khv_len));
+                }
+                logical_image[patch_stream_start..patch_stream_start + khv_len].copy_from_slice(&patch_stream);
+                info!("[builder] Injected KHV patch stream at 0x{:08X} (Size: 0x{:X})", patch_stream_start, khv_len);
+
+                let logical_block_size = layout.logical_pages_per_block() * 0x200;
+                let start_block = patch_stream_start / logical_block_size;
+                let end_block = (patch_stream_start + khv_len + logical_block_size - 1) / logical_block_size;
+                for b in start_block..end_block {
+                    if b < self.flashfs.root.block_map.len() {
+                        self.flashfs.root.block_map[b] = 0x1FFB;
+                    }
+                }
             }
         }
 
-        let mut current_payload_offset = (header.cf_offset.get() + header.fs_addr.get() + 0x60) as usize;
+        let mut final_payloads = self.payloads.clone();
+        let mut current_payload_offset = (patch_stream_start + khv_len + 0x1F) & !0x1F;
         let mut payload_list = PayloadList::new();
 
         for payload in &mut final_payloads {
