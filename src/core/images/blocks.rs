@@ -903,6 +903,10 @@ impl NandProcessor {
     }
 
     pub fn preprocess_nand_with_lba(raw_image: &[u8]) -> Result<(Vec<u8>, NandLayout, LbaMap), String> {
+        Self::preprocess_nand_with_lba_options(raw_image, true)
+    }
+
+    pub fn preprocess_nand_with_lba_options(raw_image: &[u8], remap_bad_blocks: bool) -> Result<(Vec<u8>, NandLayout, LbaMap), String> {
         let base_layout = NandLayout::detect(raw_image)?;
         if base_layout == NandLayout::Emmc {
             let total_blocks = raw_image.len() / (base_layout.logical_pages_per_block() * 0x200);
@@ -928,7 +932,9 @@ impl NandProcessor {
                     for bad in &bm.blocks {
                         lba_map.bad_blocks.push(bad.block);
                     }
-                    bm.map_and_heal(&mut working)?;
+                    if remap_bad_blocks {
+                        bm.map_and_heal(&mut working)?;
+                    }
                 }
             }
         }

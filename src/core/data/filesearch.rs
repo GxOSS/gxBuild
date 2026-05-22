@@ -176,9 +176,13 @@ impl IniSearch {
         nand: &Option<NandSkeleton>,
         unsafe_mode: Option<bool>,
         nofcrt: Option<bool>,
+        nosecurity: Option<bool>,
+        nosusecurity: Option<bool>,
     ) -> Result<Self, FilesearchError> {
         let unsafe_mode = unsafe_mode.unwrap_or(false);
         let nofcrt = nofcrt.unwrap_or(false);
+        let nosecurity = nosecurity.unwrap_or(false);
+        let nosusecurity = nosusecurity.unwrap_or(false);
         let mut ini = ini;
         let mut result = IniSearchResult {
             bootloaders: None,
@@ -327,7 +331,7 @@ impl IniSearch {
                 let mut found_path: Option<PathBuf> = None;
 
                 // Tier 0: NAND Image
-                if found_content.is_none() {
+                if found_content.is_none() && !nosecurity {
                     if let Some(n) = nand {
                         let nand_data = match lower_name.as_str() {
                             "keyvault.bin" | "kv.bin" => Some(n.extra.keyvault.clone()),
@@ -363,6 +367,37 @@ impl IniSearch {
                         if check_crc32_simple(&c, filename, &entry.hash, "Build", unsafe_mode).is_some() {
                             found_content = Some(c);
                             found_path = Some(cand);
+                        }
+                    }
+                }
+
+                // Tier 3: Build folder STFS
+                if found_content.is_none() && !nosusecurity {
+                    if let Ok(entries) = std::fs::read_dir(&build) {
+                        'stfs: for stfs_entry in entries.flatten() {
+                            let p = stfs_entry.path();
+                            if !p.is_file() {
+                                continue;
+                            }
+                            let ext_ok = p.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("bin")).unwrap_or(false);
+                            if !ext_ok {
+                                continue;
+                            }
+                            if let Ok(data_stfs) = std::fs::read(&p) {
+                                if let Ok(stfs) = crate::core::images::stfs::StfsContainer::new(&data_stfs) {
+                                    if let Ok(mem) = stfs.extract_to_memory() {
+                                        for (k, v) in mem {
+                                            if k.to_lowercase() == lower_name {
+                                                if check_crc32_simple(&v, filename, &entry.hash, "Build STFS", unsafe_mode).is_some() {
+                                                    found_content = Some(v);
+                                                    found_path = Some(p.clone());
+                                                    break 'stfs;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

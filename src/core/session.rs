@@ -660,9 +660,13 @@ impl Session {
             "olddvd" => o.olddvd = Some(is_true),
             "nodvd" => o.nodvd = Some(is_true),
             "dualboot" => o.dualboot = Some(is_true),
+            "dualpatchslots" => o.dualpatchslots = Some(is_true),
             "nolog" => o.nolog = Some(is_true),
             "noinfo" => o.noinfo = Some(is_true),
             "noenter" => o.noenter = Some(is_true),
+            "noecc" => o.noecc = Some(is_true),
+            "nosecurity" => o.nosecurity = Some(is_true),
+            "nosusecurity" => o.nosusecurity = Some(is_true),
             _ => warn!("[session] set_option: unknown key '{}'", key),
         }
         self.options.merge(o);
@@ -705,6 +709,8 @@ impl Session {
                 &self.active_nand,
                 self.options.gxunsafe,
                 self.options.nofcrt,
+                        self.options.nosecurity,
+                        self.options.nosusecurity,
             ) {
                 Ok(search) => {
                     self.bootloader_assets.extend(search.result.bootloader_assets);
@@ -1019,8 +1025,8 @@ impl Session {
                 }
 
                 if let Some(meta) = &kv.metadata {
-                    if self.options.avregion.is_none() {
-                        self.options.avregion = Some(format!("0x{:04X}", meta.region));
+                    if self.options.gameregion.is_none() {
+                        self.options.gameregion = Some(format!("0x{:04X}", meta.region));
                     }
                     if self.options.dvdkey.is_none() {
                         self.options.dvdkey = Some(meta.dvd_key.iter().map(|b| format!("{:02x}", b)).collect());
@@ -1051,6 +1057,9 @@ impl Session {
             nand.options.verbose = self.options.verbose.unwrap_or(false);
             nand.options.nomobile = self.options.nomobile.unwrap_or(false);
             nand.options.nofcrt = self.options.nofcrt.unwrap_or(false);
+            nand.options.dualpatchslots = self.options.dualpatchslots.unwrap_or(false);
+            nand.options.cygnos = self.options.cygnos.unwrap_or(false);
+            nand.options.demon = self.options.demon.unwrap_or(false);
 
             //  CPU Key
             if let Some(key_str) = &self.options.cpukey {
@@ -1091,7 +1100,7 @@ impl Session {
                         }
                     }
 
-                    if let Some(region_str) = &self.options.avregion {
+                    if let Some(region_str) = &self.options.gameregion {
                         let region = Self::parse_u16_hex_or_dec(region_str)?;
                         kv.set_region(region)?;
                     }
@@ -1430,6 +1439,15 @@ impl Session {
                     let mut built_nand = nand.clone();
                     match built_nand.build_in_place(cpukey) {
                         Ok(clean_bytes) => {
+                            if self.options.noecc.unwrap_or(false) {
+                                if let Err(e) = std::fs::write(&output, &clean_bytes) {
+                                    error!("[session] Failed to write build output to '{}': {}", output.display(), e);
+                                    return Err(format!("Failed to write output: {}", e));
+                                }
+                                info!("[session] Build complete: wrote logical image (noecc) to '{}' (Size: 0x{:X})", output.display(), clean_bytes.len());
+                                return Ok(());
+                            }
+
                             let mut fs_meta = std::collections::HashMap::new();
                             let page_count_encoded = if layout == crate::core::images::blocks::NandLayout::Bb {
                                 match nand.layout {
@@ -1525,7 +1543,19 @@ impl Session {
                         }
                         self.flashfs_allowlist = if allow.is_empty() { None } else { Some(allow) };
 
-                        match IniSearch::new(ini.clone(), &ini_base, &common, &data, &payloads, &smc, &nand_ref, self.options.gxunsafe, self.options.nofcrt) {
+                        match IniSearch::new(
+                            ini.clone(),
+                            &ini_base,
+                            &common,
+                            &data,
+                            &payloads,
+                            &smc,
+                            &nand_ref,
+                            self.options.gxunsafe,
+                            self.options.nofcrt,
+                            self.options.nosecurity,
+                            self.options.nosusecurity,
+                        ) {
                             Ok(search) => {
                                 // Route each pool to its typed session pool
                                 self.bootloader_assets.extend(search.result.bootloader_assets);
@@ -1573,7 +1603,8 @@ impl Session {
                 match fs::read(&path) {
                     Ok(raw_data) => {
                         // Use preprocess_nand_with_lba to track bad block remapping
-                        match crate::core::images::blocks::NandProcessor::preprocess_nand_with_lba(&raw_data) {
+                        let remap_bad_blocks = !self.options.noremap.unwrap_or(false);
+                        match crate::core::images::blocks::NandProcessor::preprocess_nand_with_lba_options(&raw_data, remap_bad_blocks) {
                             Ok((clean_data, layout, lba_map)) => {
                                 info!("[session] Detected {} bad block(s) during preprocessing", lba_map.bad_blocks.len());
                                 // Use provided key or buffered pending key

@@ -54,6 +54,7 @@ pub struct OptionsIni {
     pub nosusecurity: Option<bool>,
     pub noecc: Option<bool>,
     pub noflashfs: Option<bool>,
+    pub dualpatchslots: Option<bool>,
     pub smcnocheck: Option<bool>,
     pub cputemp: Option<String>,
     pub gputemp: Option<String>,
@@ -110,6 +111,7 @@ impl OptionsIni {
             nosusecurity: None,
             noecc: None,
             noflashfs: None,
+            dualpatchslots: None,
             smcnocheck: None,
             noenter: None,
             nolog: None,
@@ -210,6 +212,9 @@ impl OptionsIni {
         }
         if let Some(v) = other.noflashfs {
             self.noflashfs = Some(v);
+        }
+        if let Some(v) = other.dualpatchslots {
+            self.dualpatchslots = Some(v);
         }
         if let Some(v) = other.smcnocheck {
             self.smcnocheck = Some(v);
@@ -339,6 +344,7 @@ pub fn parse_options_ini(content: &str) -> Result<OptionsIni, OptionsIniError> {
                     "nosusecurity" => options.nosusecurity = Some(value.eq_ignore_ascii_case("true")),
                     "noecc" => options.noecc = Some(value.eq_ignore_ascii_case("true")),
                     "noflashfs" => options.noflashfs = Some(value.eq_ignore_ascii_case("true")),
+                    "dualpatchslots" => options.dualpatchslots = Some(value.eq_ignore_ascii_case("true")),
                     "smcnocheck" => options.smcnocheck = Some(value.eq_ignore_ascii_case("true")),
                     "noenter" => options.noenter = Some(value.eq_ignore_ascii_case("true")),
                     "nolog" => options.nolog = Some(value.eq_ignore_ascii_case("true")),

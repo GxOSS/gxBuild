@@ -253,8 +253,13 @@ impl NandHeader {
             self.copyright[Self::XEBUILD_XELL_ALT_POC_OFFSET] = if alt != 0 { alt } else { 0x00 };
             self.copyright[Self::XEBUILD_XELL_POC_OFFSET] = if primary != 0 { primary } else { 0x12 };
 
+            if options.demon {
+                self.copyright[Self::XEBUILD_UART_OFFSET] = 2;
+            } else if options.cygnos {
+                self.copyright[Self::XEBUILD_UART_OFFSET] = 1;
+            }
+
             let _ = Self::XEBUILD_DUALBOOT_OFFSET;
-            let _ = Self::XEBUILD_UART_OFFSET;
         }
     }
 }
@@ -459,6 +464,9 @@ pub struct BuildOptions {
     pub xsb: bool,
     pub nomobile: bool,
     pub nofcrt: bool,
+    pub dualpatchslots: bool,
+    pub cygnos: bool,
+    pub demon: bool,
 }
 
 impl Default for BuildOptions {
@@ -485,6 +493,9 @@ impl Default for BuildOptions {
             cbb: None,
             nomobile: false,
             nofcrt: false,
+            dualpatchslots: false,
+            cygnos: false,
+            demon: false,
         }
     }
 }
@@ -1835,7 +1846,14 @@ impl NandSkeleton {
 
         if let Some(cf0d) = cf0 {
             let cf0_offset = target_cf_offset;
-            header.patch_slots.set(if cf1.is_some() { 2 } else { 1 });
+            if self.options.dualpatchslots {
+                if cf1.is_none() || cg1.is_none() {
+                    return Err("dualpatchslots is enabled but CF1/CG1 is missing".to_string());
+                }
+                header.patch_slots.set(2);
+            } else {
+                header.patch_slots.set(if cf1.is_some() { 2 } else { 1 });
+            }
 
             if cf0_offset + cf0d.len() > logical_image.len() {
                 return Err(format!("CF0 overflow at 0x{:X}: need 0x{:X} bytes", cf0_offset, cf0d.len()));
@@ -1844,7 +1862,7 @@ impl NandSkeleton {
 
             // If there is no second slot, zero it out so stale CF1/CG1 bytes from
             // the input NAND image are not carried into the output.
-            if cf1.is_none() {
+            if !self.options.dualpatchslots && cf1.is_none() {
                 let slot1_start = target_cf_offset + 0x10000;
                 let slot1_end = (slot1_start + 0x10000).min(logical_image.len());
                 if slot1_start < logical_image.len() {
