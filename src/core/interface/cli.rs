@@ -329,6 +329,10 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     // -m = common directory (shared bootloaders, defaults to <ini_dir>/../common)
     let resolved_common_dir = args.common_dir.clone().unwrap_or_else(|| ini_dir.join("../common"));
 
+    session.set_ini_dir(ini_dir.clone());
+    session.set_common_dir(resolved_common_dir.clone());
+    session.set_data_dir(data_dir.clone());
+
     // --- Options INI Loading (<data>/options.ini) ---
     let options_path = data_dir.join("options.ini");
     if options_path.exists() {

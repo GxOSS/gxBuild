@@ -1408,7 +1408,12 @@ impl NandSkeleton {
             };
             let aligned = (declared_size + 0xF) & !0xF;
             if aligned > 0 && data.len() != aligned {
-                data.resize(aligned, 0);
+                if data.len() < aligned {
+                    data.resize(aligned, 0);
+                } else if data.len() >= 0x10 {
+                    let new_len = data.len() as u32;
+                    data[0x0C..0x10].copy_from_slice(&new_len.to_be_bytes());
+                }
             }
 
             if curr_off + data.len() > logical_image.len() {
@@ -1441,7 +1446,12 @@ impl NandSkeleton {
             };
             let aligned = (declared_size + 0xF) & !0xF;
             if aligned > 0 && data.len() != aligned {
-                data.resize(aligned, 0);
+                if data.len() < aligned {
+                    data.resize(aligned, 0);
+                } else if data.len() >= 0x10 {
+                    let new_len = data.len() as u32;
+                    data[0x0C..0x10].copy_from_slice(&new_len.to_be_bytes());
+                }
             }
 
             if curr_off + data.len() > logical_image.len() {
@@ -1746,14 +1756,28 @@ impl NandSkeleton {
 
             let aligned_declared = (declared_size + 0xF) & !0xF;
             if aligned_declared > 0 && data.len() != aligned_declared {
-                warn!(
-                    "[builder] {} length mismatch: data is 0x{:X}, header says 0x{:X} (aligned 0x{:X}). Adjusting...",
-                    name,
-                    data.len(),
-                    declared_size,
-                    aligned_declared
-                );
-                data.resize(aligned_declared, 0);
+                if data.len() < aligned_declared {
+                    warn!(
+                        "[builder] {} length mismatch: data is 0x{:X}, header says 0x{:X} (aligned 0x{:X}). Padding...",
+                        name,
+                        data.len(),
+                        declared_size,
+                        aligned_declared
+                    );
+                    data.resize(aligned_declared, 0);
+                } else {
+                    warn!(
+                        "[builder] {} length mismatch: data is 0x{:X}, header says 0x{:X} (aligned 0x{:X}). Keeping extra bytes...",
+                        name,
+                        data.len(),
+                        declared_size,
+                        aligned_declared
+                    );
+                    if data.len() >= 0x10 {
+                        let new_len = data.len() as u32;
+                        data[0x0C..0x10].copy_from_slice(&new_len.to_be_bytes());
+                    }
+                }
             }
 
             if curr_bl + data.len() > logical_image.len() {
@@ -2326,7 +2350,12 @@ impl NandSkeleton {
 
             let aligned_declared = (declared_size + 0xF) & !0xF;
             if aligned_declared > 0 && data.len() != aligned_declared {
-                data.resize(aligned_declared, 0);
+                if data.len() < aligned_declared {
+                    data.resize(aligned_declared, 0);
+                } else if data.len() >= 0x10 {
+                    let new_len = data.len() as u32;
+                    data[0x0C..0x10].copy_from_slice(&new_len.to_be_bytes());
+                }
             }
 
             if curr_bl + data.len() > logical_image.len() {
@@ -2496,7 +2525,8 @@ impl NandSkeleton {
         }
 
         info!("[builder] Re-encrypting SMC...");
-        smc.encrypt();
+        let scramble_smc = skel.options.image_profile.contains("glitch3");
+        smc.encrypt_with_scramble(scramble_smc);
         skel.extra.smc = smc.data;
 
         if skel.rebooter.is_some() {

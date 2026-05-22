@@ -296,7 +296,12 @@ impl RawSmc {
     }
 
     pub fn encrypt(&mut self) {
+        self.encrypt_with_scramble(false);
+    }
+
+    pub fn encrypt_with_scramble(&mut self, scramble: bool) {
         let mut is_retail = false;
+        self.unscramble();
         self.populate_metadata();
         if let Some(ref meta) = self.metadata {
             if meta.smc_type == SmcType::Retail {
@@ -306,7 +311,7 @@ impl RawSmc {
 
         smc_crypt(&mut self.data, true);
 
-        if !is_retail {
+        if scramble && !is_retail {
             self.scramble();
         }
     }

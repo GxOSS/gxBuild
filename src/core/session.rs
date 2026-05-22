@@ -1233,12 +1233,27 @@ impl Session {
 
             // SMC image
             let mut smc = crate::builder::chain::smc::RawSmc::new(nand.extra.smc.clone());
-            smc.decrypt(); // Decrypt using "BuNy"
+            smc.unscramble();
 
-            // Generic signature patching can be invoked here or via session APIs
-            // using the new signature engine.
-
-            smc.encrypt();
+            let profile_l = nand.options.image_profile.to_ascii_lowercase();
+            let auto_patch_smc = matches!(profile_l.as_str(), "glitch" | "glitch1" | "glitch2");
+            if auto_patch_smc {
+                let ini_dir = self.ini_dir.clone().unwrap_or_else(|| PathBuf::from("."));
+                let patch_path = ini_dir.join("../smc/bin/glitch.json");
+                match fs::read_to_string(&patch_path) {
+                    Ok(json) => match crate::core::images::signature::Signature::apply_batch(&mut smc.data, &json) {
+                        Ok(count) => {
+                            if count > 0 {
+                                info!("[session] SMC autopatching applied: {} match(es) from {:?}", count, patch_path);
+                            } else {
+                                info!("[session] SMC autopatching: 0 matches from {:?}", patch_path);
+                            }
+                        }
+                        Err(e) => warn!("[session] SMC autopatching failed ({}): {:?}", e, patch_path),
+                    },
+                    Err(_) => warn!("[session] SMC autopatching patch file missing: {:?}", patch_path),
+                }
+            }
             nand.extra.smc = smc.data;
         }
         Ok(())
@@ -1250,11 +1265,10 @@ impl Session {
         if let Some(nand) = &mut self.active_nand {
             info!("[session] Applying signature batch to SMC...");
             let mut smc = crate::builder::chain::smc::RawSmc::new(nand.extra.smc.clone());
-            smc.decrypt();
+            smc.unscramble();
 
             let count = crate::core::images::signature::Signature::apply_batch(&mut smc.data, json_str)?;
 
-            smc.encrypt();
             nand.extra.smc = smc.data;
             info!("[session] SMC signature batch applied: {} match(es) patched.", count);
             Ok(count)
