@@ -1423,7 +1423,8 @@ impl Session {
                     let layout = nand.layout;
 
                     let sb_type = SouthbridgeType::from(nand.options.motherboard);
-                    let _ = LayoutCalculator::calculate(sb_type, &nand.options.image_profile, layout);
+                    let chain_profile = if nand.bootloaders.cb_b.is_some() { "split" } else { "single" };
+                    let _ = LayoutCalculator::calculate(sb_type, chain_profile, layout);
 
                     let meta_type = match nand.options.motherboard {
                         crate::builder::builder::MotherboardType::Xenon
@@ -1470,7 +1471,12 @@ impl Session {
 
                                 // Branding strategy: Every block in the FlashFS partition must have
                                 // the correct partition type (e.g. 0x30) and version sequence in its spare area.
+                                let fs_start = root.block_number as usize;
+                                let reserve_start = layout.reserve_start(clean_bytes.len());
                                 for (val, &block) in root.block_map.iter().enumerate() {
+                                    if val < fs_start || val >= reserve_start {
+                                        continue;
+                                    }
                                     // 0x1FFE is the only marker for a truly 'free' block in the block map.
                                     // All other values (including 0 and 0x1FFF) represent occupied space.
                                     let is_free = (block & 0x7FFF) == 0x1FFE;
@@ -1684,7 +1690,8 @@ impl Session {
                         }
                         _ => {
                             let sb: crate::builder::builder::SouthbridgeType = nand.options.motherboard.into();
-                            let (_, _, phys_fs_block) = crate::builder::builder::LayoutCalculator::calculate(sb, &nand.options.image_profile, nand.layout);
+                            let chain_profile = if nand.bootloaders.cb_b.is_some() { "split" } else { "single" };
+                            let (_, _, phys_fs_block) = crate::builder::builder::LayoutCalculator::calculate(sb, chain_profile, nand.layout);
                             if phys_fs_block != 0 {
                                 phys_fs_block as u16
                             } else {
@@ -1966,7 +1973,8 @@ impl Session {
                         }
                         _ => {
                             let sb: crate::builder::builder::SouthbridgeType = nand.options.motherboard.into();
-                            let (_, _, phys_fs_block) = crate::builder::builder::LayoutCalculator::calculate(sb, &nand.options.image_profile, nand.layout);
+                            let chain_profile = if nand.bootloaders.cb_b.is_some() { "split" } else { "single" };
+                            let (_, _, phys_fs_block) = crate::builder::builder::LayoutCalculator::calculate(sb, chain_profile, nand.layout);
                             if phys_fs_block != 0 {
                                 phys_fs_block as u16
                             } else {

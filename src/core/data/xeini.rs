@@ -148,6 +148,7 @@ pub fn parse_xe_ini_str(content: &str, target_section: &str, filename_hint: Opti
     let mut build_type = filename_hint
         .map(|s| s.trim_start_matches('_').to_lowercase())
         .map(|s| s.replace(".ini", ""))
+        .map(|s| s.split('_').next().unwrap_or("retail").to_string())
         .unwrap_or_else(|| "retail".to_string());
 
     if build_type == "glitch" {
@@ -270,6 +271,7 @@ pub struct PendingAssets<'a> {
 pub fn apply_xe_ini(mut nand: NandSkeleton, ini: XeBuildIni, pending: PendingAssets<'_>) -> Result<NandSkeleton, IniError> {
     nand.bootloaders.clear();
     nand.update.clear();
+    nand.options.image_profile = ini.buildtype.to_lowercase();
 
     if !pending.bootloaders.is_empty() {
         info!("[ini] Applying {} discovered bootloader assets from memory...", pending.bootloaders.len());

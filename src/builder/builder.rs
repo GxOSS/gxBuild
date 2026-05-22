@@ -1454,6 +1454,7 @@ impl NandSkeleton {
 
         let target_cf_offset = (curr_off + 0xFFFF) & !0xFFFF; // Align to 64KB for JTAG CF/CG
         header.cf_offset.set(target_cf_offset as u32);
+        header.prefix.size.set(target_cf_offset as u32);
 
         let mut curr_update = target_cf_offset;
 
@@ -1478,8 +1479,9 @@ impl NandSkeleton {
             }
         }
 
+        let chain_profile = if self.bootloaders.cb_b.is_some() { "split" } else { "single" };
         let (fs_addr_calc, smc_config_offset, phys_fs_block) =
-            LayoutCalculator::calculate(SouthbridgeType::from(self.options.motherboard), &self.options.image_profile, *layout);
+            LayoutCalculator::calculate(SouthbridgeType::from(self.options.motherboard), chain_profile, *layout);
         let mut target_fs_block = phys_fs_block as i32;
         if !self.flashfs.root.entries.is_empty() && matches!(layout, NandLayout::Sb | NandLayout::Xsb) && target_fs_block >= 0 {
             let page_size = 0x200usize;
@@ -1629,6 +1631,12 @@ impl NandSkeleton {
             let logical_block_size = layout.logical_pages_per_block() * 0x200;
             root.block_number = (fs_addr_effective as usize / logical_block_size) as i32;
             root.create_defaults(logical_image.len(), layout, root.block_number as u16);
+            for e in root.entries.iter_mut() {
+                if !e.deleted {
+                    e.block_number = 0;
+                    e.page_number = 0;
+                }
+            }
             for payload in &payload_list.entries {
                 let addr = payload.address as usize;
                 let start_block = addr / logical_block_size;
@@ -1780,25 +1788,17 @@ impl NandSkeleton {
             forensic_cf_default
         };
 
-        // Enforce accurate profile (single vs split) based on actual CB presence before layout calc
-        if self.bootloaders.cb_b.is_some() {
-            if self.options.image_profile == "single" {
-                self.options.image_profile = "split".to_string();
-            }
-        } else {
-            if self.options.image_profile == "split" {
-                self.options.image_profile = "single".to_string();
-            }
-        }
+        let chain_profile = if self.bootloaders.cb_b.is_some() { "split" } else { "single" };
 
         let sb_type = SouthbridgeType::from(self.options.motherboard);
-        let (_fs_root_addr, smc_config_offset, phys_fs_block) = LayoutCalculator::calculate(sb_type, &self.options.image_profile, self.layout);
+        let (_fs_root_addr, smc_config_offset, phys_fs_block) = LayoutCalculator::calculate(sb_type, chain_profile, self.layout);
         header.smc_config_offset = U32::new(smc_config_offset);
 
 
         header.smc_boot_offset.set(target_smc_offset as u32);
         header.smc_boot_size.set(smc_len as u32);
         header.cf_offset.set(target_cf_offset as u32);
+        header.prefix.size.set(target_cf_offset as u32);
         header.kv_addr.set(0x4000); // Enforce Block 1 KV
 
         let mut target_fs_block = if phys_fs_block > 0 { phys_fs_block as i32 } else { self.flashfs.root.block_number };
@@ -1810,6 +1810,11 @@ impl NandSkeleton {
             );
             target_fs_block = 0x110;
         }
+
+        let cf0 = self.update.cf_0.as_ref().map(|b| b.serialize());
+        let cg0 = self.update.cg_0.as_ref().map(|b| b.serialize());
+        let cf1 = self.update.cf_1.as_ref().map(|b| b.serialize());
+        let cg1 = self.update.cg_1.as_ref().map(|b| b.serialize());
 
         if !self.flashfs.root.entries.is_empty() && matches!(layout, NandLayout::Sb | NandLayout::Xsb) && target_fs_block >= 0 {
             let page_size = 0x200usize;
@@ -1832,11 +1837,43 @@ impl NandSkeleton {
                 })
                 .sum();
 
+            let mut extra_non_deleted = 0usize;
+            let mut extra_data_blocks = 0usize;
+            if let (Some(cf0d), Some(cg0d)) = (cf0.as_ref(), cg0.as_ref()) {
+                let cg0_offset = (target_cf_offset + cf0d.len() + 0xF) & !0xF;
+                let slot0_end = target_cf_offset.saturating_add(0x10000);
+                if cg0_offset < slot0_end {
+                    let cg_to_slot = cg0d.len().min(slot0_end - cg0_offset);
+                    if cg_to_slot < cg0d.len() {
+                        let overflow_len = cg0d.len() - cg_to_slot;
+                        let sys_name = "sysupdate.xexp1";
+                        let existing = self
+                            .flashfs
+                            .root
+                            .entries
+                            .iter()
+                            .find(|e| !e.deleted && e.file_name.eq_ignore_ascii_case(sys_name))
+                            .map(|e| e.data.len())
+                            .unwrap_or(0);
+
+                        if existing == 0 && overflow_len > 0 {
+                            extra_non_deleted = 1;
+                            extra_data_blocks = (overflow_len + logical_block_size - 1) / logical_block_size;
+                        } else if overflow_len > 0 {
+                            let old_blocks = (existing.max(1) + logical_block_size - 1) / logical_block_size;
+                            let new_blocks = ((existing + overflow_len).max(1) + logical_block_size - 1) / logical_block_size;
+                            extra_data_blocks = new_blocks.saturating_sub(old_blocks);
+                        }
+                    }
+                }
+            }
+
             let max_entries_per_root_block = ((pages_per_block + 1) / 2) * fn_count;
             let max_bmap_per_root_block = (pages_per_block / 2) * bm_count;
             let total_blocks = layout.total_blocks(logical_image.len());
 
-            let root_blocks_needed_for_entries = (non_deleted_count + max_entries_per_root_block - 1) / max_entries_per_root_block.max(1);
+            let root_blocks_needed_for_entries =
+                (non_deleted_count + extra_non_deleted + max_entries_per_root_block - 1) / max_entries_per_root_block.max(1);
             let root_blocks_needed_for_bmap = (total_blocks + max_bmap_per_root_block - 1) / max_bmap_per_root_block.max(1);
             let root_blocks_needed = root_blocks_needed_for_entries.max(root_blocks_needed_for_bmap).max(1);
 
@@ -1844,7 +1881,7 @@ impl NandSkeleton {
             let config_start = reserve_start_u.saturating_sub(4);
             let available_blocks = config_start.saturating_sub(target_fs_block as usize);
 
-            let required_total_blocks = required_data_blocks + root_blocks_needed;
+            let required_total_blocks = required_data_blocks + extra_data_blocks + root_blocks_needed;
 
             if required_total_blocks > available_blocks {
                 let patch_slots = if self.options.dualpatchslots || self.update.cf_1.is_some() { 2usize } else { 1usize };
@@ -1888,11 +1925,6 @@ impl NandSkeleton {
             logical_image[kv_offset..kv_offset + self.extra.keyvault.len()].copy_from_slice(&self.extra.keyvault);
         }
 
-        let cf0 = self.update.cf_0.as_ref().map(|b| b.serialize());
-        let cg0 = self.update.cg_0.as_ref().map(|b| b.serialize());
-        let cf1 = self.update.cf_1.as_ref().map(|b| b.serialize());
-        let cg1 = self.update.cg_1.as_ref().map(|b| b.serialize());
-
         if let Some(cf0d) = cf0 {
             let cf0_offset = target_cf_offset;
             let reserve_two_slots = build_profile_l == "jtag"
@@ -1918,6 +1950,10 @@ impl NandSkeleton {
                 return Err(format!("CF0 overflow at 0x{:X}: need 0x{:X} bytes", cf0_offset, cf0d.len()));
             }
             logical_image[cf0_offset..cf0_offset + cf0d.len()].copy_from_slice(&cf0d);
+            if cf0_offset + 2 <= logical_image.len() {
+                let magic = u16::from_be_bytes([logical_image[cf0_offset], logical_image[cf0_offset + 1]]);
+                info!("[builder] CF0 magic at 0x{:08X}: 0x{:04X}", cf0_offset, magic);
+            }
 
             // If there is no second slot, zero it out so stale CF1/CG1 bytes from
             // the input NAND image are not carried into the output.
@@ -1950,6 +1986,37 @@ impl NandSkeleton {
                         return Err(format!("CG0 overflow at 0x{:X}: need 0x{:X} bytes", cg0_offset, cg_to_slot));
                     }
                     logical_image[cg0_offset..cg0_offset + cg_to_slot].copy_from_slice(&cg0d[0..cg_to_slot]);
+                    if cg_to_slot < cg0d.len() {
+                        let overflow = &cg0d[cg_to_slot..];
+                        let idx = self
+                            .flashfs
+                            .root
+                            .entries
+                            .iter()
+                            .position(|e| !e.deleted && e.file_name.eq_ignore_ascii_case("sysupdate.xexp1"));
+                        match idx {
+                            Some(i) => {
+                                let mut new_data = Vec::with_capacity(overflow.len() + self.flashfs.root.entries[i].data.len());
+                                new_data.extend_from_slice(overflow);
+                                new_data.extend_from_slice(&self.flashfs.root.entries[i].data);
+                                self.flashfs.root.entries[i].data = new_data;
+                                self.flashfs.root.entries[i].size = self.flashfs.root.entries[i].data.len() as u32;
+                                info!("[builder] Prepended 0x{:X} CG0 overflow bytes to sysupdate.xexp1", overflow.len());
+                            }
+                            None => {
+                                let mut entry = crate::builder::filesystem::flashfs::FileSystemEntry::new(0);
+                                entry.file_name = "sysupdate.xexp1".to_string();
+                                entry.data = overflow.to_vec();
+                                entry.size = entry.data.len() as u32;
+                                self.flashfs.root.entries.push(entry);
+                                info!("[builder] Created sysupdate.xexp1 with 0x{:X} CG0 overflow bytes", overflow.len());
+                            }
+                        }
+                    }
+                    if cg0_offset + 2 <= logical_image.len() {
+                        let magic = u16::from_be_bytes([logical_image[cg0_offset], logical_image[cg0_offset + 1]]);
+                        info!("[builder] CG0 magic at 0x{:08X}: 0x{:04X}", cg0_offset, magic);
+                    }
                     // Always advance to slot end so CF1 starts on the next clean 64KB block
                     next_offset = max_slot_end;
                 }
@@ -1983,6 +2050,33 @@ impl NandSkeleton {
                             return Err(format!("CG1 overflow at 0x{:X}: need 0x{:X} bytes", cg1_offset, cg_to_slot));
                         }
                         logical_image[cg1_offset..cg1_offset + cg_to_slot].copy_from_slice(&cg1d[0..cg_to_slot]);
+                        if cg_to_slot < cg1d.len() {
+                            let overflow = &cg1d[cg_to_slot..];
+                            let idx = self
+                                .flashfs
+                                .root
+                                .entries
+                                .iter()
+                                .position(|e| !e.deleted && e.file_name.eq_ignore_ascii_case("sysupdate.xexp2"));
+                            match idx {
+                                Some(i) => {
+                                    let mut new_data = Vec::with_capacity(overflow.len() + self.flashfs.root.entries[i].data.len());
+                                    new_data.extend_from_slice(overflow);
+                                    new_data.extend_from_slice(&self.flashfs.root.entries[i].data);
+                                    self.flashfs.root.entries[i].data = new_data;
+                                    self.flashfs.root.entries[i].size = self.flashfs.root.entries[i].data.len() as u32;
+                                    info!("[builder] Prepended 0x{:X} CG1 overflow bytes to sysupdate.xexp2", overflow.len());
+                                }
+                                None => {
+                                    let mut entry = crate::builder::filesystem::flashfs::FileSystemEntry::new(0);
+                                    entry.file_name = "sysupdate.xexp2".to_string();
+                                    entry.data = overflow.to_vec();
+                                    entry.size = entry.data.len() as u32;
+                                    self.flashfs.root.entries.push(entry);
+                                    info!("[builder] Created sysupdate.xexp2 with 0x{:X} CG1 overflow bytes", overflow.len());
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2112,6 +2206,12 @@ impl NandSkeleton {
             }
 
             root.create_defaults(logical_image.len(), layout, root.block_number as u16);
+            for e in root.entries.iter_mut() {
+                if !e.deleted {
+                    e.block_number = 0;
+                    e.page_number = 0;
+                }
+            }
             let logical_block_size = layout.logical_pages_per_block() * 0x200;
             for payload in &payload_list.entries {
                 let addr = payload.address as usize;
@@ -2259,6 +2359,7 @@ impl NandSkeleton {
         header.smc_boot_size.set(smc_len as u32);
         header.kv_addr.set(kv_offset as u32);
         header.cf_offset.set(((curr_bl + 0x3FFF) & !0x3FFF) as u32); // Point CF pointer to aligned gap after CD
+        header.prefix.size.set(header.cf_offset.get());
         header.prefix.entrypoint.set(bootchain_start as u32);
         header.fs_addr.set(0); // No filesystem
 
