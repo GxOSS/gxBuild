@@ -906,7 +906,7 @@ impl NandSkeleton {
             Vec::new()
         };
 
-        let extra = NandExtra {
+        let mut extra = NandExtra {
             smc: smc.data,
             smc_metadata: smc.metadata.clone(),
             smc_config: config_data,
@@ -961,6 +961,16 @@ impl NandSkeleton {
                 final_flashfs.root.block_number = phys_fs_block as i32;
                 final_flashfs.root.read(&image, &layout);
             }
+        }
+
+        let fcrt_from_nand = final_flashfs
+            .root
+            .entries
+            .iter()
+            .find(|e| !e.deleted && e.file_name.eq_ignore_ascii_case("fcrt.bin"))
+            .map(|e| e.data.clone());
+        if extra.fcrt.is_none() {
+            extra.fcrt = fcrt_from_nand;
         }
 
         let total_blocks = layout.total_blocks(image.len());
