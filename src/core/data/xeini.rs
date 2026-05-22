@@ -23,7 +23,7 @@
 use crate::builder::builder::NandSkeleton;
 use crate::core::images::gxp::PatchRecord;
 use crc32fast::Hasher;
-use log::{error, info, warn};
+use log::{info, warn};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -370,31 +370,17 @@ pub fn apply_xe_ini(mut nand: NandSkeleton, ini: XeBuildIni, pending: PendingAss
                 let xell = crate::builder::chain::xell::Xell::parse(data, Some(filename)).map_err(|e| IniError::BootloaderError(e.to_string()))?;
                 let x_type = xell.identify();
 
-                let is_unsafe = nand.options.gxunsafe;
-
                 match x_type {
                     crate::builder::chain::xell::XellType::XellGg => {
-                        if !nand.options.image_profile.contains("glitch") && !is_unsafe {
-                            error!("[ini] FATAL: xell-gggggg is for Glitch builds only (Profile: {}).", nand.options.image_profile);
-                            return Err(IniError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid XeLL for build profile")));
-                        }
                         nand.bootloaders.xell = Some(xell);
                         info!("[ini] Assigned xell-gggggg to primary slot");
                     }
                     crate::builder::chain::xell::XellType::Xell1f => {
-                        if !nand.options.image_profile.contains("jtag") && !is_unsafe {
-                            error!("[ini] FATAL: xell-1f is for Rebooter XeLL images only (Profile: {}).", nand.options.image_profile);
-                            return Err(IniError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid XeLL for build profile")));
-                        }
                         info!("[ini] Detected xell-1f: Switching to Onef profile (XeLL-only rebooter)");
                         nand.options.image_profile = "onef".to_string();
                         nand.bootloaders.xell = Some(xell);
                     }
                     crate::builder::chain::xell::XellType::Xell2f => {
-                        if !nand.options.image_profile.contains("jtag") && !is_unsafe {
-                            error!("[ini] FATAL: xell-2f is for Full Rebooter images only (Profile: {}).", nand.options.image_profile);
-                            return Err(IniError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid XeLL for build profile")));
-                        }
                         if let Some(rebooter) = nand.rebooter.as_mut() {
                             rebooter.xell = Some(xell);
                         }

@@ -469,7 +469,16 @@ impl IniSearch {
             let cand = payloads.join(filename);
             if cand.exists() {
                 if let Ok(c) = std::fs::read(&cand) {
-                    if let Some(expected) = &entry.hash {
+                    let skip_crc = entry
+                        .hash
+                        .as_deref()
+                        .map(|h| h.eq_ignore_ascii_case("skip") || h.eq_ignore_ascii_case("none") || h == "0" || h == "00000000")
+                        .unwrap_or(true);
+
+                    if skip_crc {
+                        warn!("[ini] Payload {} CRC32 check skipped", filename);
+                        result.bootloader_assets.insert(lower_name, c);
+                    } else if let Some(expected) = &entry.hash {
                         let actual = get_xebuild_crc32(&c, filename);
                         if actual.to_lowercase() != expected.to_lowercase() {
                             if unsafe_mode {
@@ -483,8 +492,6 @@ impl IniSearch {
                             info!("[ini] Payload {} passed CRC32: {}", filename, actual);
                             result.bootloader_assets.insert(lower_name, c);
                         }
-                    } else {
-                        return Err(FilesearchError::PayloadBrokenHash(filename.to_string()));
                     }
                 }
             } else {
