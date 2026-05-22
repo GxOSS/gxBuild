@@ -203,6 +203,11 @@ impl PayloadList {
 
 impl NandHeader {
     pub const MAGIC: u16 = 0xFF4F;
+    const XEBUILD_FLAG_OFFSET: usize = 0x3B;
+    const XEBUILD_DUALBOOT_OFFSET: usize = 0x3C;
+    const XEBUILD_UART_OFFSET: usize = 0x3D;
+    const XEBUILD_XELL_ALT_POC_OFFSET: usize = 0x3E;
+    const XEBUILD_XELL_POC_OFFSET: usize = 0x3F;
 
     pub fn validate(&self) -> Result<(), String> {
         if self.prefix.magic.get() != Self::MAGIC {
@@ -226,6 +231,31 @@ impl NandHeader {
         info!("[builder] KV size:          0x{:X}", self.kv_size.get());
         info!("[builder] SMC boot size:    0x{:X}", self.smc_boot_size.get());
         info!("[builder] SMC boot offset:  0x{:X}", self.smc_boot_offset.get());
+    }
+
+    fn apply_xebuild_header_flags(&mut self, options: &BuildOptions, extra: &NandExtra) {
+        let profile = options.image_profile.as_str();
+        let is_devkit = profile == "devkit" || matches!(options.build_mode, BuildMode::Devkit);
+        let is_retail = profile == "retail";
+        let is_hacked = profile == "jtag" || profile == "devgl" || profile == "xdkbuild" || profile.contains("glitch");
+
+        if is_retail || is_devkit {
+            self.copyright[Self::XEBUILD_FLAG_OFFSET] = 0;
+            return;
+        }
+
+        if is_hacked {
+            self.copyright[Self::XEBUILD_FLAG_OFFSET] = 1;
+
+            let alt = extra.power_on_cause_a;
+            let primary = extra.power_on_cause_b;
+
+            self.copyright[Self::XEBUILD_XELL_ALT_POC_OFFSET] = if alt != 0 { alt } else { 0x00 };
+            self.copyright[Self::XEBUILD_XELL_POC_OFFSET] = if primary != 0 { primary } else { 0x12 };
+
+            let _ = Self::XEBUILD_DUALBOOT_OFFSET;
+            let _ = Self::XEBUILD_UART_OFFSET;
+        }
     }
 }
 
@@ -1579,6 +1609,8 @@ impl NandSkeleton {
         // Update prefix entrypoint to CB_A in Chain 0
         header.prefix.entrypoint.set(0x8000);
 
+        header.apply_xebuild_header_flags(&self.options, &self.extra);
+
         let header_bytes = zerocopy::IntoBytes::as_bytes(&header);
         logical_image[..header_bytes.len()].copy_from_slice(header_bytes);
 
@@ -1957,6 +1989,7 @@ impl NandSkeleton {
         }
 
         header.prefix.entrypoint.set(bootchain_start as u32);
+        header.apply_xebuild_header_flags(&self.options, &self.extra);
         let header_bytes = zerocopy::IntoBytes::as_bytes(&header);
         logical_image[..header_bytes.len()].copy_from_slice(header_bytes);
 
@@ -2131,6 +2164,8 @@ impl NandSkeleton {
         header.cf_offset.set(((curr_bl + 0x3FFF) & !0x3FFF) as u32); // Point CF pointer to aligned gap after CD
         header.prefix.entrypoint.set(bootchain_start as u32);
         header.fs_addr.set(0); // No filesystem
+
+        header.apply_xebuild_header_flags(&self.options, &self.extra);
 
         let header_bytes = zerocopy::IntoBytes::as_bytes(&header);
         logical_image[..header_bytes.len()].copy_from_slice(header_bytes);
@@ -2387,6 +2422,47 @@ mod tests {
         let header = NandHeader::read_from_prefix(&logical).unwrap().0;
         assert_eq!(header.smc_boot_offset.get(), target_offset as u32);
         assert_eq!(header.smc_boot_size.get(), 0x3200);
+    }
+
+    #[test]
+    fn test_xebuild_header_flags() {
+        let skeleton = NandSkeleton::new_blank(NandLayout::Sb);
+
+        let mut retail_header = skeleton.header.clone();
+        retail_header.copyright[0x3E] = 0xAA;
+        retail_header.copyright[0x3F] = 0xBB;
+        let mut retail_opts = skeleton.options.clone();
+        retail_opts.image_profile = "retail".to_string();
+        retail_header.apply_xebuild_header_flags(&retail_opts, &skeleton.extra);
+        assert_eq!(retail_header.copyright[0x3B], 0);
+        assert_eq!(retail_header.copyright[0x3E], 0xAA);
+        assert_eq!(retail_header.copyright[0x3F], 0xBB);
+
+        let mut devkit_header = skeleton.header.clone();
+        devkit_header.copyright[0x3E] = 0xAA;
+        devkit_header.copyright[0x3F] = 0xBB;
+        let mut devkit_opts = skeleton.options.clone();
+        devkit_opts.image_profile = "devkit".to_string();
+        devkit_header.apply_xebuild_header_flags(&devkit_opts, &skeleton.extra);
+        assert_eq!(devkit_header.copyright[0x3B], 0);
+        assert_eq!(devkit_header.copyright[0x3E], 0xAA);
+        assert_eq!(devkit_header.copyright[0x3F], 0xBB);
+
+        let mut hacked_header = skeleton.header.clone();
+        let mut hacked_opts = skeleton.options.clone();
+        hacked_opts.image_profile = "glitch2".to_string();
+        hacked_header.apply_xebuild_header_flags(&hacked_opts, &skeleton.extra);
+        assert_eq!(hacked_header.copyright[0x3B], 1);
+        assert_eq!(hacked_header.copyright[0x3E], 0x00);
+        assert_eq!(hacked_header.copyright[0x3F], 0x12);
+
+        let mut xdk_header = skeleton.header.clone();
+        let mut xdk_opts = skeleton.options.clone();
+        xdk_opts.image_profile = "xdkbuild".to_string();
+        xdk_header.apply_xebuild_header_flags(&xdk_opts, &skeleton.extra);
+        assert_eq!(xdk_header.copyright[0x3B], 1);
+        assert_eq!(xdk_header.copyright[0x3E], 0x00);
+        assert_eq!(xdk_header.copyright[0x3F], 0x12);
     }
 
     #[test]
