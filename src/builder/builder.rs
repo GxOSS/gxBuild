@@ -1568,6 +1568,7 @@ impl NandSkeleton {
             root.write_logical(&mut logical_image, layout)?;
             let fs_root_block = root.serialize_logical(*layout);
             logical_image[fs_addr_calc as usize..fs_addr_calc as usize + fs_root_block.len()].copy_from_slice(&fs_root_block);
+            self.flashfs.root = root;
         }
 
         header.smc_boot_offset.set(target_smc_offset as u32);
@@ -2006,6 +2007,10 @@ impl NandSkeleton {
                 logical_image[fs_offset..fs_offset + fs_root_block.len()].copy_from_slice(&fs_root_block);
             } else {
                 error!("[builder] FlashFS partition 0x{:02X} root block exceeds image bounds at block {}", btype, fs_block);
+            }
+
+            if btype == self.flashfs.root.partition_type {
+                self.flashfs.root = root;
             }
         }
 

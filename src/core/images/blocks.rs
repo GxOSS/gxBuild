@@ -125,8 +125,15 @@ pub fn read_logical_from_physical(image: &[u8], logical_offset: usize, len: usiz
         let current_logical_offset = logical_offset + cur;
         let current_page = current_logical_offset / logical_page_size;
         let page_offset = current_logical_offset % logical_page_size;
-        let phys_page_base = (layout.logical_to_physical(current_page) as usize) * logical_page_size;
-        let phys_offset = phys_page_base + page_offset;
+        let phys_offset = match layout {
+            NandLayout::Emmc => current_logical_offset,
+            NandLayout::Xsb | NandLayout::Sb => (current_page * layout.physical_page_size()) + page_offset,
+            NandLayout::Bb => {
+                let group = current_page / 4;
+                let page_in_group = current_page % 4;
+                (group * 0x840) + (page_in_group * 0x200) + page_offset
+            }
+        };
 
         let chunk_len = logical_page_size - page_offset;
         let to_read = std::cmp::min(chunk_len, len - cur);
@@ -159,8 +166,15 @@ pub fn write_logical_data(image: &mut [u8], logical_offset: usize, data: &[u8], 
         let current_logical_byte = logical_offset + cur;
         let current_page = current_logical_byte / logical_page_size;
         let page_offset = current_logical_byte % logical_page_size;
-        let phys_page_base = (layout.logical_to_physical(current_page) as usize) * logical_page_size;
-        let phys_offset = phys_page_base + page_offset;
+        let phys_offset = match layout {
+            NandLayout::Emmc => current_logical_byte,
+            NandLayout::Xsb | NandLayout::Sb => (current_page * layout.physical_page_size()) + page_offset,
+            NandLayout::Bb => {
+                let group = current_page / 4;
+                let page_in_group = current_page % 4;
+                (group * 0x840) + (page_in_group * 0x200) + page_offset
+            }
+        };
 
         let chunk_len = logical_page_size - page_offset;
         let to_write = std::cmp::min(chunk_len, len - cur);
