@@ -1233,7 +1233,7 @@ impl Session {
 
             // SMC image
             let mut smc = crate::builder::chain::smc::RawSmc::new(nand.extra.smc.clone());
-            smc.unscramble();
+            smc.ensure_decrypted();
 
             let profile_l = nand.options.image_profile.to_ascii_lowercase();
             let auto_patch_smc = matches!(profile_l.as_str(), "glitch" | "glitch1" | "glitch2");
@@ -1241,16 +1241,25 @@ impl Session {
                 let ini_dir = self.ini_dir.clone().unwrap_or_else(|| PathBuf::from("."));
                 let patch_path = ini_dir.join("../smc/bin/glitch.json");
                 match fs::read_to_string(&patch_path) {
-                    Ok(json) => match crate::core::images::signature::Signature::apply_batch(&mut smc.data, &json) {
-                        Ok(count) => {
-                            if count > 0 {
-                                info!("[session] SMC autopatching applied: {} match(es) from {:?}", count, patch_path);
-                            } else {
-                                info!("[session] SMC autopatching: 0 matches from {:?}", patch_path);
+                    Ok(json) => {
+                        let mut count = crate::core::images::signature::Signature::apply_batch(&mut smc.data, &json)
+                            .map_err(|e| format!("SMC autopatching failed ({}): {:?}", e, patch_path))?;
+                        if count == 0 {
+                            let mut retry = crate::builder::chain::smc::RawSmc::new(smc.data.clone());
+                            retry.force_decrypt();
+                            let retry_count = crate::core::images::signature::Signature::apply_batch(&mut retry.data, &json)
+                                .map_err(|e| format!("SMC autopatching failed ({}): {:?}", e, patch_path))?;
+                            if retry_count > 0 {
+                                smc.data = retry.data;
+                                count = retry_count;
                             }
                         }
-                        Err(e) => warn!("[session] SMC autopatching failed ({}): {:?}", e, patch_path),
-                    },
+                        if count > 0 {
+                            info!("[session] SMC autopatching applied: {} match(es) from {:?}", count, patch_path);
+                        } else {
+                            info!("[session] SMC autopatching: 0 matches from {:?}", patch_path);
+                        }
+                    }
                     Err(_) => warn!("[session] SMC autopatching patch file missing: {:?}", patch_path),
                 }
             }
@@ -1265,7 +1274,7 @@ impl Session {
         if let Some(nand) = &mut self.active_nand {
             info!("[session] Applying signature batch to SMC...");
             let mut smc = crate::builder::chain::smc::RawSmc::new(nand.extra.smc.clone());
-            smc.unscramble();
+            smc.ensure_decrypted();
 
             let count = crate::core::images::signature::Signature::apply_batch(&mut smc.data, json_str)?;
 

@@ -232,7 +232,9 @@ pub fn decrypt_chain(
     };
 
     info!("[builder] Decrypting CD and CE...");
-    cd.decrypt(&cd_key, None);
+    if !cd.is_decrypted() {
+        cd.decrypt(&cd_key, None);
+    }
     ce.decrypt(&cd_key);
 
     if let (Some(cf), Some(cg)) = (cf_0, cg_0) {
@@ -291,6 +293,7 @@ pub fn encrypt_chain(
     mut cg_1: Option<&mut cg::BootloaderCg>,
     smc: &mut RawSmc,
     cpukey: &[u8; 16],
+    keep_cd_plaintext: bool,
 ) -> Result<(), String> {
     let mut cb_nonce = [0u8; 16];
     if cb.data.len() >= 16 {
@@ -363,8 +366,12 @@ pub fn encrypt_chain(
         cb_b_bl.decrypt_v1(&cb_key, cpukey);
         info!("[builder] CB_B re-encrypted.");
     }
-    cd.decrypt(&cd_key, None);
-    info!("[builder] CD re-encrypted.");
+    if keep_cd_plaintext {
+        info!("[builder] CD left plaintext.");
+    } else {
+        cd.decrypt(&cd_key, None);
+        info!("[builder] CD re-encrypted.");
+    }
     cb.decrypt(&ONEBL_KEY);
     info!("[builder] CB re-encrypted.");
 

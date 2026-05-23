@@ -95,9 +95,9 @@ cargo build --no-default-features --features ffi,rhai
 | **Xenon** |  |  |  |  |  |  |  |  |  |  |  |
 | **Zephyr** |  |  |  |  |  |  |  |  |  |  |  |
 | **Falcon** |  |  |  |  |  |  |  |  |  |  |  |
-| **Jasper** |  |  |  |  |  |  |  |  |  |  |  |
+| **Jasper** |  |  |  |  |  |  | - |  |  |  |  |
 | **Jasper BB** |  |  |  |  |  |  |  |  |  |  |  |
-| **Trinity** |  |  |  |  |  |  |  |  |  |  |  |
+| **Trinity** |  |  |  |  |  |  | - |  |  |  |  |
 | **Trinity BB** |  |  |  |  |  |  |  |  |  |  |  |
 | **Corona** |  |  |  |  |  |  |  |  |  |  |  |
 | **Corona 4G** |  |  |  |  |  |  |  |  |  |  |  |

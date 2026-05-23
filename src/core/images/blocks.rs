@@ -128,11 +128,7 @@ pub fn read_logical_from_physical(image: &[u8], logical_offset: usize, len: usiz
         let phys_offset = match layout {
             NandLayout::Emmc => current_logical_offset,
             NandLayout::Xsb | NandLayout::Sb => (current_page * layout.physical_page_size()) + page_offset,
-            NandLayout::Bb => {
-                let group = current_page / 4;
-                let page_in_group = current_page % 4;
-                (group * 0x840) + (page_in_group * 0x200) + page_offset
-            }
+            NandLayout::Bb => (current_page * layout.physical_page_size()) + page_offset,
         };
 
         let chunk_len = logical_page_size - page_offset;
@@ -169,11 +165,7 @@ pub fn write_logical_data(image: &mut [u8], logical_offset: usize, data: &[u8], 
         let phys_offset = match layout {
             NandLayout::Emmc => current_logical_byte,
             NandLayout::Xsb | NandLayout::Sb => (current_page * layout.physical_page_size()) + page_offset,
-            NandLayout::Bb => {
-                let group = current_page / 4;
-                let page_in_group = current_page % 4;
-                (group * 0x840) + (page_in_group * 0x200) + page_offset
-            }
+            NandLayout::Bb => (current_page * layout.physical_page_size()) + page_offset,
         };
 
         let chunk_len = logical_page_size - page_offset;
@@ -210,7 +202,10 @@ impl NandLayout {
     pub fn reserve_start(&self, _image_len: usize) -> usize {
         match self {
             NandLayout::Xsb | NandLayout::Sb => 0x3E0,
-            NandLayout::Bb => 0x1E0,
+            NandLayout::Bb => {
+                let total = self.total_blocks(_image_len);
+                total.saturating_sub(0x20)
+            }
             NandLayout::Emmc => 0,
         }
     }
@@ -311,73 +306,43 @@ pub fn add_spare(
 
     match layout {
         NandLayout::Bb => {
-            // Big-block: pack 4 pages + 0x40 spare into 0x840-byte chunks
-            let chunk_data = 0x800usize; // 4 pages × 0x200
-            let chunk_spare = 0x40usize; // 4 spare regions × 0x10
-            let chunk_total = chunk_data + chunk_spare;
-            let chunks = (total_pages + 3) / 4;
-
-            let mut result = vec![0u8; chunks * chunk_total];
+            let p_page_size = layout.physical_page_size();
+            let mut result = vec![0u8; total_pages * p_page_size];
             let block_number_base = blockstart / layout.block_size();
 
-            for chunk in 0..chunks {
-                let chunk_offset = chunk * chunk_total;
-                let page_base = chunk * 4;
+            for i in 0..total_pages {
+                let read_offset = i * page_size;
+                let write_offset = i * p_page_size;
+                let page_slice = &mut result[write_offset..write_offset + p_page_size];
+                page_slice[..page_size].fill(0);
 
-                for page_in_chunk in 0..4 {
-                    let page_idx = page_base + page_in_chunk;
-                    if page_idx >= total_pages {
-                        break;
-                    }
-
-                    let read_offset = page_idx * page_size;
-                    let mut data_block = [0u8; 0x200];
-                    let bytes_remaining = image.len().saturating_sub(read_offset);
-                    if bytes_remaining > 0 {
-                        let sz = std::cmp::min(0x200, bytes_remaining);
-                        data_block[..sz].copy_from_slice(&image[read_offset..read_offset + sz]);
-                    }
-
-                    let data_offset = chunk_offset + (page_in_chunk * 0x200);
-                    result[data_offset..data_offset + 0x200].copy_from_slice(&data_block);
-
-                    let mut spare = [0u8; 16];
-                    spare[0] = 0xFF;
-                    let val = (page_idx / 256) + block_number_base;
-
-                    if let Some(fs) = mobile_meta.and_then(|m| m.get(&page_idx)).or_else(|| fs_meta.and_then(|m| m.get(&val))) {
-                        spare[1] = (val & 0xFF) as u8;
-                        spare[2] = ((val >> 8) & 0xFF) as u8;
-                        spare[5] = (fs.sequence & 0xFF) as u8;
-                        spare[4] = ((fs.sequence >> 8) & 0xFF) as u8;
-                        spare[3] = ((fs.sequence >> 16) & 0xFF) as u8;
-                        spare[7] = (fs.size & 0xFF) as u8;
-                        spare[8] = ((fs.size >> 8) & 0xFF) as u8;
-                        spare[9] = fs.page_count;
-                        spare[12] = fs.block_type;
-                    } else {
-                        spare[1] = (val & 0xFF) as u8;
-                        spare[2] = ((val >> 8) & 0xFF) as u8;
-                    }
-
-                    let spare_offset = chunk_offset + 0x800 + (page_in_chunk * 0x10);
-                    result[spare_offset..spare_offset + 0x10].copy_from_slice(&spare);
+                let bytes_remaining = image.len().saturating_sub(read_offset);
+                if bytes_remaining > 0 {
+                    let sz = std::cmp::min(page_size, bytes_remaining);
+                    page_slice[..sz].copy_from_slice(&image[read_offset..read_offset + sz]);
                 }
 
-                for page_in_chunk in 0..4 {
-                    let page_idx = page_base + page_in_chunk;
-                    if page_idx >= total_pages {
-                        break;
-                    }
-                    let page_size_512 = 0x200;
-                    let page_start = chunk_offset + (page_in_chunk * page_size_512);
-                    let spare_start = chunk_offset + 0x800 + (page_in_chunk * 0x10);
-                    let mut page_with_spare = [0u8; 0x210];
-                    page_with_spare[..0x200].copy_from_slice(&result[page_start..page_start + 0x200]);
-                    page_with_spare[0x200..0x210].copy_from_slice(&result[spare_start..spare_start + 0x10]);
-                    calculate_ecc(&mut page_with_spare);
-                    result[spare_start + 0x0C..spare_start + 0x10].copy_from_slice(&page_with_spare[0x20C..0x210]);
+                let mut spare = [0u8; 16];
+                spare[0] = 0xFF;
+                let val = (i / layout.logical_pages_per_block()) + block_number_base;
+
+                if let Some(fs) = mobile_meta.and_then(|m| m.get(&i)).or_else(|| fs_meta.and_then(|m| m.get(&val))) {
+                    spare[1] = (val & 0xFF) as u8;
+                    spare[2] = ((val >> 8) & 0xFF) as u8;
+                    spare[5] = (fs.sequence & 0xFF) as u8;
+                    spare[4] = ((fs.sequence >> 8) & 0xFF) as u8;
+                    spare[3] = ((fs.sequence >> 16) & 0xFF) as u8;
+                    spare[7] = (fs.size & 0xFF) as u8;
+                    spare[8] = ((fs.size >> 8) & 0xFF) as u8;
+                    spare[9] = fs.page_count;
+                    spare[12] = fs.block_type;
+                } else {
+                    spare[1] = (val & 0xFF) as u8;
+                    spare[2] = ((val >> 8) & 0xFF) as u8;
                 }
+
+                page_slice[page_size..p_page_size].copy_from_slice(&spare);
+                calculate_ecc(page_slice);
             }
             result
         }
@@ -541,10 +506,6 @@ pub fn detect_meta_type(image: &[u8], layout: NandLayout) -> SpareMetaType {
     if !has_spare(image) {
         return SpareMetaType::MetaTypeNone;
     }
-    if image.len() < 0x4410 {
-        return SpareMetaType::MetaTypeNone;
-    }
-
     let read_spare = |offset: usize| -> Option<[u8; 16]> {
         if offset + 16 <= image.len() {
             let mut s = [0u8; 16];
@@ -557,7 +518,9 @@ pub fn detect_meta_type(image: &[u8], layout: NandLayout) -> SpareMetaType {
 
     // Try spare at block 1, page 0
     let spare = match layout {
-        NandLayout::Bb => read_spare(0x21800),
+        NandLayout::Bb => {
+            read_spare(layout.block_size() + layout.page_size())
+        }
         _ => read_spare(0x4400),
     };
 
@@ -623,15 +586,13 @@ pub fn remove_spare(image: &[u8]) -> Vec<u8> {
 
     match layout {
         NandLayout::Bb => {
-            let chunk_in = 0x840usize;
-            let chunk_out = 0x800usize;
-            let chunks = image.len() / chunk_in;
-            let mut result = vec![0u8; chunks * chunk_out];
+            let p_page = layout.physical_page_size();
+            let l_page = layout.page_size();
+            let pages = image.len() / p_page;
+            let mut result = vec![0u8; pages * l_page];
 
-            for i in 0..chunks {
-                let in_offset = i * chunk_in;
-                let out_offset = i * chunk_out;
-                result[out_offset..out_offset + chunk_out].copy_from_slice(&image[in_offset..in_offset + chunk_out]);
+            for i in 0..pages {
+                result[i * l_page..(i + 1) * l_page].copy_from_slice(&image[i * p_page..i * p_page + l_page]);
             }
             result
         }
@@ -661,13 +622,9 @@ pub fn get_page_spare(image: &[u8], page: usize, layout: &NandLayout) -> Option<
 
     match layout {
         NandLayout::Bb => {
-            let group = page / 4;
-            let page_in_group = page % 4;
-            let group_offset = group * 0x840;
-            let spare_offset = group_offset + 0x800 + (page_in_group * 0x10);
-
-            if spare_offset + spare_size <= image.len() {
-                Some(image[spare_offset..spare_offset + spare_size].to_vec())
+            let offset = (page * layout.physical_page_size()) + layout.page_size();
+            if offset + spare_size <= image.len() {
+                Some(image[offset..offset + spare_size].to_vec())
             } else {
                 None
             }
@@ -692,26 +649,32 @@ pub fn is_bad_block(image: &[u8], block_number: usize, layout: &NandLayout) -> b
         return false;
     }
 
-    let p_page_size = layout.physical_page_size();
-    let l_page_size = layout.page_size();
-
     match layout {
         NandLayout::Bb => {
-            let groups_per_block = block_size / 0x840;
-            for group in 0..groups_per_block {
-                let group_offset = offset + (group * 0x840);
-                if group_offset + 0x840 > image.len() {
+            let pages_per_block = layout.logical_pages_per_block();
+            let p_page_size = layout.physical_page_size();
+            let l_page_size = layout.page_size();
+            for p in 0..2 {
+                if p >= pages_per_block {
                     break;
                 }
-
-                // Bad-block marker is at spare[0] for big-block
-                if image.get(group_offset + 0x800).copied().unwrap_or(0) != 0xFF {
+                let page_offset = offset + (p * p_page_size);
+                if page_offset + p_page_size > image.len() {
+                    break;
+                };
+                let spare = &image[page_offset + l_page_size..page_offset + p_page_size];
+                if spare[..12].iter().all(|&b| b == 0x00) {
+                    continue;
+                }
+                if image[page_offset + marker_offset] != 0xFF {
                     return true;
                 }
             }
             false
         }
         NandLayout::Xsb | NandLayout::Sb => {
+            let p_page_size = layout.physical_page_size();
+            let l_page_size = layout.page_size();
             let mut i = 0;
             while i + p_page_size <= block_size {
                 let page_offset = offset + i;
@@ -759,7 +722,10 @@ impl BlockMap {
         info!("[blocks] Found {} Bad Physical Blocks. Attempting Healing/Remapping...", bad_indices.len());
         let remapped = resolve_remapped_blocks(image, &bad_indices, &self.layout)?;
         for (i, &bad_block) in bad_indices.iter().enumerate() {
-            let target = remapped[i].ok_or_else(|| format!("Bad block {} not remapped", bad_block))?;
+            let Some(target) = remapped[i] else {
+                info!("[blocks] Bad Block {} has no remap entry; leaving as-is", bad_block);
+                continue;
+            };
             info!("[blocks] Remapping Bad Block {} -> Reserved Physical Block {}", bad_block, target);
             let b_size = self.layout.block_size();
             let mut buf = vec![0u8; b_size];
@@ -859,7 +825,7 @@ impl LbaMap {
 
     pub fn find_available_reserve_block(&self, layout: &NandLayout, image_len: usize) -> Option<usize> {
         let res_start = layout.reserve_start(image_len);
-        let max_blocks = layout.max_blocks();
+        let max_blocks = layout.total_blocks(image_len);
 
         for block_idx in (0..0x20).rev() {
             let physical_block = res_start + block_idx;

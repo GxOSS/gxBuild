@@ -198,6 +198,16 @@ impl RawSmc {
         smc
     }
 
+    fn looks_decrypted(&self) -> bool {
+        if self.data.len() < 0x103 {
+            return false;
+        }
+        let type_byte = self.data[0x100];
+        let major = self.data[0x101];
+        let minor = self.data[0x102];
+        major != 0 && major != 0xFF && minor != 0xFF && type_byte != 0 && type_byte != 0xFF
+    }
+
     pub fn populate_metadata(&mut self) {
         if self.data.len() < 0x103 {
             return;
@@ -290,6 +300,21 @@ impl RawSmc {
     }
 
     pub fn decrypt(&mut self) {
+        self.unscramble();
+        smc_crypt(&mut self.data, false);
+        self.populate_metadata();
+    }
+
+    pub fn ensure_decrypted(&mut self) {
+        self.unscramble();
+        self.populate_metadata();
+        if !self.looks_decrypted() {
+            smc_crypt(&mut self.data, false);
+            self.populate_metadata();
+        }
+    }
+
+    pub fn force_decrypt(&mut self) {
         self.unscramble();
         smc_crypt(&mut self.data, false);
         self.populate_metadata();

@@ -2488,6 +2488,7 @@ impl NandSkeleton {
         }
 
         let mut smc = crate::builder::chain::smc::RawSmc::new(skel.extra.smc.clone());
+        smc.ensure_decrypted();
 
         if let Some(rebooter) = skel.rebooter.as_mut() {
             encrypt_rebooter_chain(
@@ -2504,6 +2505,9 @@ impl NandSkeleton {
             skel.prepare_for_assembly()?;
 
             info!("[builder] Re-encrypting bootloader chain...");
+            let profile_l = skel.options.image_profile.to_ascii_lowercase();
+            let profile_base = profile_l.split('_').next().unwrap_or("");
+            let keep_cd_plaintext = matches!(profile_base, "glitch" | "glitch1" | "glitch2" | "glitch3");
             encrypt_chain(
                 skel.bootloaders
                     .cb_a
@@ -2521,6 +2525,7 @@ impl NandSkeleton {
                 skel.update.cg_1.as_mut(),
                 &mut smc,
                 &cpukey,
+                keep_cd_plaintext,
             )?;
         }
 

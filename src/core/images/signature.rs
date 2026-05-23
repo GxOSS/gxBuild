@@ -44,8 +44,21 @@ impl Signature {
 
     /// Parses a simple JSON-like map of "pattern": "replacement" and applies it to the data
     pub fn apply_batch(data: &mut [u8], json_str: &str) -> Result<usize, String> {
-        let mut total_matches = 0;
+        if let Ok(map) = serde_json::from_str::<std::collections::BTreeMap<String, String>>(json_str) {
+            let mut total_matches = 0;
+            for (pattern_hex, replacement_hex) in map {
+                if pattern_hex.is_empty() || replacement_hex.is_empty() {
+                    continue;
+                }
+                match Self::from_hex(None, &pattern_hex, &replacement_hex) {
+                    Ok(sig) => total_matches += sig.apply(data),
+                    Err(e) => warn!("[signature] Skipping invalid signature pair in batch: {}", e),
+                }
+            }
+            return Ok(total_matches);
+        }
 
+        let mut total_matches = 0;
         let content = json_str.trim().trim_start_matches('{').trim_end_matches('}');
         for pair in content.split(',') {
             let parts: Vec<&str> = pair.split(':').collect();

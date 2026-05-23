@@ -15,7 +15,7 @@ pub struct FsSpareData {
     pub block_id: u16,
     pub fs_sequence: u32,
     pub fs_size: u16,
-    pub fs_page_count: u8,
+    pub fs_page_count: u16,
     pub fs_block_type: u8,
     pub bad_block: bool,
 }
@@ -40,7 +40,7 @@ impl FsSpareData {
                 let fs_sequence = (data[2] as u32) | ((data[3] as u32) << 8) | ((data[4] as u32) << 16);
                 let bad_block = data[5] != 0xFF;
                 let fs_size = u16::from_be_bytes([data[8], data[7]]);
-                let fs_page_count = data[9];
+                let fs_page_count = data[9] as u16;
                 let fs_block_type = data[12] & 0x3F;
                 FsSpareData { block_id, fs_sequence, fs_size, fs_page_count, fs_block_type, bad_block }
             }
@@ -49,7 +49,7 @@ impl FsSpareData {
                 let fs_sequence = (data[0] as u32) | ((data[3] as u32) << 8) | ((data[4] as u32) << 16);
                 let bad_block = data[5] != 0xFF;
                 let fs_size = u16::from_be_bytes([data[8], data[7]]);
-                let fs_page_count = data[9];
+                let fs_page_count = data[9] as u16;
                 let fs_block_type = data[12] & 0x3F;
                 FsSpareData { block_id, fs_sequence, fs_size, fs_page_count, fs_block_type, bad_block }
             }
@@ -58,7 +58,7 @@ impl FsSpareData {
                 let fs_sequence = (data[5] as u32) | ((data[4] as u32) << 8) | ((data[3] as u32) << 16);
                 let bad_block = data[0] != 0xFF;
                 let fs_size = u16::from_be_bytes([data[8], data[7]]);
-                let fs_page_count = data[9] * 4;
+                let fs_page_count = (data[9] as u16) * 4;
                 let fs_block_type = data[12] & 0x3F;
                 FsSpareData { block_id, fs_sequence, fs_size, fs_page_count, fs_block_type, bad_block }
             }
