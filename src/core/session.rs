@@ -1601,7 +1601,7 @@ impl Session {
                             let mobile_meta = if nand.options.nomobile {
                                 std::collections::HashMap::new()
                             } else {
-                                nand.mobile.collect_spare_meta()
+                                nand.mobile.collect_spare_meta(&layout)
                             };
                             let finalized_bytes = crate::core::images::blocks::NandProcessor::finalize_nand(
                                 &clean_bytes,
@@ -2064,7 +2064,17 @@ impl Session {
             InternalCommand::FinalizeFlashfs => {
                 if let Some(nand) = &mut self.active_nand {
                     let fs_start: u16 = match nand.layout {
-                        crate::core::images::blocks::NandLayout::Bb => 0x1E0,
+                        crate::core::images::blocks::NandLayout::Bb => {
+                            let image_len = nand.image.len();
+                            let reserve_start = nand.layout.reserve_start(image_len);
+                            let scanned = nand.flashfs.root.block_number;
+                            if scanned > 0 && (scanned as usize) < reserve_start {
+                                scanned as u16
+                            } else {
+                                let fallback = reserve_start.saturating_sub(0x80);
+                                std::cmp::max(4u16, fallback as u16)
+                            }
+                        }
                         crate::core::images::blocks::NandLayout::Emmc => {
                             crate::builder::filesystem::corona::default_emmc_fs_block(nand.header.fs_addr.get(), &nand.corona_fs)
                         }

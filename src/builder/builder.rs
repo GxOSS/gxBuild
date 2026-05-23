@@ -1609,7 +1609,7 @@ impl NandSkeleton {
         let (fs_addr_calc, smc_config_offset, phys_fs_block) =
             LayoutCalculator::calculate(SouthbridgeType::from(self.options.motherboard), chain_profile, *layout);
         let mut target_fs_block = phys_fs_block as i32;
-        if !self.flashfs.root.entries.is_empty() && matches!(layout, NandLayout::Sb | NandLayout::Xsb) && target_fs_block >= 0 {
+        if !self.flashfs.root.entries.is_empty() && matches!(layout, NandLayout::Sb | NandLayout::Xsb | NandLayout::Bb) && target_fs_block >= 0 {
             let page_size = 0x200usize;
             let pages_per_block = layout.logical_pages_per_block();
             let logical_block_size = pages_per_block * page_size;
@@ -1908,7 +1908,15 @@ impl NandSkeleton {
         let build_profile_l = build_profile.to_ascii_lowercase();
 
         let forensic_cf_default = match layout {
-            NandLayout::Bb => 0x80000,
+            NandLayout::Bb => {
+                // XeLL GG payloads are typically 0x40000 bytes at 0x70000, so CF/CG must not start at 0x80000
+                // (it would be overwritten by the payload). xeBuild uses 0xC0000 for BB glitch builds.
+                if build_profile_l.contains("glitch") {
+                    0xC0000
+                } else {
+                    0x80000
+                }
+            }
             NandLayout::Emmc => 0xB0000,
             NandLayout::Sb | NandLayout::Xsb => {
                 if build_profile_l == "glitch2m" || build_profile_l.contains("glitch2m") || build_profile_l == "devgl" || build_profile_l == "xdkbuild" {
@@ -1956,7 +1964,7 @@ impl NandSkeleton {
         let cf1 = self.update.cf_1.as_ref().map(|b| b.serialize());
         let cg1 = self.update.cg_1.as_ref().map(|b| b.serialize());
 
-        if !self.flashfs.root.entries.is_empty() && matches!(layout, NandLayout::Sb | NandLayout::Xsb) && target_fs_block >= 0 {
+        if !self.flashfs.root.entries.is_empty() && matches!(layout, NandLayout::Sb | NandLayout::Xsb | NandLayout::Bb) && target_fs_block >= 0 {
             let page_size = 0x200usize;
             let pages_per_block = layout.logical_pages_per_block();
             let logical_block_size = pages_per_block * page_size;
@@ -2386,7 +2394,7 @@ impl NandSkeleton {
 
         if !self.options.nomobile && self.mobile.latest.iter().any(|s| s.is_some()) {
             let fs_start: u16 = match layout {
-                NandLayout::Bb => 0x1E0,
+                NandLayout::Bb => std::cmp::max(4u16, self.flashfs.root.block_number.max(0) as u16),
                 _ => 0x4E,
             };
             if self.flashfs.root.block_map.is_empty() {

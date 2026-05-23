@@ -112,12 +112,122 @@ impl NandLayout {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BbPhysicalFormat {
+    PerPage,
+    Chunked,
+}
+
+fn bb_spare_offset_per_page(page: usize) -> usize {
+    (page * 0x210) + 0x200
+}
+
+fn bb_spare_offset_chunked(page: usize) -> usize {
+    let chunk = page / 4;
+    let idx = page % 4;
+    (chunk * 0x840) + 0x800 + (idx * 0x10)
+}
+
+fn bb_data_offset_chunked(page: usize) -> usize {
+    let chunk = page / 4;
+    let idx = page % 4;
+    (chunk * 0x840) + (idx * 0x200)
+}
+
+fn bb_meta2_block_id(spare: &[u8]) -> Option<u16> {
+    if spare.len() < 3 {
+        return None;
+    }
+    Some((spare[1] as u16) | (((spare[2] as u16) & 0xF) << 8))
+}
+
+fn bb_score_spare(candidate: &[u8]) -> i32 {
+    if candidate.len() < 16 {
+        return i32::MIN / 2;
+    }
+
+    if candidate[..12].iter().all(|&b| b == 0x00) {
+        return -10;
+    }
+
+    let mut score = 0;
+    if candidate[0] == 0xFF {
+        score += 5;
+    } else if candidate[0] == 0x00 {
+        score -= 1;
+    } else {
+        score -= 2;
+    }
+
+    if candidate[3] == 0x00 && candidate[4] == 0x00 {
+        score += 1;
+    }
+    if candidate[5] == 0xFF {
+        score += 1;
+    }
+
+    let ecc = &candidate[0x0C..0x10];
+    if ecc.iter().all(|&b| b == 0x00) || ecc.iter().all(|&b| b == 0xFF) {
+        score -= 1;
+    } else {
+        score += 1;
+    }
+
+    score
+}
+
+fn detect_bb_physical_format(image: &[u8]) -> BbPhysicalFormat {
+    let mut per_page_hits = 0i32;
+    let mut chunked_hits = 0i32;
+
+    let blocks_to_sample = 64usize;
+    for block in 0..blocks_to_sample {
+        let page0 = block * 256;
+
+        let a_off = bb_spare_offset_per_page(page0);
+        if a_off + 16 <= image.len() {
+            let s = &image[a_off..a_off + 16];
+            if bb_score_spare(s) > 0 {
+                per_page_hits += 1;
+            }
+            if s[0] == 0xFF {
+                if let Some(id) = bb_meta2_block_id(s) {
+                    if id == (block as u16) {
+                        per_page_hits += 4;
+                    }
+                }
+            }
+        }
+
+        let b_off = bb_spare_offset_chunked(page0);
+        if b_off + 16 <= image.len() {
+            let s = &image[b_off..b_off + 16];
+            if bb_score_spare(s) > 0 {
+                chunked_hits += 1;
+            }
+            if s[0] == 0xFF {
+                if let Some(id) = bb_meta2_block_id(s) {
+                    if id == (block as u16) {
+                        chunked_hits += 4;
+                    }
+                }
+            }
+        }
+    }
+
+    if chunked_hits > per_page_hits {
+        return BbPhysicalFormat::Chunked;
+    }
+    BbPhysicalFormat::PerPage
+}
+
 pub fn read_logical_from_physical(image: &[u8], logical_offset: usize, len: usize, layout: NandLayout) -> Option<Vec<u8>> {
     if image.is_empty() || len == 0 {
         return None;
     }
 
     let logical_page_size = layout.page_size();
+    let bb_fmt = if layout == NandLayout::Bb { Some(detect_bb_physical_format(image)) } else { None };
     let mut result = vec![0u8; len];
     let mut cur = 0;
 
@@ -128,7 +238,10 @@ pub fn read_logical_from_physical(image: &[u8], logical_offset: usize, len: usiz
         let phys_offset = match layout {
             NandLayout::Emmc => current_logical_offset,
             NandLayout::Xsb | NandLayout::Sb => (current_page * layout.physical_page_size()) + page_offset,
-            NandLayout::Bb => (current_page * layout.physical_page_size()) + page_offset,
+            NandLayout::Bb => match bb_fmt.unwrap_or(BbPhysicalFormat::PerPage) {
+                BbPhysicalFormat::PerPage => (current_page * layout.physical_page_size()) + page_offset,
+                BbPhysicalFormat::Chunked => bb_data_offset_chunked(current_page) + page_offset,
+            },
         };
 
         let chunk_len = logical_page_size - page_offset;
@@ -155,6 +268,7 @@ pub fn write_logical_data(image: &mut [u8], logical_offset: usize, data: &[u8], 
     }
 
     let logical_page_size = layout.page_size();
+    let bb_fmt = if layout == NandLayout::Bb { Some(detect_bb_physical_format(image)) } else { None };
     let mut cur = 0;
     let len = data.len();
 
@@ -165,7 +279,10 @@ pub fn write_logical_data(image: &mut [u8], logical_offset: usize, data: &[u8], 
         let phys_offset = match layout {
             NandLayout::Emmc => current_logical_byte,
             NandLayout::Xsb | NandLayout::Sb => (current_page * layout.physical_page_size()) + page_offset,
-            NandLayout::Bb => (current_page * layout.physical_page_size()) + page_offset,
+            NandLayout::Bb => match bb_fmt.unwrap_or(BbPhysicalFormat::PerPage) {
+                BbPhysicalFormat::PerPage => (current_page * layout.physical_page_size()) + page_offset,
+                BbPhysicalFormat::Chunked => bb_data_offset_chunked(current_page) + page_offset,
+            },
         };
 
         let chunk_len = logical_page_size - page_offset;
@@ -425,6 +542,13 @@ pub fn add_spare(
 
 pub fn has_spare(image: &[u8]) -> bool {
     if image.len() > 0x210 {
+        // Quick geometry guard: logical images (no spare/ECC) typically are not aligned
+        // to physical page sizes (0x210 for 512+16, 0x840 for 2048+64).
+        // This avoids false positives when heuristic byte-pattern scans happen to match.
+        if (image.len() % 0x210 != 0) && (image.len() % 0x840 != 0) {
+            return false;
+        }
+
         let mut counter = 0;
         let mut i: usize = 0x200;
 
@@ -518,9 +642,7 @@ pub fn detect_meta_type(image: &[u8], layout: NandLayout) -> SpareMetaType {
 
     // Try spare at block 1, page 0
     let spare = match layout {
-        NandLayout::Bb => {
-            read_spare(layout.block_size() + layout.page_size())
-        }
+        NandLayout::Bb => get_page_spare(image, layout.logical_pages_per_block(), &layout).and_then(|v| v.try_into().ok()),
         _ => read_spare(0x4400),
     };
 
@@ -586,15 +708,30 @@ pub fn remove_spare(image: &[u8]) -> Vec<u8> {
 
     match layout {
         NandLayout::Bb => {
-            let p_page = layout.physical_page_size();
-            let l_page = layout.page_size();
-            let pages = image.len() / p_page;
-            let mut result = vec![0u8; pages * l_page];
-
-            for i in 0..pages {
-                result[i * l_page..(i + 1) * l_page].copy_from_slice(&image[i * p_page..i * p_page + l_page]);
+            match detect_bb_physical_format(image) {
+                BbPhysicalFormat::Chunked => {
+                    let chunk_in = 0x840usize;
+                    let chunk_out = 0x800usize;
+                    let chunks = image.len() / chunk_in;
+                    let mut result = vec![0u8; chunks * chunk_out];
+                    for i in 0..chunks {
+                        let in_offset = i * chunk_in;
+                        let out_offset = i * chunk_out;
+                        result[out_offset..out_offset + chunk_out].copy_from_slice(&image[in_offset..in_offset + chunk_out]);
+                    }
+                    result
+                }
+                BbPhysicalFormat::PerPage => {
+                    let p_page = layout.physical_page_size();
+                    let l_page = layout.page_size();
+                    let pages = image.len() / p_page;
+                    let mut result = vec![0u8; pages * l_page];
+                    for i in 0..pages {
+                        result[i * l_page..(i + 1) * l_page].copy_from_slice(&image[i * p_page..i * p_page + l_page]);
+                    }
+                    result
+                }
             }
-            result
         }
         NandLayout::Xsb | NandLayout::Sb => {
             let p_page = layout.physical_page_size();
@@ -622,7 +759,11 @@ pub fn get_page_spare(image: &[u8], page: usize, layout: &NandLayout) -> Option<
 
     match layout {
         NandLayout::Bb => {
-            let offset = (page * layout.physical_page_size()) + layout.page_size();
+            let fmt = detect_bb_physical_format(image);
+            let offset = match fmt {
+                BbPhysicalFormat::PerPage => bb_spare_offset_per_page(page),
+                BbPhysicalFormat::Chunked => bb_spare_offset_chunked(page),
+            };
             if offset + spare_size <= image.len() {
                 Some(image[offset..offset + spare_size].to_vec())
             } else {
@@ -643,7 +784,6 @@ pub fn get_page_spare(image: &[u8], page: usize, layout: &NandLayout) -> Option<
 
 pub fn is_bad_block(image: &[u8], block_number: usize, layout: &NandLayout) -> bool {
     let block_size = layout.block_size();
-    let marker_offset = layout.marker_offset();
     let offset = block_number * block_size;
     if offset + block_size > image.len() {
         return false;
@@ -652,27 +792,27 @@ pub fn is_bad_block(image: &[u8], block_number: usize, layout: &NandLayout) -> b
     match layout {
         NandLayout::Bb => {
             let pages_per_block = layout.logical_pages_per_block();
-            let p_page_size = layout.physical_page_size();
-            let l_page_size = layout.page_size();
-            for p in 0..2 {
-                if p >= pages_per_block {
-                    break;
-                }
-                let page_offset = offset + (p * p_page_size);
-                if page_offset + p_page_size > image.len() {
-                    break;
-                };
-                let spare = &image[page_offset + l_page_size..page_offset + p_page_size];
-                if spare[..12].iter().all(|&b| b == 0x00) {
-                    continue;
-                }
-                if image[page_offset + marker_offset] != 0xFF {
-                    return true;
-                }
+            if pages_per_block == 0 {
+                return false;
+            }
+
+            let page = block_number * pages_per_block;
+            let Some(spare) = get_page_spare(image, page, layout) else {
+                return false;
+            };
+            if spare.len() < 16 {
+                return false;
+            }
+            if spare[..12].iter().all(|&b| b == 0x00) {
+                return false;
+            }
+            if spare[0] != 0xFF {
+                return true;
             }
             false
         }
         NandLayout::Xsb | NandLayout::Sb => {
+            let marker_offset = layout.marker_offset();
             let p_page_size = layout.physical_page_size();
             let l_page_size = layout.page_size();
             let mut i = 0;
