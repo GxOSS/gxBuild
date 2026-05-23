@@ -861,6 +861,122 @@ impl NandSkeleton {
         Ok(())
     }
 
+    pub fn parse_clean_encrypted(image: Vec<u8>, layout: NandLayout, flashfs: FlashFS) -> Result<Self, String> {
+        let header_sz = std::mem::size_of::<NandHeader>();
+        if image.len() < header_sz {
+            return Err(format!("Image too small for header: {} bytes (need {})", image.len(), header_sz));
+        }
+        let header = NandHeader::read_from_prefix(&image[..header_sz])
+            .map_err(|e| format!("Failed to parse NAND header: {}", e))?
+            .0;
+        header.validate()?;
+        header.print_info();
+
+        let kv_addr = header.kv_addr.get() as usize;
+        let kv_size = header.kv_size.get() as usize;
+        if kv_size != 0x4000 {
+            return Err(format!("Invalid KV size: 0x{:X} (expected 0x4000)", kv_size));
+        }
+        if kv_addr.checked_add(kv_size).ok_or("KV offset overflow")? > image.len() {
+            return Err(format!("KV out of bounds: offset 0x{:X} + size 0x{:X} > image 0x{:X}", kv_addr, kv_size, image.len()));
+        }
+        info!("[builder] Extracting Keyvault (encrypted) (Addr: 0x{:X}, Size: 0x{:X})...", kv_addr, kv_size);
+        let kv = crate::builder::chain::kv::Keyvault::parse(&image[kv_addr..kv_addr + kv_size])?;
+
+        let smc_offset = header.smc_boot_offset.get() as usize;
+        let smc_size = header.smc_boot_size.get() as usize;
+        if smc_offset.checked_add(smc_size).ok_or("SMC offset overflow")? > image.len() {
+            return Err(format!("SMC out of bounds: offset 0x{:X} + size 0x{:X} > image 0x{:X}", smc_offset, smc_size, image.len()));
+        }
+        info!("[builder] Extracting SMC (encrypted) (Addr: 0x{:X}, Size: 0x{:X})...", smc_offset, smc_size);
+        let smc_data = image[smc_offset..smc_offset + smc_size].to_vec();
+
+        let config_offset = header.smc_config_offset.get() as usize;
+        let config_size = 0x10000;
+        let config_data = if config_offset > 0 && config_offset + config_size <= image.len() {
+            info!("[builder] Extracting SMC Config (Addr: 0x{:X}, Size: 0x{:X})...", config_offset, config_size);
+            image[config_offset..config_offset + config_size].to_vec()
+        } else {
+            Vec::new()
+        };
+
+        let mut extra = NandExtra {
+            smc: smc_data,
+            smc_metadata: None,
+            smc_config: config_data,
+            keyvault: kv.data.clone(),
+            fcrt: None,
+            power_on_cause_a: 0,
+            power_on_cause_b: 0,
+        };
+
+        info!("[builder] Walking bootloader chain (encrypted) starting at offset 0x{:X}...", header.cb_offset());
+        let (bootloaders, update) = Self::parse_bootloader_chain(&image, header.cb_offset() as usize, header.cf_offset.get() as usize, &flashfs)?;
+
+        let motherboard = MotherboardType::Unknown;
+
+        let mut final_flashfs = flashfs;
+        if matches!(layout, NandLayout::Sb | NandLayout::Xsb) {
+            let sb = SouthbridgeType::from(motherboard);
+            let chain_profile = if bootloaders.cb_b.is_some() { "split" } else { "single" };
+            let (_fs_root_addr, _smc_cfg, phys_fs_block) = LayoutCalculator::calculate(sb, chain_profile, layout);
+            if phys_fs_block > 0 {
+                final_flashfs.root.block_number = phys_fs_block as i32;
+                final_flashfs.root.read(&image, &layout);
+            }
+        }
+
+        let fcrt_from_nand = final_flashfs
+            .root
+            .entries
+            .iter()
+            .find(|e| !e.deleted && e.file_name.eq_ignore_ascii_case("fcrt.bin"))
+            .map(|e| e.data.clone());
+        if extra.fcrt.is_none() {
+            extra.fcrt = fcrt_from_nand;
+        }
+
+        let total_blocks = layout.total_blocks(image.len());
+        let lba_map = LbaMap::from_layout(layout, total_blocks);
+        let corona_fs = if layout == NandLayout::Emmc { corona::load_slots(&image) } else { [Default::default(), Default::default()] };
+
+        Ok(NandSkeleton {
+            cpukey: None,
+            image,
+            lba_map: Some(lba_map),
+            options: BuildOptions {
+                layout,
+                lba_map: LbaMap::from_layout(layout, total_blocks),
+                image_profile: (if bootloaders.cb_b.is_some() { "split" } else { "single" }).to_string(),
+                build_mode: BuildMode::Normal,
+                motherboard,
+                gxunsafe: false,
+                verbose: false,
+                ..Default::default()
+            },
+            header,
+            extra,
+            kv: Some(kv),
+            bootloaders,
+            rebooter: None,
+            update,
+            rebooter_update: None,
+            payloads: Vec::new(),
+            flashfs: final_flashfs,
+            mobile: MobileStore::new(),
+            corona_fs,
+            layout,
+            total_blocks,
+            input_ldv_cb: None,
+            input_ldv_cf: None,
+            input_pd: None,
+        })
+    }
+
+    pub fn parse_encrypted_chain(&self) -> Result<(NandBootloaders, NandUpdate), String> {
+        Self::parse_bootloader_chain(&self.image, self.header.cb_offset() as usize, self.header.cf_offset.get() as usize, &self.flashfs)
+    }
+
     pub fn parse_clean(image: Vec<u8>, layout: NandLayout, cpukey: [u8; 16], flashfs: FlashFS) -> Result<Self, String> {
         let header_sz = std::mem::size_of::<NandHeader>();
         if image.len() < header_sz {

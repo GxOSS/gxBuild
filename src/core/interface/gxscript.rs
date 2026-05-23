@@ -62,13 +62,13 @@ impl GxScriptEngine {
         let s_clone = session.clone();
         engine.register_fn("extract_all", move || {
             let mut s = s_clone.lock().unwrap();
-            s.extract_all(std::path::PathBuf::from("."));
+            s.extract_all(std::path::PathBuf::from("."), true, false);
         });
 
         let s_clone = session.clone();
         engine.register_fn("extract_all", move |dir: &str| {
             let mut s = s_clone.lock().unwrap();
-            s.extract_all(std::path::PathBuf::from(dir));
+            s.extract_all(std::path::PathBuf::from(dir), true, false);
         });
 
         GxScriptEngine { engine, scope }

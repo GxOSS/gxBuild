@@ -62,12 +62,10 @@ pub enum InternalCommand {
         ptype: u8,
         target: Option<u8>,
     },
-    Extract {
-        id: String,
-        output_dir: PathBuf,
-    },
     ExtractAll {
         output_dir: PathBuf,
+        all: bool,
+        include_decrypted: bool,
     },
     Replace {
         id: u8,
@@ -258,7 +256,6 @@ impl InternalCommand {
             // Self::Decompress => 99,
             Self::FinalizeFlashfs => 90,
             Self::FinalizeMobile => 89,
-            Self::Extract { .. } => 89,
             Self::ExtractAll { .. } => 88,
             Self::Replace { .. } => 87,
             Self::List => 86,
@@ -469,12 +466,8 @@ impl Session {
         self.next_seq_id += 1;
     }
 
-    pub fn extract(&mut self, id: String, output_dir: PathBuf) {
-        self.enqueue(InternalCommand::Extract { id, output_dir });
-    }
-
-    pub fn extract_all(&mut self, output_dir: PathBuf) {
-        self.enqueue(InternalCommand::ExtractAll { output_dir });
+    pub fn extract_all(&mut self, output_dir: PathBuf, all: bool, include_decrypted: bool) {
+        self.enqueue(InternalCommand::ExtractAll { output_dir, all, include_decrypted });
     }
 
     pub fn build(&mut self, output: PathBuf, target: u8) {
@@ -1384,57 +1377,135 @@ impl Session {
 
     pub fn execute_command(&mut self, command: InternalCommand) -> Result<(), String> {
         match command {
-            InternalCommand::ExtractAll { output_dir } => {
-                info!("[session] Extracting all components to '{}'...", output_dir.display());
-                let ids = vec![
-                    "smc", "smcc", "kv", "fcrt", "cb", "cba", "cbb", "sc", "cd", "ce", "cf0", "cg0", "cf1", "cg1", "header",
-                ];
-                for id in ids {
-                    let _ = self.execute_command(InternalCommand::Extract { id: id.to_string(), output_dir: output_dir.clone() });
+            InternalCommand::ExtractAll { output_dir, all, include_decrypted } => {
+                let Some(nand) = &self.active_nand else {
+                    error!("[session] No active NAND loaded. Cannot extract.");
+                    return Ok(());
+                };
+
+                let encrypted_dir = output_dir.join("encrypted");
+                let decrypted_dir = output_dir.join("decrypted");
+                let _ = fs::create_dir_all(&encrypted_dir);
+                if include_decrypted {
+                    let _ = fs::create_dir_all(&decrypted_dir);
                 }
-                info!("[session] Extraction complete.");
-            }
-            InternalCommand::Extract { id, output_dir } => {
-                if let Some(nand) = &self.active_nand {
-                    let (filename, data) = match id.to_lowercase().as_str() {
-                        "smc" => ("SMC.bin", Some(nand.extra.smc.clone())),
-                        "smcc" | "smc_config" => ("SMC_Config.bin", Some(nand.extra.smc_config.clone())),
-                        "kv" => ("KV.bin", Some(nand.extra.keyvault.clone())),
-                        "fcrt" => ("FCRT.bin", nand.extra.fcrt.clone()),
-                        "cb" => ("CB.bin", nand.bootloaders.cb.as_ref().map(|b| b.serialize())),
-                        "cba" | "cb_a" => ("CBA.bin", nand.bootloaders.cb_a.as_ref().map(|b| b.serialize())),
-                        "cbb" | "cb_b" => ("CBB.bin", nand.bootloaders.cb_b.as_ref().map(|b| b.serialize())),
-                        "sc" => ("SC.bin", nand.bootloaders.sc.as_ref().map(|b| b.serialize())),
-                        "cd" => ("CD.bin", nand.bootloaders.cd.as_ref().map(|b| b.serialize())),
-                        "ce" => ("CE.bin", nand.bootloaders.ce.as_ref().map(|b| b.serialize())),
-                        "cf0" | "cf_0" => ("CF_0.bin", nand.update.cf_0.as_ref().map(|b| b.serialize())),
-                        "cg0" | "cg_0" => ("CG_0.bin", nand.update.cg_0.as_ref().map(|b| b.serialize())),
-                        "cf1" | "cf_1" => ("CF_1.bin", nand.update.cf_1.as_ref().map(|b| b.serialize())),
-                        "cg1" | "cg_1" => ("CG_1.bin", nand.update.cg_1.as_ref().map(|b| b.serialize())),
-                        "header" | "nandhdr" => ("NandHeader.bin", Some(zerocopy::IntoBytes::as_bytes(&nand.header).to_vec())),
-                        _ => {
-                            error!("[session] Unknown component ID '{}': cannot extract.", id);
-                            return Ok(());
-                        }
-                    };
 
-                    if let Some(bytes) = data {
-                        let mut full_path = output_dir.clone();
-                        full_path.push(filename);
+                let mut ids: Vec<&str> = vec!["kv", "fcrt"];
+                if all {
+                    ids = vec!["smc", "smcc", "kv", "fcrt", "cb", "cba", "cbb", "sc", "cd", "ce", "cf0", "cg0", "cf1", "cg1", "header"];
+                }
 
-                        if let Some(parent) = full_path.parent() {
-                            let _ = fs::create_dir_all(parent);
-                        }
-
-                        if let Err(e) = fs::write(&full_path, bytes) {
-                            error!("[session] Failed to extract {}: {}", id, e);
-                        } else {
-                            info!("[session] Extracted {} to {}", id, full_path.display());
+                let encrypted_chain = if all {
+                    match nand.parse_encrypted_chain() {
+                        Ok(v) => Some(v),
+                        Err(e) => {
+                            error!("[session] Failed to parse encrypted bootloader chain: {}", e);
+                            None
                         }
                     }
                 } else {
-                    error!("[session] No active NAND loaded. Cannot extract {}.", id);
+                    None
+                };
+
+                let write_bytes = |dir: &PathBuf, filename: &str, bytes: Vec<u8>| {
+                    let full_path = dir.join(filename);
+                    if let Some(parent) = full_path.parent() {
+                        let _ = fs::create_dir_all(parent);
+                    }
+                    if let Err(e) = fs::write(&full_path, bytes) {
+                        error!("[session] Failed to write {}: {}", full_path.display(), e);
+                    } else {
+                        info!("[session] Wrote {}", full_path.display());
+                    }
+                };
+
+                let extract_encrypted = |id: &str| -> Option<(&'static str, Vec<u8>)> {
+                    match id {
+                        "smc" => {
+                            let off = nand.header.smc_boot_offset.get() as usize;
+                            let sz = nand.header.smc_boot_size.get() as usize;
+                            if off.checked_add(sz)? <= nand.image.len() {
+                                Some(("SMC.bin", nand.image[off..off + sz].to_vec()))
+                            } else {
+                                None
+                            }
+                        }
+                        "smcc" => {
+                            let off = nand.header.smc_config_offset.get() as usize;
+                            if off > 0 && off.checked_add(0x10000)? <= nand.image.len() {
+                                Some(("SMC_Config.bin", nand.image[off..off + 0x10000].to_vec()))
+                            } else if !nand.extra.smc_config.is_empty() {
+                                Some(("SMC_Config.bin", nand.extra.smc_config.clone()))
+                            } else {
+                                None
+                            }
+                        }
+                        "kv" => {
+                            let off = nand.header.kv_addr.get() as usize;
+                            let sz = nand.header.kv_size.get() as usize;
+                            if off.checked_add(sz)? <= nand.image.len() {
+                                Some(("KV.bin", nand.image[off..off + sz].to_vec()))
+                            } else {
+                                None
+                            }
+                        }
+                        "fcrt" => nand.extra.fcrt.clone().map(|b| ("FCRT.bin", b)),
+                        "header" => Some(("NandHeader.bin", zerocopy::IntoBytes::as_bytes(&nand.header).to_vec())),
+                        "cb" => encrypted_chain.as_ref().and_then(|(bl, _)| bl.cb.as_ref().map(|b| ("CB.bin", b.serialize()))),
+                        "cba" => encrypted_chain.as_ref().and_then(|(bl, _)| bl.cb_a.as_ref().map(|b| ("CBA.bin", b.serialize()))),
+                        "cbb" => encrypted_chain.as_ref().and_then(|(bl, _)| bl.cb_b.as_ref().map(|b| ("CBB.bin", b.serialize()))),
+                        "sc" => encrypted_chain.as_ref().and_then(|(bl, _)| bl.sc.as_ref().map(|b| ("SC.bin", b.serialize()))),
+                        "cd" => encrypted_chain.as_ref().and_then(|(bl, _)| bl.cd.as_ref().map(|b| ("CD.bin", b.serialize()))),
+                        "ce" => encrypted_chain.as_ref().and_then(|(bl, _)| bl.ce.as_ref().map(|b| ("CE.bin", b.serialize()))),
+                        "cf0" => encrypted_chain.as_ref().and_then(|(_, up)| up.cf_0.as_ref().map(|b| ("CF_0.bin", b.serialize()))),
+                        "cg0" => encrypted_chain.as_ref().and_then(|(_, up)| up.cg_0.as_ref().map(|b| ("CG_0.bin", b.serialize()))),
+                        "cf1" => encrypted_chain.as_ref().and_then(|(_, up)| up.cf_1.as_ref().map(|b| ("CF_1.bin", b.serialize()))),
+                        "cg1" => encrypted_chain.as_ref().and_then(|(_, up)| up.cg_1.as_ref().map(|b| ("CG_1.bin", b.serialize()))),
+                        _ => None,
+                    }
+                };
+
+                let extract_decrypted = |id: &str| -> Option<(&'static str, Vec<u8>)> {
+                    match id {
+                        "smc" => Some(("SMC.bin", nand.extra.smc.clone())),
+                        "smcc" => Some(("SMC_Config.bin", nand.extra.smc_config.clone())),
+                        "kv" => Some(("KV.bin", nand.extra.keyvault.clone())),
+                        "fcrt" => nand.extra.fcrt.clone().map(|b| ("FCRT.bin", b)),
+                        "header" => Some(("NandHeader.bin", zerocopy::IntoBytes::as_bytes(&nand.header).to_vec())),
+                        "cb" => nand.bootloaders.cb.as_ref().map(|b| ("CB.bin", b.serialize())),
+                        "cba" => nand.bootloaders.cb_a.as_ref().map(|b| ("CBA.bin", b.serialize())),
+                        "cbb" => nand.bootloaders.cb_b.as_ref().map(|b| ("CBB.bin", b.serialize())),
+                        "sc" => nand.bootloaders.sc.as_ref().map(|b| ("SC.bin", b.serialize())),
+                        "cd" => nand.bootloaders.cd.as_ref().map(|b| ("CD.bin", b.serialize())),
+                        "ce" => nand.bootloaders.ce.as_ref().map(|b| ("CE.bin", b.serialize())),
+                        "cf0" => nand.update.cf_0.as_ref().map(|b| ("CF_0.bin", b.serialize())),
+                        "cg0" => nand.update.cg_0.as_ref().map(|b| ("CG_0.bin", b.serialize())),
+                        "cf1" => nand.update.cf_1.as_ref().map(|b| ("CF_1.bin", b.serialize())),
+                        "cg1" => nand.update.cg_1.as_ref().map(|b| ("CG_1.bin", b.serialize())),
+                        _ => None,
+                    }
+                };
+
+                info!(
+                    "[session] Extracting {} set to '{}' (encrypted{}, decrypted={})...",
+                    if all { "full" } else { "minimal" },
+                    output_dir.display(),
+                    if include_decrypted { "" } else { " only" },
+                    include_decrypted
+                );
+
+                for id in ids {
+                    if let Some((name, bytes)) = extract_encrypted(id) {
+                        write_bytes(&encrypted_dir, name, bytes);
+                    }
+                    if include_decrypted {
+                        if let Some((name, bytes)) = extract_decrypted(id) {
+                            write_bytes(&decrypted_dir, name, bytes);
+                        }
+                    }
                 }
+
+                info!("[session] Extraction complete.");
             }
             InternalCommand::Build { output, target: _target } => {
                 info!("[session] Building NAND image to '{}'...", output.display());
@@ -1636,8 +1707,7 @@ impl Session {
                         match crate::core::images::blocks::NandProcessor::preprocess_nand_with_lba_options(&raw_data, remap_bad_blocks) {
                             Ok((clean_data, layout, lba_map)) => {
                                 info!("[session] Detected {} bad block(s) during preprocessing", lba_map.bad_blocks.len());
-                                // Use provided key or buffered pending key
-                                let active_key = key.or(self.pending_key).unwrap_or([0u8; 16]);
+                                let active_key = key.or(self.pending_key);
 
                                 // Scan FlashFS with LBA map for accurate block mapping
                                 let flashfs = crate::builder::filesystem::flashfs::FlashFS::scan_physical_with_lba(&raw_data, &layout, &lba_map);
@@ -1646,7 +1716,11 @@ impl Session {
                                 } else {
                                     crate::builder::filesystem::mobile::MobileStore::scan_physical(&raw_data, &layout)
                                 };
-                                match NandSkeleton::parse_clean(clean_data, layout, active_key, flashfs) {
+                                let parse_result = match active_key {
+                                    Some(k) => NandSkeleton::parse_clean(clean_data, layout, k, flashfs),
+                                    None => NandSkeleton::parse_clean_encrypted(clean_data, layout, flashfs),
+                                };
+                                match parse_result {
                                     Ok(mut nand) => {
                                         nand.mobile = mobile;
                                         // Verify bootloader decryption using zero-region checks

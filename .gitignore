@@ -26,3 +26,4 @@ release
 Cargo.lock
 errors.log
 .vscode
+test_dir

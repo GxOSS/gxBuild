@@ -148,7 +148,10 @@ pub enum GgxMode {
         build_type: Option<CliBuildType>,
     },
     /// Perform dump loading and verification
-    Extract,
+    Extract {
+        #[arg(long = "all")]
+        all: bool,
+    },
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq)]
@@ -221,7 +224,7 @@ pub fn ggx_cli() {
     // Initialize logger
     let mode_str = match &args.mode {
         Some(GgxMode::Build { .. }) | None => "build",
-        Some(GgxMode::Extract) => "extract",
+        Some(GgxMode::Extract { .. }) => "extract",
     };
 
     let mut is_verbose = false;
@@ -254,7 +257,7 @@ pub fn ggx_cli() {
                 session_prepared = false;
             }
         }
-        Some(GgxMode::Extract) => {
+        Some(GgxMode::Extract { .. }) => {
             if let Err(e) = handle_extract(&args, &mut session) {
                 error!("[cli] Extract Setup Failed: {}", e);
                 session_prepared = false;
@@ -735,6 +738,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
 fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     // -f = data directory (nand dump, cpu key)
     let data_dir = args.fw_dir.clone().unwrap_or_else(|| PathBuf::from("mydata"));
+    let all = matches!(args.mode, Some(GgxMode::Extract { all: true }));
 
     // -o options: nomobile
     for group in &args.options {
@@ -763,8 +767,10 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     };
 
     // -p = CPU key string, else auto-discover cpukey.bin / cpukey.txt from data dir
+    let mut has_cpukey = false;
     if let Some(key) = &args.cpu_key {
         session.set_cpukey(key.clone());
+        has_cpukey = true;
     } else {
         let key_bin = data_dir.join("cpukey.bin");
         let key_txt = data_dir.join("cpukey.txt");
@@ -775,6 +781,7 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                     key.copy_from_slice(&bytes[..16]);
                     session.parse_keybin(Some(key));
                     info!("[cli] Extract: loaded CPU key from {:?}", key_bin);
+                    has_cpukey = true;
                 }
             }
         } else if key_txt.exists() {
@@ -783,19 +790,29 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                 if clean.len() >= 32 {
                     session.set_cpukey(clean);
                     info!("[cli] Extract: loaded CPU key from {:?}", key_txt);
+                    has_cpukey = true;
                 }
             }
-        } else {
-            anyhow::bail!("No CPU Key provided. Use -p/--cpukey or place cpukey.txt/cpukey.bin in the data dir (-f/--data).");
         }
     }
 
-    // -g = output directory, defaults to mydata/
-    let output_dir = args.output_dir.clone().unwrap_or_else(|| data_dir.clone());
+    let base_output_dir = args.output_dir.clone().unwrap_or_else(|| data_dir.clone());
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let output_dir = base_output_dir.join(format!("extract-{}", timestamp));
 
-    info!("[cli] Extract: NAND={:?}, Output={:?}", nand_path, output_dir);
+    info!(
+        "[cli] Extract: NAND={:?}, Output={:?} ({}{}, {})",
+        nand_path,
+        output_dir,
+        if all { "all" } else { "minimal" },
+        if has_cpukey { "" } else { ", encrypted-only" },
+        if has_cpukey { "encrypted+decrypted" } else { "encrypted" }
+    );
     session.enqueue(InternalCommand::ParseImage { path: nand_path, key: None });
-    session.extract_all(output_dir);
+    session.extract_all(output_dir, all, has_cpukey);
 
     Ok(())
 }
