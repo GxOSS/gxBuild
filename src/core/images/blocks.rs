@@ -364,7 +364,86 @@ impl NandLayout {
             // eMMC
             0x3000000 => Ok(NandLayout::Emmc),
             len if len >= 0x30000000 => Ok(NandLayout::Emmc),
-            _ => Err(format!("Could not detect NAND layout for size 0x{:x}", len)),
+            _ => {
+                let aligned_sb_phys = len % 0x4200 == 0;
+                let aligned_sb_log = len % 0x4000 == 0;
+                let aligned_bb_phys = len % 0x21000 == 0;
+                let aligned_bb_log = len % 0x20000 == 0;
+
+                if has_spare(image) {
+                    if let Some(spare) = get_page_spare(image, 256, &NandLayout::Bb) {
+                        if spare.len() >= 3 {
+                            let lba_mt2 = ((spare[2] as u16 & 0xF) << 8) | spare[1] as u16;
+                            if spare[0] == 0xFF && lba_mt2 == 1 {
+                                return Ok(NandLayout::Bb);
+                            }
+                        }
+                    }
+
+                    if len >= 0x4410 {
+                        let spare = &image[0x4400..0x4410];
+                        let lba_mt0 = ((spare[1] as u16 & 0xF) << 8) | spare[0] as u16;
+                        let lba_mt1 = ((spare[2] as u16 & 0xF) << 8) | spare[1] as u16;
+                        if spare[5] == 0xFF && (lba_mt0 == 1 || lba_mt1 == 1) {
+                            return Ok(NandLayout::Sb);
+                        }
+                    }
+                }
+
+                let bb_candidate = aligned_bb_phys || aligned_bb_log;
+                let sb_candidate = aligned_sb_phys || aligned_sb_log;
+
+                if bb_candidate && !sb_candidate {
+                    Ok(NandLayout::Bb)
+                } else if sb_candidate && !bb_candidate {
+                    Ok(NandLayout::Sb)
+                } else if bb_candidate && sb_candidate {
+                    let mut per_page_hits = 0i32;
+                    let mut chunked_hits = 0i32;
+                    let blocks_to_sample = 64usize;
+                    for block in 0..blocks_to_sample {
+                        let page0 = block * 256;
+
+                        let a_off = bb_spare_offset_per_page(page0);
+                        if a_off + 16 <= image.len() {
+                            let s = &image[a_off..a_off + 16];
+                            if bb_score_spare(s) > 0 {
+                                per_page_hits += 1;
+                            }
+                            if s[0] == 0xFF {
+                                if let Some(id) = bb_meta2_block_id(s) {
+                                    if id == (block as u16) {
+                                        per_page_hits += 4;
+                                    }
+                                }
+                            }
+                        }
+
+                        let b_off = bb_spare_offset_chunked(page0);
+                        if b_off + 16 <= image.len() {
+                            let s = &image[b_off..b_off + 16];
+                            if bb_score_spare(s) > 0 {
+                                chunked_hits += 1;
+                            }
+                            if s[0] == 0xFF {
+                                if let Some(id) = bb_meta2_block_id(s) {
+                                    if id == (block as u16) {
+                                        chunked_hits += 4;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if std::cmp::max(per_page_hits, chunked_hits) > 10 {
+                        Ok(NandLayout::Bb)
+                    } else {
+                        Ok(NandLayout::Sb)
+                    }
+                } else {
+                    Err(format!("Could not detect NAND layout for size 0x{:x}", len))
+                }
+            }
         };
 
         if let Ok(l) = &layout {
@@ -1063,5 +1142,45 @@ impl NandProcessor {
             return clean_data.to_vec();
         }
         add_spare(clean_data, layout, meta_type, 0, fs_meta, mobile_meta, jtag_syscall)
+    }
+}
+
+#[cfg(test)]
+mod nand_layout_detection_tests {
+    use super::NandLayout;
+
+    #[test]
+    fn detects_partial_smallblock_logical_by_alignment() {
+        let buf = vec![0u8; 0x4000 * 4];
+        assert_eq!(NandLayout::detect(&buf).unwrap(), NandLayout::Sb);
+    }
+
+    #[test]
+    fn detects_partial_smallblock_physical_by_alignment() {
+        let buf = vec![0u8; 0x4200 * 4];
+        assert_eq!(NandLayout::detect(&buf).unwrap(), NandLayout::Sb);
+    }
+
+    #[test]
+    fn detects_partial_bigblock_physical_by_spare_signature() {
+        let mut buf = vec![0xFFu8; 0x21000 * 2];
+
+        let set_spare = |img: &mut [u8], page: usize, spare: [u8; 16]| {
+            let off = page * 0x210 + 0x200;
+            img[off..off + 16].copy_from_slice(&spare);
+        };
+
+        set_spare(
+            &mut buf,
+            0,
+            [0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4],
+        );
+        set_spare(
+            &mut buf,
+            256,
+            [0xFF, 0x01, 0x00, 0x00, 0x00, 0xFF, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4],
+        );
+
+        assert_eq!(NandLayout::detect(&buf).unwrap(), NandLayout::Bb);
     }
 }

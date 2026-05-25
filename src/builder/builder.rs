@@ -1951,7 +1951,7 @@ impl NandSkeleton {
 
         let mut target_fs_block = if phys_fs_block > 0 { phys_fs_block as i32 } else { self.flashfs.root.block_number };
         let reserve_start = layout.reserve_start(logical_image.len()) as i32;
-        if target_fs_block >= reserve_start {
+        if *layout != NandLayout::Emmc && target_fs_block >= reserve_start {
             warn!(
                 "[builder] FlashFS target block {} is in/after the reserved remap area (>= 0x{:X}); forcing to 0x110 for compatibility",
                 target_fs_block, reserve_start

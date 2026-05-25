@@ -31,6 +31,7 @@ use log::{error, info, warn};
 use std::path::PathBuf;
 #[cfg(feature = "rhai")]
 use std::sync::{Arc, Mutex};
+use zerocopy::FromBytes;
 
 /// xeBuild v1.21.810 clone - System image builder
 #[derive(Parser, Debug)]
@@ -97,6 +98,10 @@ pub struct GgxArgs {
     /// Optional source NAND image
     #[arg(short = 'l', long = "image", global = true)]
     pub source_nand: Option<PathBuf>,
+
+    /// Optional ECC image to overlay onto the loaded NAND (typically a XeLL ECC)
+    #[arg(long = "ecc", global = true)]
+    pub ecc: Option<PathBuf>,
 
     /// Optional system update file (e.g. xboxupd.bin)
     #[arg(short = 'u', long = "update", global = true)]
@@ -547,8 +552,12 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
             data_dir.join("nanddump.bin"),
             data_dir.join("nanddump1.bin"),
             data_dir.join("nanddump2.bin"),
+            data_dir.join("nanddump.ecc"),
+            data_dir.join("nanddump1.ecc"),
+            data_dir.join("nanddump2.ecc"),
             data_dir.join("nanddump"),
             data_dir.join("updflash.bin"),
+            data_dir.join("updflash.ecc"),
         ];
 
         for p in &nand_candidates {
@@ -564,6 +573,9 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         let path = parsed_nand_path.unwrap();
         info!("[cli] Auto-discovered source NAND image from {:?}", path);
         session.enqueue(InternalCommand::ParseImage { path, key: None });
+        if let Some(ecc) = &args.ecc {
+            session.enqueue(InternalCommand::ApplyEcc { path: ecc.clone() });
+        }
     } else {
         // Block type selection here needs a CLI arg override
         warn!("[cli] No NAND image found in data dir or specified via -f");
@@ -740,6 +752,12 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     let data_dir = args.fw_dir.clone().unwrap_or_else(|| PathBuf::from("mydata"));
     let all = matches!(args.mode, Some(GgxMode::Extract { all: true }));
 
+    if args.ecc.is_some() && args.source_nand.is_some() {
+        return Err(anyhow::anyhow!(
+            "Provide either -l/--image (NAND) or --ecc (ECC image), not both."
+        ));
+    }
+
     // -o options: nomobile
     for group in &args.options {
         for (k, v) in group {
@@ -749,22 +767,303 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         }
     }
 
-    // -l = source NAND image, else auto-discover from data dir
-    let nand_path = if let Some(p) = &args.source_nand {
+    let base_output_dir = args.output_dir.clone().unwrap_or_else(|| data_dir.clone());
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let output_dir = base_output_dir.join(format!("extract-{}", timestamp));
+
+    let strip_ecc = |ecc_raw: &[u8]| -> Vec<u8> {
+        if ecc_raw.is_empty() {
+            return Vec::new();
+        }
+
+        if ecc_raw.len() % 0x840 == 0 {
+            let chunks = ecc_raw.len() / 0x840;
+            let mut out = vec![0u8; chunks * 0x800];
+            for i in 0..chunks {
+                let in_off = i * 0x840;
+                let out_off = i * 0x800;
+                out[out_off..out_off + 0x200].copy_from_slice(&ecc_raw[in_off..in_off + 0x200]);
+                out[out_off + 0x200..out_off + 0x400].copy_from_slice(&ecc_raw[in_off + 0x200..in_off + 0x400]);
+                out[out_off + 0x400..out_off + 0x600].copy_from_slice(&ecc_raw[in_off + 0x400..in_off + 0x600]);
+                out[out_off + 0x600..out_off + 0x800].copy_from_slice(&ecc_raw[in_off + 0x600..in_off + 0x800]);
+            }
+            return out;
+        }
+
+        if ecc_raw.len() % 0x210 == 0 {
+            let pages = ecc_raw.len() / 0x210;
+            let mut out = vec![0u8; pages * 0x200];
+            for i in 0..pages {
+                let in_off = i * 0x210;
+                let out_off = i * 0x200;
+                out[out_off..out_off + 0x200].copy_from_slice(&ecc_raw[in_off..in_off + 0x200]);
+            }
+            return out;
+        }
+
+        ecc_raw.to_vec()
+    };
+
+    let extract_ecc = |ecc_path: &PathBuf, output_dir: &PathBuf| -> anyhow::Result<()> {
+        let _ = std::fs::create_dir_all(&output_dir);
+
+        let ecc_raw = std::fs::read(ecc_path)
+            .map_err(|e| anyhow::anyhow!("Failed to read ECC file '{}': {}", ecc_path.display(), e))?;
+        let clean = strip_ecc(&ecc_raw);
+        let layout = crate::core::images::blocks::NandLayout::detect(&ecc_raw)
+            .or_else(|_| crate::core::images::blocks::NandLayout::detect(&clean))
+            .ok();
+
+        let mut wrote = 0usize;
+
+        let write_part = |name: &str, bytes: &[u8], output_dir: &PathBuf| -> anyhow::Result<bool> {
+            if bytes.is_empty() {
+                return Ok(false);
+            }
+            let p = output_dir.join(name);
+            std::fs::write(&p, bytes).map_err(|e| anyhow::anyhow!("Failed to write '{}': {}", p.display(), e))?;
+            Ok(true)
+        };
+
+        let header_sz = std::mem::size_of::<crate::builder::builder::NandHeader>();
+        let header = if clean.len() >= header_sz {
+            crate::builder::builder::NandHeader::read_from_prefix(&clean[..header_sz])
+                .ok()
+                .map(|(h, _)| h)
+                .and_then(|h| h.validate().ok().map(|_| h))
+        } else {
+            None
+        };
+
+        if let Some(h) = header {
+            if write_part("NandHeader.bin", zerocopy::IntoBytes::as_bytes(&h), output_dir)? {
+                wrote += 1;
+            }
+
+            let smc_off = h.smc_boot_offset.get() as usize;
+            let smc_sz = h.smc_boot_size.get() as usize;
+            if smc_off > 0 && smc_sz > 0 && smc_off.saturating_add(smc_sz) <= clean.len() {
+                if write_part("SMC.bin", &clean[smc_off..smc_off + smc_sz], output_dir)? {
+                    wrote += 1;
+                }
+            }
+
+            let smcc_off = h.smc_config_offset.get() as usize;
+            if smcc_off > 0 && smcc_off.saturating_add(0x10000) <= clean.len() {
+                if write_part("SMC_Config.bin", &clean[smcc_off..smcc_off + 0x10000], output_dir)? {
+                    wrote += 1;
+                }
+            }
+
+            let kv_off = h.kv_addr.get() as usize;
+            let kv_sz = h.kv_size.get() as usize;
+            if kv_sz == 0x4000 && kv_off > 0 && kv_off.saturating_add(kv_sz) <= clean.len() {
+                if write_part("KV.bin", &clean[kv_off..kv_off + kv_sz], output_dir)? {
+                    wrote += 1;
+                }
+            }
+
+            let mut off = h.cb_offset() as usize;
+            let cf_ptr = h.cf_offset.get() as usize;
+            let mut cf_count = 0usize;
+            let mut cg_count = 0usize;
+            let mut cb_seen = 0usize;
+
+            for _ in 0..16 {
+                if off.saturating_add(0x10) > clean.len() {
+                    break;
+                }
+                let blh = match crate::builder::chain::BootloaderHeader::read_from_prefix(&clean[off..off + 0x10]) {
+                    Ok((v, _)) => v,
+                    Err(_) => break,
+                };
+                let bl_size = blh.size.get() as usize;
+                if bl_size < 0x10 || bl_size > 0x2000000 || off.saturating_add(bl_size) > clean.len() {
+                    break;
+                }
+
+                let data = &clean[off..off + bl_size];
+
+                match blh.get_type() {
+                    crate::builder::chain::XenonBlType::CB => {
+                        cb_seen += 1;
+                        let flags = blh.flags.get();
+                        let has_cba_flag = (flags & 0x800) == 0x800;
+                        let is_single = cb_seen == 1 && !has_cba_flag;
+                        let is_cba = cb_seen == 1 && has_cba_flag;
+                        let is_cbx = cb_seen == 2 && has_cba_flag && bl_size <= 0x500 && blh.pairing.get() == 0;
+
+                        let name = if is_single {
+                            "CB.bin"
+                        } else if is_cba {
+                            "CBA.bin"
+                        } else if is_cbx {
+                            "CBX.bin"
+                        } else {
+                            "CBB.bin"
+                        };
+                        if write_part(name, data, output_dir)? {
+                            wrote += 1;
+                        }
+                    }
+                    crate::builder::chain::XenonBlType::SC => {
+                        if write_part("SC.bin", data, output_dir)? {
+                            wrote += 1;
+                        }
+                    }
+                    crate::builder::chain::XenonBlType::CD => {
+                        if write_part("CD.bin", data, output_dir)? {
+                            wrote += 1;
+                        }
+                    }
+                    crate::builder::chain::XenonBlType::CE => {
+                        if write_part("CE.bin", data, output_dir)? {
+                            wrote += 1;
+                        }
+                    }
+                    crate::builder::chain::XenonBlType::CF => {
+                        let name = if cf_count == 0 { "CF_0.bin" } else { "CF_1.bin" };
+                        if write_part(name, data, output_dir)? {
+                            wrote += 1;
+                        }
+                        cf_count += 1;
+                    }
+                    crate::builder::chain::XenonBlType::CG => {
+                        let name = if cg_count == 0 { "CG_0.bin" } else { "CG_1.bin" };
+                        if write_part(name, data, output_dir)? {
+                            wrote += 1;
+                        }
+                        cg_count += 1;
+                    }
+                    _ => break,
+                }
+
+                off = off.saturating_add((bl_size + 0xF) & 0xFFFF_FFF0);
+            }
+
+            if cf_count == 0 && cf_ptr > 0 && cf_ptr.saturating_add(0x10) <= clean.len() {
+                let mut scan_off = cf_ptr;
+                for _ in 0..8 {
+                    if scan_off.saturating_add(0x10) > clean.len() {
+                        break;
+                    }
+                    let blh = match crate::builder::chain::BootloaderHeader::read_from_prefix(&clean[scan_off..scan_off + 0x10]) {
+                        Ok((v, _)) => v,
+                        Err(_) => break,
+                    };
+                    let bl_size = blh.size.get() as usize;
+                    if bl_size < 0x10 || bl_size > 0x2000000 || scan_off.saturating_add(bl_size) > clean.len() {
+                        break;
+                    }
+                    let data = &clean[scan_off..scan_off + bl_size];
+                    match blh.get_type() {
+                        crate::builder::chain::XenonBlType::CF => {
+                            let name = if cf_count == 0 { "CF_0.bin" } else { "CF_1.bin" };
+                            if write_part(name, data, output_dir)? {
+                                wrote += 1;
+                            }
+                            cf_count += 1;
+                        }
+                        crate::builder::chain::XenonBlType::CG => {
+                            let name = if cg_count == 0 { "CG_0.bin" } else { "CG_1.bin" };
+                            if write_part(name, data, output_dir)? {
+                                wrote += 1;
+                            }
+                            cg_count += 1;
+                        }
+                        _ => break,
+                    }
+                    scan_off = scan_off.saturating_add((bl_size + 0xF) & 0xFFFF_FFF0);
+                }
+            }
+        } else if clean.len() >= 0x4000 {
+            let smc_off = 0x1000usize;
+            let smc_sz = 0x3000usize;
+            if smc_off.saturating_add(smc_sz) <= clean.len() {
+                if write_part("SMC.bin", &clean[smc_off..smc_off + smc_sz], output_dir)? {
+                    wrote += 1;
+                }
+            }
+        }
+
+        let candidates: [usize; 5] = [0x70000, 0xC0000, 0x100000, 0x10_0000, 0xE2_A600];
+        for off in candidates {
+            if off.saturating_add(4) > clean.len() {
+                continue;
+            }
+            let magic = &clean[off..off + 4];
+            if magic != b"XeLL" && magic != b"Xell" {
+                continue;
+            }
+            let max_len = std::cmp::min(0x40000usize, clean.len() - off);
+            let mut payload = clean[off..off + max_len].to_vec();
+            while payload.last().is_some_and(|b| *b == 0xFF) {
+                payload.pop();
+            }
+            if payload.len() < 0x1000 {
+                payload = clean[off..off + max_len].to_vec();
+            }
+            let name = format!("XeLL_0x{:X}.bin", off);
+            if write_part(&name, &payload, output_dir)? {
+                wrote += 1;
+            }
+        }
+
+        if wrote == 0 {
+            return Err(anyhow::anyhow!(
+                "No extractable components found in ECC image (layout={:?}, raw={}, clean={})",
+                layout,
+                ecc_raw.len(),
+                clean.len()
+            ));
+        }
+
+        info!(
+            "[cli] Extract (ECC): INPUT={:?}, Output={:?} (layout={:?}, raw={}, clean={}, files={})",
+            ecc_path,
+            output_dir,
+            layout,
+            ecc_raw.len(),
+            clean.len(),
+            wrote
+        );
+        Ok(())
+    };
+
+    if let Some(ecc_path) = &args.ecc {
+        extract_ecc(ecc_path, &output_dir)?;
+        return Ok(());
+    }
+
+    // -l = NAND image, else auto-discover from data dir
+    let image_path = if let Some(p) = &args.source_nand {
         p.clone()
     } else {
         let candidates = [
             data_dir.join("nanddump.bin"),
             data_dir.join("nanddump1.bin"),
             data_dir.join("nanddump2.bin"),
+            data_dir.join("nanddump.ecc"),
+            data_dir.join("nanddump1.ecc"),
+            data_dir.join("nanddump2.ecc"),
             data_dir.join("nanddump"),
             data_dir.join("updflash.bin"),
+            data_dir.join("updflash.ecc"),
         ];
-        candidates
-            .into_iter()
-            .find(|p| p.exists())
-            .ok_or_else(|| anyhow::anyhow!("No NAND image found. Provide one via -l/--image or place it in the data dir (-f/--data)."))?
+        candidates.into_iter().find(|p| p.exists()).ok_or_else(|| {
+            anyhow::anyhow!(
+                "No NAND/ECC image found. Provide one via -l/--image or --ecc, or place it in the data dir (-f/--data)."
+            )
+        })?
     };
+
+    if image_path.extension().is_some_and(|e| e.eq_ignore_ascii_case("ecc")) {
+        extract_ecc(&image_path, &output_dir)?;
+        return Ok(());
+    }
 
     // -p = CPU key string, else auto-discover cpukey.bin / cpukey.txt from data dir
     let mut has_cpukey = false;
@@ -796,22 +1095,15 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         }
     }
 
-    let base_output_dir = args.output_dir.clone().unwrap_or_else(|| data_dir.clone());
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let output_dir = base_output_dir.join(format!("extract-{}", timestamp));
-
     info!(
-        "[cli] Extract: NAND={:?}, Output={:?} ({}{}, {})",
-        nand_path,
+        "[cli] Extract: IMAGE={:?}, Output={:?} ({}{}, {})",
+        image_path,
         output_dir,
         if all { "all" } else { "minimal" },
         if has_cpukey { "" } else { ", encrypted-only" },
         if has_cpukey { "encrypted+decrypted" } else { "encrypted" }
     );
-    session.enqueue(InternalCommand::ParseImage { path: nand_path, key: None });
+    session.enqueue(InternalCommand::ParseImage { path: image_path, key: None });
     session.extract_all(output_dir, all, has_cpukey);
 
     Ok(())

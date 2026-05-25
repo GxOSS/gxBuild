@@ -62,6 +62,9 @@ pub enum InternalCommand {
         ptype: u8,
         target: Option<u8>,
     },
+    ApplyEcc {
+        path: PathBuf,
+    },
     ExtractAll {
         output_dir: PathBuf,
         all: bool,
@@ -245,6 +248,7 @@ impl InternalCommand {
             Self::ParseKeybin { .. } => 160,
             Self::ParseImage { .. } => 150,
             Self::CreateImage { .. } => 150,
+            Self::ApplyEcc { .. } => 149,
             Self::ExtractStfs { .. } => 110,
             Self::Update { .. } => 110,
             Self::SessionInit { .. } => 100,
@@ -496,6 +500,10 @@ impl Session {
 
     pub fn parse_patch(&mut self, path: PathBuf) {
         self.enqueue(InternalCommand::ParsePatch { path });
+    }
+
+    pub fn apply_ecc(&mut self, path: PathBuf) {
+        self.enqueue(InternalCommand::ApplyEcc { path });
     }
 
     pub fn apply_patch(&mut self, path: PathBuf, ptype: u8, target: Option<u8>) {
@@ -897,7 +905,11 @@ impl Session {
                 data_dir.join("nanddump.bin"),
                 data_dir.join("nanddump1.bin"),
                 data_dir.join("nanddump2.bin"),
+                data_dir.join("nanddump.ecc"),
+                data_dir.join("nanddump1.ecc"),
+                data_dir.join("nanddump2.ecc"),
                 data_dir.join("updflash.bin"),
+                data_dir.join("updflash.ecc"),
             ];
             let mut nand_found = false;
             for p in &nand_candidates {
@@ -1740,8 +1752,8 @@ impl Session {
                                                 }
                                             }
                                         }
-                                        // Store LBA map in session for later use
                                         info!("[session] LBA Map: {} total blocks, {} bad blocks remapped", lba_map.logical_to_physical.len(), lba_map.bad_blocks.len());
+                                        nand.lba_map = Some(lba_map);
                                         self.active_nand = Some(nand);
                                         self.extract_options_from_nand();
                                         info!("[session] Successfully parsed NAND from {:?} (Layout: {:?})", path, layout);
@@ -1753,6 +1765,59 @@ impl Session {
                         }
                     }
                     Err(e) => return Err(format!("Failed to read image file '{}': {}", path.display(), e)),
+                }
+            }
+            InternalCommand::ApplyEcc { path } => {
+                let Some(old) = self.active_nand.take() else {
+                    error!("[session] No active NAND loaded. Cannot apply ECC.");
+                    return Ok(());
+                };
+
+                let ecc_raw = fs::read(&path).map_err(|e| format!("Failed to read ECC file '{}': {}", path.display(), e))?;
+
+                let (ecc_clean, ecc_layout, _ecc_lba) =
+                    crate::core::images::blocks::NandProcessor::preprocess_nand_with_lba_options(&ecc_raw, false)
+                        .map_err(|e| format!("Failed to pre-process ECC image: {}", e))?;
+
+                let nand_layout = old.layout;
+                if ecc_layout != nand_layout {
+                    self.active_nand = Some(old);
+                    return Err(format!(
+                        "ECC layout mismatch: ECC={:?}, NAND={:?}. Provide a matching ECC for this NAND type.",
+                        ecc_layout, nand_layout
+                    ));
+                }
+
+                let mut image = old.image;
+                let write_len = std::cmp::min(image.len(), ecc_clean.len());
+                image[..write_len].copy_from_slice(&ecc_clean[..write_len]);
+
+                let flashfs = old.flashfs.clone();
+                let layout = old.layout;
+                let cpukey = old.cpukey;
+                let lba_map = old.lba_map;
+                let options = old.options;
+                let mobile = old.mobile;
+                let corona_fs = old.corona_fs;
+
+                let parse_result = match cpukey {
+                    Some(k) => NandSkeleton::parse_clean(image, layout, k, flashfs),
+                    None => NandSkeleton::parse_clean_encrypted(image, layout, flashfs),
+                };
+
+                match parse_result {
+                    Ok(mut nand) => {
+                        nand.cpukey = cpukey;
+                        nand.lba_map = lba_map;
+                        nand.options = options;
+                        nand.mobile = mobile;
+                        nand.corona_fs = corona_fs;
+                        self.active_nand = Some(nand);
+                        info!("[session] Applied ECC from '{}' over {} bytes.", path.display(), write_len);
+                    }
+                    Err(e) => {
+                        return Err(format!("Applied ECC but failed to re-parse NAND: {}", e));
+                    }
                 }
             }
             InternalCommand::ParseKey { key } => {

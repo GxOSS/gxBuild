@@ -60,6 +60,12 @@ impl GxScriptEngine {
         });
 
         let s_clone = session.clone();
+        engine.register_fn("apply_ecc", move |path: &str| {
+            let mut s = s_clone.lock().unwrap();
+            s.apply_ecc(std::path::PathBuf::from(path));
+        });
+
+        let s_clone = session.clone();
         engine.register_fn("extract_all", move || {
             let mut s = s_clone.lock().unwrap();
             s.extract_all(std::path::PathBuf::from("."), true, false);

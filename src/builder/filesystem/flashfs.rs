@@ -165,6 +165,87 @@ impl FileSystemRoot {
         let mut current_block = self.block_number as usize;
         let mut loop_count = 0;
 
+        if *layout == NandLayout::Emmc {
+            let mut bmap_idx = 0;
+            loop {
+                if current_block >= total_blocks {
+                    return;
+                }
+                let offset = current_block * logical_block_size;
+                if offset + logical_block_size > image.len() {
+                    return;
+                }
+                let mut cursor = Cursor::new(&image[offset..offset + logical_block_size]);
+                for _ in 0..(layout.page_size() / 2) {
+                    if bmap_idx >= total_blocks {
+                        break;
+                    }
+                    if let Ok(val) = cursor.read_u16::<BigEndian>() {
+                        self.block_map[bmap_idx] = val;
+                        bmap_idx += 1;
+                    }
+                }
+                let next = self.block_map[current_block] & 0x7FFF;
+                if bmap_idx >= total_blocks {
+                    current_block = next as usize;
+                    break;
+                }
+                if next == 0 || next >= 0x1FFB || next as usize >= total_blocks {
+                    return;
+                }
+                current_block = next as usize;
+                loop_count += 1;
+                if loop_count > 1000 {
+                    error!("[flashfs] Chained eMMC FS root loop limit exceeded!");
+                    return;
+                }
+            }
+
+            loop {
+                if current_block >= total_blocks {
+                    break;
+                }
+                let offset = current_block * logical_block_size;
+                if offset + logical_block_size > image.len() {
+                    break;
+                }
+                let mut found_empty = false;
+                for i in 0..(layout.page_size() / 0x20) {
+                    let entry_offset = offset + (i * 0x20);
+                    let mut entry = FileSystemEntry::new(current_block as i32);
+                    entry.read_from(&image[entry_offset..entry_offset + 0x20]);
+                    if entry.file_name.is_empty() {
+                        found_empty = true;
+                        break;
+                    }
+                    if !self.entries.iter().any(|e| e.file_name == entry.file_name) {
+                        self.entries.push(entry);
+                    }
+                }
+                if found_empty {
+                    break;
+                }
+                let next = self.block_map[current_block] & 0x7FFF;
+                if next == 0 || next >= 0x1FFB || next as usize >= total_blocks {
+                    break;
+                }
+                current_block = next as usize;
+            }
+
+            let to_load: Vec<(usize, u16, usize)> = self
+                .entries
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| e.block_number > 0 && e.size > 0)
+                .map(|(i, e)| (i, e.block_number, e.size as usize))
+                .collect();
+            for (i, block_number, size) in to_load {
+                let raw = self.get_chain_data(image, layout, block_number);
+                self.entries[i].data = if raw.len() >= size { raw[..size].to_vec() } else { raw };
+            }
+            return;
+        }
+
         loop {
             if current_block >= total_blocks {
                 break;
@@ -302,18 +383,22 @@ impl FileSystemRoot {
             }
         }
 
-        let reserve_start = layout.reserve_start(image_len);
-        for i in reserve_start..self.block_map.len() {
-            self.block_map[i] = 0x1FFB;
+        if *layout != NandLayout::Emmc {
+            let reserve_start = layout.reserve_start(image_len);
+            for i in reserve_start..self.block_map.len() {
+                self.block_map[i] = 0x1FFB;
+            }
         }
 
         if self.block_number >= 0 && (self.block_number as usize) < self.block_map.len() {
             self.block_map[self.block_number as usize] = 0x1FFF;
         }
-        let config_start = layout.reserve_start(image_len).saturating_sub(4);
-        for i in 0..5 {
-            if config_start + i < self.block_map.len() {
-                self.block_map[config_start + i] = 0x1FFB;
+        if *layout != NandLayout::Emmc {
+            let config_start = layout.reserve_start(image_len).saturating_sub(4);
+            for i in 0..5 {
+                if config_start + i < self.block_map.len() {
+                    self.block_map[config_start + i] = 0x1FFB;
+                }
             }
         }
     }
@@ -639,12 +724,18 @@ impl FileSystemRoot {
             self.set_chain_data(image, layout, blk_num, &entry_data)?;
         }
 
-        let max_entries_per_root_block = ((pages_per_block + 1) / 2) * fn_count;
-        let max_bmap_per_root_block = (pages_per_block / 2) * bm_count;
-
-        let root_blocks_needed_for_entries = (non_deleted_count + max_entries_per_root_block - 1) / max_entries_per_root_block.max(1);
-        let root_blocks_needed_for_bmap = (self.block_map.len() + max_bmap_per_root_block - 1) / max_bmap_per_root_block.max(1);
-        let root_blocks_needed = root_blocks_needed_for_entries.max(root_blocks_needed_for_bmap).max(1);
+        let root_blocks_needed = if *layout == NandLayout::Emmc {
+            let bmap_blocks = (self.block_map.len() + bm_count - 1) / bm_count.max(1);
+            let entry_blocks = (non_deleted_count + fn_count - 1) / fn_count.max(1);
+            bmap_blocks + entry_blocks
+        } else {
+            let max_entries_per_root_block = ((pages_per_block + 1) / 2) * fn_count;
+            let max_bmap_per_root_block = (pages_per_block / 2) * bm_count;
+            let root_blocks_needed_for_entries = (non_deleted_count + max_entries_per_root_block - 1) / max_entries_per_root_block.max(1);
+            let root_blocks_needed_for_bmap = (self.block_map.len() + max_bmap_per_root_block - 1) / max_bmap_per_root_block.max(1);
+            root_blocks_needed_for_entries.max(root_blocks_needed_for_bmap)
+        }
+        .max(1);
 
         let mut new_root_chain: Vec<u16> = Vec::new();
         let root_start = if self.block_number >= 0 { self.block_number as u16 } else { 0 };
@@ -690,8 +781,40 @@ impl FileSystemRoot {
         let mut entry_idx = 0;
         let mut bmap_idx = 0;
 
-        for &root_block in &new_root_chain {
+        for (root_chain_idx, &root_block) in new_root_chain.iter().enumerate() {
             let mut root_buffer = vec![0x00u8; logical_block_size];
+            if *layout == NandLayout::Emmc {
+                let bmap_blocks = (self.block_map.len() + bm_count - 1) / bm_count.max(1);
+                if root_chain_idx < bmap_blocks {
+                    let mut bm_in_page = 0;
+                    while bmap_idx < self.block_map.len() && bm_in_page < bm_count {
+                        let off = bm_in_page * 2;
+                        root_buffer[off..off + 2].copy_from_slice(&self.block_map[bmap_idx].to_be_bytes());
+                        bm_in_page += 1;
+                        bmap_idx += 1;
+                    }
+                } else {
+                    let mut fn_in_page = 0;
+                    while entry_idx < self.entries.len() {
+                        if self.entries[entry_idx].deleted {
+                            entry_idx += 1;
+                            continue;
+                        }
+                        if fn_in_page >= fn_count {
+                            break;
+                        }
+                        let off = fn_in_page * 0x20;
+                        let mut chunk = [0u8; 0x20];
+                        self.entries[entry_idx].write_into(&mut chunk);
+                        root_buffer[off..off + 0x20].copy_from_slice(&chunk);
+                        fn_in_page += 1;
+                        entry_idx += 1;
+                    }
+                }
+                let logical_start = root_block as usize * page_size;
+                Self::write_data_hybrid(image, logical_start, &root_buffer, layout);
+                continue;
+            }
             let mut bm_pages = Vec::new();
             let mut fn_pages = Vec::new();
             for i in 0..pages_per_block {
