@@ -556,6 +556,7 @@ impl IniSearch {
                 let mut found_path: Option<PathBuf> = None;
 
                 let is_update = lower_name.starts_with("cf_") || lower_name.starts_with("sf_") || lower_name.starts_with("cg_") || lower_name.starts_with("sg_");
+                let is_cbx = lower_name == "cbx.bin" || lower_name.starts_with("cbx_");
 
                 macro_rules! check_hash {
                     ($c:expr, $name:expr, $tier:expr) => {
@@ -575,6 +576,20 @@ impl IniSearch {
                             true
                         }
                     };
+                }
+
+                if is_cbx {
+                    for (dir, tier) in [(&build, "Build"), (&mydata, "mydata"), (&common, "Common")] {
+                        let cand = resolve_robust(dir, filename);
+                        if cand.exists() {
+                            let c = std::fs::read(&cand)?;
+                            if check_hash!(c, filename, tier) {
+                                found_content = Some(c);
+                                found_path = Some(cand);
+                                break;
+                            }
+                        }
+                    }
                 }
 
                 // Tier 1: mydata folder

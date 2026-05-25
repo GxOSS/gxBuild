@@ -2361,6 +2361,25 @@ impl NandSkeleton {
                 }
             }
             let logical_block_size = layout.logical_pages_per_block() * 0x200;
+            let protect_range = |start: usize, len: usize, root: &mut crate::builder::filesystem::flashfs::FileSystemRoot| {
+                if len == 0 {
+                    return;
+                }
+                let start_block = start / logical_block_size;
+                let end_block = (start + len + logical_block_size - 1) / logical_block_size;
+                for b in start_block..end_block {
+                    if b < root.block_map.len() {
+                        root.block_map[b] = 0x1FFB;
+                    }
+                }
+            };
+            protect_range(target_smc_offset, smc_len, &mut root);
+            protect_range(kv_offset, self.extra.keyvault.len(), &mut root);
+            protect_range(bootchain_start, curr_bl.saturating_sub(bootchain_start), &mut root);
+            protect_range(target_cf_offset, header.patch_slots.get().max(1) as usize * 0x10000, &mut root);
+            if khv_len > 0 {
+                protect_range(patch_stream_start, khv_len, &mut root);
+            }
             for payload in &payload_list.entries {
                 let addr = payload.address as usize;
                 let start_block = addr / logical_block_size;

@@ -319,7 +319,7 @@ pub fn apply_xe_ini(mut nand: NandSkeleton, ini: XeBuildIni, pending: PendingAss
         } else if prefix.starts_with("cbb_") {
             target_bl.cb_b = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
             info!("[ini] Assigned CB_B from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
-        } else if prefix.starts_with("cbx_") {
+        } else if prefix == "cbx.bin" || prefix.starts_with("cbx_") {
             target_bl.cb_x = Some(crate::builder::chain::cb::BootloaderCb::parse(&data).map_err(|e| IniError::BootloaderError(e.to_string()))?);
             info!("[ini] Assigned CB_X from '{}' ({} bytes, chain {})", filename, data.len(), chain_id);
         } else if prefix.starts_with("cb_") || prefix.starts_with("sb_") {
