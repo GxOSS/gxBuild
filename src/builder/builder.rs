@@ -916,7 +916,7 @@ impl NandSkeleton {
         let motherboard = MotherboardType::Unknown;
 
         let mut final_flashfs = flashfs;
-        if matches!(layout, NandLayout::Sb | NandLayout::Xsb) {
+        if matches!(layout, NandLayout::Sb | NandLayout::Xsb) && final_flashfs.root.block_number < 0 {
             let sb = SouthbridgeType::from(motherboard);
             let chain_profile = if bootloaders.cb_b.is_some() { "split" } else { "single" };
             let (_fs_root_addr, _smc_cfg, phys_fs_block) = LayoutCalculator::calculate(sb, chain_profile, layout);
@@ -1069,7 +1069,7 @@ impl NandSkeleton {
         };
 
         let mut final_flashfs = flashfs;
-        if matches!(layout, NandLayout::Sb | NandLayout::Xsb) {
+        if matches!(layout, NandLayout::Sb | NandLayout::Xsb) && final_flashfs.root.block_number < 0 {
             let sb = SouthbridgeType::from(motherboard);
             let chain_profile = if bl_mut.cb_b.is_some() { "split" } else { "single" };
             let (_fs_root_addr, _smc_cfg, phys_fs_block) = LayoutCalculator::calculate(sb, chain_profile, layout);

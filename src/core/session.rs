@@ -1404,7 +1404,9 @@ impl Session {
 
                 let mut ids: Vec<&str> = vec!["kv", "fcrt"];
                 if all {
-                    ids = vec!["smc", "smcc", "kv", "fcrt", "cb", "cba", "cbb", "sc", "cd", "ce", "cf0", "cg0", "cf1", "cg1", "header"];
+                    ids = vec![
+                        "smc", "smcc", "kv", "fcrt", "cb", "cba", "cbx", "cbb", "sc", "cd", "ce", "cf0", "cg0", "cf1", "cg1", "header",
+                    ];
                 }
 
                 let encrypted_chain = if all {
@@ -1465,6 +1467,7 @@ impl Session {
                         "header" => Some(("NandHeader.bin", zerocopy::IntoBytes::as_bytes(&nand.header).to_vec())),
                         "cb" => encrypted_chain.as_ref().and_then(|(bl, _)| bl.cb.as_ref().map(|b| ("CB.bin", b.serialize()))),
                         "cba" => encrypted_chain.as_ref().and_then(|(bl, _)| bl.cb_a.as_ref().map(|b| ("CBA.bin", b.serialize()))),
+                        "cbx" => encrypted_chain.as_ref().and_then(|(bl, _)| bl.cb_x.as_ref().map(|b| ("CBX.bin", b.serialize()))),
                         "cbb" => encrypted_chain.as_ref().and_then(|(bl, _)| bl.cb_b.as_ref().map(|b| ("CBB.bin", b.serialize()))),
                         "sc" => encrypted_chain.as_ref().and_then(|(bl, _)| bl.sc.as_ref().map(|b| ("SC.bin", b.serialize()))),
                         "cd" => encrypted_chain.as_ref().and_then(|(bl, _)| bl.cd.as_ref().map(|b| ("CD.bin", b.serialize()))),
@@ -1486,6 +1489,7 @@ impl Session {
                         "header" => Some(("NandHeader.bin", zerocopy::IntoBytes::as_bytes(&nand.header).to_vec())),
                         "cb" => nand.bootloaders.cb.as_ref().map(|b| ("CB.bin", b.serialize())),
                         "cba" => nand.bootloaders.cb_a.as_ref().map(|b| ("CBA.bin", b.serialize())),
+                        "cbx" => nand.bootloaders.cb_x.as_ref().map(|b| ("CBX.bin", b.serialize())),
                         "cbb" => nand.bootloaders.cb_b.as_ref().map(|b| ("CBB.bin", b.serialize())),
                         "sc" => nand.bootloaders.sc.as_ref().map(|b| ("SC.bin", b.serialize())),
                         "cd" => nand.bootloaders.cd.as_ref().map(|b| ("CD.bin", b.serialize())),

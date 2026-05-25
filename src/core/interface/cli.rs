@@ -838,6 +838,156 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
             None
         };
 
+        let walk_chain = |mut off: usize, cf_ptr: usize| -> anyhow::Result<usize> {
+            let mut local_wrote = 0usize;
+            let mut cf_count = 0usize;
+            let mut cg_count = 0usize;
+            let mut cb_seen = 0usize;
+            let mut cbx_written = false;
+
+            for _ in 0..16 {
+                if off.saturating_add(0x10) > clean.len() {
+                    break;
+                }
+                let blh = match crate::builder::chain::BootloaderHeader::read_from_prefix(&clean[off..off + 0x10]) {
+                    Ok((v, _)) => v,
+                    Err(_) => break,
+                };
+                let bl_size = blh.size.get() as usize;
+                if bl_size < 0x10 || bl_size > 0x2000000 || off.saturating_add(bl_size) > clean.len() {
+                    break;
+                }
+
+                let data = &clean[off..off + bl_size];
+                match blh.get_type() {
+                    crate::builder::chain::XenonBlType::CB => {
+                        cb_seen += 1;
+                        let flags = blh.flags.get();
+                        let has_cba_flag = (flags & 0x800) == 0x800;
+                        let is_single = cb_seen == 1 && !has_cba_flag;
+                        let is_cba = cb_seen == 1 && has_cba_flag;
+                        let is_cbx = cb_seen == 2
+                            && has_cba_flag
+                            && bl_size <= 0x800
+                            && (blh.version.get() == 0x3C48 || bl_size == 0x400);
+
+                        let name = if is_single {
+                            "CB.bin"
+                        } else if is_cba {
+                            "CBA.bin"
+                        } else if is_cbx {
+                            "CBX.bin"
+                        } else {
+                            "CBB.bin"
+                        };
+                        if write_part(name, data, output_dir)? {
+                            local_wrote += 1;
+                        }
+                        if is_cbx {
+                            cbx_written = true;
+                        }
+                    }
+                    crate::builder::chain::XenonBlType::SC => {
+                        if write_part("SC.bin", data, output_dir)? {
+                            local_wrote += 1;
+                        }
+                    }
+                    crate::builder::chain::XenonBlType::CD => {
+                        if write_part("CD.bin", data, output_dir)? {
+                            local_wrote += 1;
+                        }
+                    }
+                    crate::builder::chain::XenonBlType::CE => {
+                        if write_part("CE.bin", data, output_dir)? {
+                            local_wrote += 1;
+                        }
+                    }
+                    crate::builder::chain::XenonBlType::CF => {
+                        let name = if cf_count == 0 { "CF_0.bin" } else { "CF_1.bin" };
+                        if write_part(name, data, output_dir)? {
+                            local_wrote += 1;
+                        }
+                        cf_count += 1;
+                    }
+                    crate::builder::chain::XenonBlType::CG => {
+                        let name = if cg_count == 0 { "CG_0.bin" } else { "CG_1.bin" };
+                        if write_part(name, data, output_dir)? {
+                            local_wrote += 1;
+                        }
+                        cg_count += 1;
+                    }
+                    _ => break,
+                }
+
+                off = off.saturating_add((bl_size + 0xF) & 0xFFFF_FFF0);
+            }
+
+            if !cbx_written && clean.len() > 0x8010 {
+                let scan_end = std::cmp::min(clean.len().saturating_sub(0x10), 0x20000);
+                let mut scan_off = 0x8000usize;
+                while scan_off < scan_end {
+                    if let Ok((blh, _)) = crate::builder::chain::BootloaderHeader::read_from_prefix(&clean[scan_off..scan_off + 0x10]) {
+                        if blh.get_type() == crate::builder::chain::XenonBlType::CB {
+                            let bl_size = blh.size.get() as usize;
+                            let flags = blh.flags.get();
+                            let has_cba_flag = (flags & 0x800) == 0x800;
+                            if has_cba_flag
+                                && bl_size >= 0x10
+                                && bl_size <= 0x800
+                                && scan_off.saturating_add(bl_size) <= clean.len()
+                                && (blh.version.get() == 0x3C48 || bl_size == 0x400)
+                            {
+                                let data = &clean[scan_off..scan_off + bl_size];
+                                if write_part("CBX.bin", data, output_dir)? {
+                                    local_wrote += 1;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    scan_off = scan_off.saturating_add(0x10);
+                }
+            }
+
+            if cf_count == 0 && cf_ptr > 0 && cf_ptr.saturating_add(0x10) <= clean.len() {
+                let mut scan_off = cf_ptr;
+                for _ in 0..8 {
+                    if scan_off.saturating_add(0x10) > clean.len() {
+                        break;
+                    }
+                    let blh = match crate::builder::chain::BootloaderHeader::read_from_prefix(&clean[scan_off..scan_off + 0x10]) {
+                        Ok((v, _)) => v,
+                        Err(_) => break,
+                    };
+                    let bl_size = blh.size.get() as usize;
+                    if bl_size < 0x10 || bl_size > 0x2000000 || scan_off.saturating_add(bl_size) > clean.len() {
+                        break;
+                    }
+                    let data = &clean[scan_off..scan_off + bl_size];
+                    match blh.get_type() {
+                        crate::builder::chain::XenonBlType::CF => {
+                            let name = if cf_count == 0 { "CF_0.bin" } else { "CF_1.bin" };
+                            if write_part(name, data, output_dir)? {
+                                local_wrote += 1;
+                            }
+                            cf_count += 1;
+                        }
+                        crate::builder::chain::XenonBlType::CG => {
+                            let name = if cg_count == 0 { "CG_0.bin" } else { "CG_1.bin" };
+                            if write_part(name, data, output_dir)? {
+                                local_wrote += 1;
+                            }
+                            cg_count += 1;
+                        }
+                        _ => break,
+                    }
+                    scan_off = scan_off.saturating_add((bl_size + 0xF) & 0xFFFF_FFF0);
+                }
+            }
+
+            Ok(local_wrote)
+        };
+
         if let Some(h) = header {
             if write_part("NandHeader.bin", zerocopy::IntoBytes::as_bytes(&h), output_dir)? {
                 wrote += 1;
@@ -866,120 +1016,10 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                 }
             }
 
-            let mut off = h.cb_offset() as usize;
             let cf_ptr = h.cf_offset.get() as usize;
-            let mut cf_count = 0usize;
-            let mut cg_count = 0usize;
-            let mut cb_seen = 0usize;
-
-            for _ in 0..16 {
-                if off.saturating_add(0x10) > clean.len() {
-                    break;
-                }
-                let blh = match crate::builder::chain::BootloaderHeader::read_from_prefix(&clean[off..off + 0x10]) {
-                    Ok((v, _)) => v,
-                    Err(_) => break,
-                };
-                let bl_size = blh.size.get() as usize;
-                if bl_size < 0x10 || bl_size > 0x2000000 || off.saturating_add(bl_size) > clean.len() {
-                    break;
-                }
-
-                let data = &clean[off..off + bl_size];
-
-                match blh.get_type() {
-                    crate::builder::chain::XenonBlType::CB => {
-                        cb_seen += 1;
-                        let flags = blh.flags.get();
-                        let has_cba_flag = (flags & 0x800) == 0x800;
-                        let is_single = cb_seen == 1 && !has_cba_flag;
-                        let is_cba = cb_seen == 1 && has_cba_flag;
-                        let is_cbx = cb_seen == 2 && has_cba_flag && bl_size <= 0x500 && blh.pairing.get() == 0;
-
-                        let name = if is_single {
-                            "CB.bin"
-                        } else if is_cba {
-                            "CBA.bin"
-                        } else if is_cbx {
-                            "CBX.bin"
-                        } else {
-                            "CBB.bin"
-                        };
-                        if write_part(name, data, output_dir)? {
-                            wrote += 1;
-                        }
-                    }
-                    crate::builder::chain::XenonBlType::SC => {
-                        if write_part("SC.bin", data, output_dir)? {
-                            wrote += 1;
-                        }
-                    }
-                    crate::builder::chain::XenonBlType::CD => {
-                        if write_part("CD.bin", data, output_dir)? {
-                            wrote += 1;
-                        }
-                    }
-                    crate::builder::chain::XenonBlType::CE => {
-                        if write_part("CE.bin", data, output_dir)? {
-                            wrote += 1;
-                        }
-                    }
-                    crate::builder::chain::XenonBlType::CF => {
-                        let name = if cf_count == 0 { "CF_0.bin" } else { "CF_1.bin" };
-                        if write_part(name, data, output_dir)? {
-                            wrote += 1;
-                        }
-                        cf_count += 1;
-                    }
-                    crate::builder::chain::XenonBlType::CG => {
-                        let name = if cg_count == 0 { "CG_0.bin" } else { "CG_1.bin" };
-                        if write_part(name, data, output_dir)? {
-                            wrote += 1;
-                        }
-                        cg_count += 1;
-                    }
-                    _ => break,
-                }
-
-                off = off.saturating_add((bl_size + 0xF) & 0xFFFF_FFF0);
-            }
-
-            if cf_count == 0 && cf_ptr > 0 && cf_ptr.saturating_add(0x10) <= clean.len() {
-                let mut scan_off = cf_ptr;
-                for _ in 0..8 {
-                    if scan_off.saturating_add(0x10) > clean.len() {
-                        break;
-                    }
-                    let blh = match crate::builder::chain::BootloaderHeader::read_from_prefix(&clean[scan_off..scan_off + 0x10]) {
-                        Ok((v, _)) => v,
-                        Err(_) => break,
-                    };
-                    let bl_size = blh.size.get() as usize;
-                    if bl_size < 0x10 || bl_size > 0x2000000 || scan_off.saturating_add(bl_size) > clean.len() {
-                        break;
-                    }
-                    let data = &clean[scan_off..scan_off + bl_size];
-                    match blh.get_type() {
-                        crate::builder::chain::XenonBlType::CF => {
-                            let name = if cf_count == 0 { "CF_0.bin" } else { "CF_1.bin" };
-                            if write_part(name, data, output_dir)? {
-                                wrote += 1;
-                            }
-                            cf_count += 1;
-                        }
-                        crate::builder::chain::XenonBlType::CG => {
-                            let name = if cg_count == 0 { "CG_0.bin" } else { "CG_1.bin" };
-                            if write_part(name, data, output_dir)? {
-                                wrote += 1;
-                            }
-                            cg_count += 1;
-                        }
-                        _ => break,
-                    }
-                    scan_off = scan_off.saturating_add((bl_size + 0xF) & 0xFFFF_FFF0);
-                }
-            }
-        } else if clean.len() >= 0x4000 {
+            wrote += walk_chain(h.cb_offset() as usize, cf_ptr)?;
+        } else if clean.len() >= 0x8000 {
+            wrote += walk_chain(0x8000usize, 0)?;
             let smc_off = 0x1000usize;
             let smc_sz = 0x3000usize;
             if smc_off.saturating_add(smc_sz) <= clean.len() {
