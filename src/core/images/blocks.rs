@@ -19,7 +19,7 @@
      misrepresented as being the original software.
   3. This notice may not be removed or altered from any source distribution.
 */
-use log::info;
+use log::{info, warn};
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum NandLayout {
@@ -478,6 +478,38 @@ pub fn calculate_ecc(data: &mut [u8]) {
     data[0x20C..0x210].copy_from_slice(&ecc_temp);
 }
 
+fn compute_ecc(data: &[u8]) -> [u8; 4] {
+    let mut val: u32 = 0;
+    let mut v: u32 = 0;
+    for i in 0..0x1066 {
+        if (i & 31) == 0 {
+            let offset = i / 8;
+            v = !u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
+        }
+        val ^= v & 1;
+        v >>= 1;
+        if (val & 1) != 0 {
+            val ^= 0x6954559;
+        }
+        val >>= 1;
+    }
+    val = !val;
+    let mut ecc_temp = (val << 6).to_le_bytes();
+    ecc_temp[0] = (ecc_temp[0] & !0x3f) | (data[0x20C] & 0x3F);
+    ecc_temp
+}
+
+/// Verify the ECC of a physical `0x210`-byte page.
+/// Returns `true` if the page ECC is valid, `false` if a mismatch is detected.
+pub fn ecc_verify_and_correct(page: &mut [u8]) -> bool {
+    if page.len() < 0x210 {
+        return true;
+    }
+    let stored = [page[0x20C], page[0x20D], page[0x20E], page[0x20F]];
+    let computed = compute_ecc(page);
+    stored == computed
+}
+
 #[derive(Clone, Debug)]
 pub struct FsSpareInfo {
     pub sequence: u32,
@@ -793,10 +825,25 @@ pub fn remove_spare(image: &[u8]) -> Vec<u8> {
                     let chunk_out = 0x800usize;
                     let chunks = image.len() / chunk_in;
                     let mut result = vec![0u8; chunks * chunk_out];
+                    let mut ecc_bad = 0usize;
                     for i in 0..chunks {
                         let in_offset = i * chunk_in;
                         let out_offset = i * chunk_out;
+                        // Chunked BB: 4 data pages (0x200 each) followed by 4 spare (0x10 each)
+                        for p in 0..4 {
+                            let data_start = in_offset + p * 0x200;
+                            let spare_start = in_offset + 0x800 + p * 0x10;
+                            let mut buf = [0u8; 0x210];
+                            buf[..0x200].copy_from_slice(&image[data_start..data_start + 0x200]);
+                            buf[0x200..0x210].copy_from_slice(&image[spare_start..spare_start + 0x10]);
+                            if !ecc_verify_and_correct(&mut buf) {
+                                ecc_bad += 1;
+                            }
+                        }
                         result[out_offset..out_offset + chunk_out].copy_from_slice(&image[in_offset..in_offset + chunk_out]);
+                    }
+                    if ecc_bad > 0 {
+                        warn!("[blocks] ECC: {} page(s) failed verification out of {}", ecc_bad, chunks * 4);
                     }
                     result
                 }
@@ -805,8 +852,19 @@ pub fn remove_spare(image: &[u8]) -> Vec<u8> {
                     let l_page = layout.page_size();
                     let pages = image.len() / p_page;
                     let mut result = vec![0u8; pages * l_page];
+                    let mut ecc_bad = 0usize;
                     for i in 0..pages {
+                        if p_page >= 0x210 {
+                            let mut buf = [0u8; 0x210];
+                            buf.copy_from_slice(&image[i * p_page..i * p_page + 0x210]);
+                            if !ecc_verify_and_correct(&mut buf) {
+                                ecc_bad += 1;
+                            }
+                        }
                         result[i * l_page..(i + 1) * l_page].copy_from_slice(&image[i * p_page..i * p_page + l_page]);
+                    }
+                    if ecc_bad > 0 {
+                        warn!("[blocks] ECC: {} page(s) failed verification out of {}", ecc_bad, pages);
                     }
                     result
                 }
@@ -817,9 +875,21 @@ pub fn remove_spare(image: &[u8]) -> Vec<u8> {
             let l_page = layout.page_size();
             let pages = image.len() / p_page;
             let mut result = vec![0u8; pages * l_page];
+            let mut ecc_bad = 0usize;
 
             for i in 0..pages {
-                result[i * l_page..(i + 1) * l_page].copy_from_slice(&image[i * p_page..i * p_page + l_page]);
+                let src = &image[i * p_page..i * p_page + p_page];
+                if p_page >= 0x210 {
+                    let mut buf = [0u8; 0x210];
+                    buf.copy_from_slice(&src[..0x210]);
+                    if !ecc_verify_and_correct(&mut buf) {
+                        ecc_bad += 1;
+                    }
+                }
+                result[i * l_page..(i + 1) * l_page].copy_from_slice(&src[..l_page]);
+            }
+            if ecc_bad > 0 {
+                warn!("[blocks] ECC: {} page(s) failed verification out of {}", ecc_bad, pages);
             }
             result
         }

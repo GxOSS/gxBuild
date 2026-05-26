@@ -783,10 +783,19 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         if ecc_raw.len() % 0x210 == 0 {
             let pages = ecc_raw.len() / 0x210;
             let mut out = vec![0u8; pages * 0x200];
+            let mut ecc_bad = 0usize;
             for i in 0..pages {
                 let in_off = i * 0x210;
                 let out_off = i * 0x200;
+                let mut buf = [0u8; 0x210];
+                buf.copy_from_slice(&ecc_raw[in_off..in_off + 0x210]);
+                if !crate::core::images::blocks::ecc_verify_and_correct(&mut buf) {
+                    ecc_bad += 1;
+                }
                 out[out_off..out_off + 0x200].copy_from_slice(&ecc_raw[in_off..in_off + 0x200]);
+            }
+            if ecc_bad > 0 {
+                log::warn!("[cli] ECC: {} page(s) failed verification out of {}", ecc_bad, pages);
             }
             return out;
         }

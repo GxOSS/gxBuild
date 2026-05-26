@@ -21,7 +21,7 @@
 */
 
 use crate::builder::deps::excrypt::{self, Rc4};
-use log::{info, warn};
+use log::info;
 use zerocopy::byteorder::{BigEndian, U16};
 use zerocopy::FromBytes;
 
@@ -160,31 +160,21 @@ impl Keyvault {
             temp_kv.check_decrypted_signatures()
         };
 
-        let kv1_looks_like_type2 = if kv1_valid {
-            let sig_region = &kv1_data[0x1DF8..0x1E00];
-            let all_ff = sig_region.iter().all(|&b| b == 0xFF);
-            let all_00 = sig_region.iter().all(|&b| b == 0x00);
-            !(all_ff || all_00)
-        } else {
-            false
-        };
-
-        if kv1_valid && !kv1_looks_like_type2 {
-            info!("[builder] Keyvault decrypted as Type 1 (Retail).");
+        if kv1_valid {
             self.data = kv1_data;
             self.is_decrypted = true;
-            self.hashed = false;
+            let kv_type = self.get_kv_type();
+            self.hashed = kv_type == 2;
             let _ = self.refresh_metadata();
+            info!("[builder] Keyvault decrypted as Type {} ({}).", kv_type, if kv_type == 2 { "Hashed" } else { "Retail" });
             return Ok(());
         }
-
-        info!("[builder] KV1 decryption invalid or Type 2 signature found. Attempting KV2 (hashed) decryption...");
-        let mut kv2_data = original_data.clone();
 
         let hmac_res_v2 = excrypt::hmac_sha(cpukey, &[&hmac_res[..16]]).map_err(|e| format!("KV2 double-HMAC failed: {}", e))?;
         let mut fallback_key = [0u8; 16];
         fallback_key.copy_from_slice(&hmac_res_v2[..16]);
 
+        let mut kv2_data = original_data;
         let mut rc4_v2 = Rc4::new(&fallback_key).map_err(|e| format!("RC4 init failed: {}", e))?;
         rc4_v2.crypt(&mut kv2_data[0x10..]).map_err(|e| format!("Decryption failed: {}", e))?;
 
@@ -196,15 +186,6 @@ impl Keyvault {
             self.data = kv2_data;
             self.is_decrypted = true;
             self.hashed = true;
-            let _ = self.refresh_metadata();
-            return Ok(());
-        }
-
-        if kv1_valid {
-            warn!("[builder] KV2 decryption failed but KV1 was valid. Falling back to Type 1.");
-            self.data = kv1_data;
-            self.is_decrypted = true;
-            self.hashed = false;
             let _ = self.refresh_metadata();
             return Ok(());
         }
