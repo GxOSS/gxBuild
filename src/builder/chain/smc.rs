@@ -199,13 +199,17 @@ impl RawSmc {
     }
 
     fn looks_decrypted(&self) -> bool {
-        if self.data.len() < 0x103 {
+        if self.data.is_empty() {
             return false;
         }
-        let type_byte = self.data[0x100];
-        let major = self.data[0x101];
-        let minor = self.data[0x102];
-        major != 0 && major != 0xFF && minor != 0xFF && type_byte != 0 && type_byte != 0xFF
+
+        let scan_len = std::cmp::min(self.data.len(), 0x200);
+        let pat = b"Microsoft";
+        if scan_len >= pat.len() && self.data[..scan_len].windows(pat.len()).any(|w| w == pat) {
+            return true;
+        }
+
+        false
     }
 
     pub fn populate_metadata(&mut self) {
@@ -307,11 +311,20 @@ impl RawSmc {
 
     pub fn ensure_decrypted(&mut self) {
         self.unscramble();
-        self.populate_metadata();
-        if !self.looks_decrypted() {
-            smc_crypt(&mut self.data, false);
+        if self.looks_decrypted() {
             self.populate_metadata();
+            return;
         }
+
+        let original = self.data.clone();
+        smc_crypt(&mut self.data, false);
+        if self.looks_decrypted() {
+            self.populate_metadata();
+            return;
+        }
+
+        self.data = original;
+        self.populate_metadata();
     }
 
     pub fn force_decrypt(&mut self) {
@@ -326,8 +339,7 @@ impl RawSmc {
 
     pub fn encrypt_with_scramble(&mut self, scramble: bool) {
         let mut is_retail = false;
-        self.unscramble();
-        self.populate_metadata();
+        self.ensure_decrypted();
         if let Some(ref meta) = self.metadata {
             if meta.smc_type == SmcType::Retail {
                 is_retail = true;

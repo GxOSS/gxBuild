@@ -779,6 +779,17 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
             return Vec::new();
         }
 
+        if ecc_raw.len() % 0x210 == 0 {
+            let pages = ecc_raw.len() / 0x210;
+            let mut out = vec![0u8; pages * 0x200];
+            for i in 0..pages {
+                let in_off = i * 0x210;
+                let out_off = i * 0x200;
+                out[out_off..out_off + 0x200].copy_from_slice(&ecc_raw[in_off..in_off + 0x200]);
+            }
+            return out;
+        }
+
         if ecc_raw.len() % 0x840 == 0 {
             let chunks = ecc_raw.len() / 0x840;
             let mut out = vec![0u8; chunks * 0x800];
@@ -789,17 +800,6 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                 out[out_off + 0x200..out_off + 0x400].copy_from_slice(&ecc_raw[in_off + 0x200..in_off + 0x400]);
                 out[out_off + 0x400..out_off + 0x600].copy_from_slice(&ecc_raw[in_off + 0x400..in_off + 0x600]);
                 out[out_off + 0x600..out_off + 0x800].copy_from_slice(&ecc_raw[in_off + 0x600..in_off + 0x800]);
-            }
-            return out;
-        }
-
-        if ecc_raw.len() % 0x210 == 0 {
-            let pages = ecc_raw.len() / 0x210;
-            let mut out = vec![0u8; pages * 0x200];
-            for i in 0..pages {
-                let in_off = i * 0x210;
-                let out_off = i * 0x200;
-                out[out_off..out_off + 0x200].copy_from_slice(&ecc_raw[in_off..in_off + 0x200]);
             }
             return out;
         }
@@ -836,6 +836,14 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                 .and_then(|h| h.validate().ok().map(|_| h))
         } else {
             None
+        };
+
+        let smc_looks_decrypted = |data: &[u8]| -> bool {
+            if data.is_empty() {
+                return false;
+            }
+            let scan_len = std::cmp::min(data.len(), 0x200);
+            data[..scan_len].windows(b"Microsoft".len()).any(|w| w == b"Microsoft")
         };
 
         let walk_chain = |mut off: usize, cf_ptr: usize| -> anyhow::Result<usize> {
@@ -996,23 +1004,18 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
             let smc_off = h.smc_boot_offset.get() as usize;
             let smc_sz = h.smc_boot_size.get() as usize;
             if smc_off > 0 && smc_sz > 0 && smc_off.saturating_add(smc_sz) <= clean.len() {
-                if write_part("SMC.bin", &clean[smc_off..smc_off + smc_sz], output_dir)? {
-                    wrote += 1;
-                }
-            }
-
-            let smcc_off = h.smc_config_offset.get() as usize;
-            if smcc_off > 0 && smcc_off.saturating_add(0x10000) <= clean.len() {
-                if write_part("SMC_Config.bin", &clean[smcc_off..smcc_off + 0x10000], output_dir)? {
-                    wrote += 1;
-                }
-            }
-
-            let kv_off = h.kv_addr.get() as usize;
-            let kv_sz = h.kv_size.get() as usize;
-            if kv_sz == 0x4000 && kv_off > 0 && kv_off.saturating_add(kv_sz) <= clean.len() {
-                if write_part("KV.bin", &clean[kv_off..kv_off + kv_sz], output_dir)? {
-                    wrote += 1;
+                let smc = &clean[smc_off..smc_off + smc_sz];
+                if smc.iter().any(|b| *b != 0xFF) {
+                    if write_part("SMC_en.bin", smc, output_dir)? {
+                        wrote += 1;
+                    }
+                    let mut dec = crate::builder::chain::smc::RawSmc::new(smc.to_vec());
+                    dec.ensure_decrypted();
+                    if smc_looks_decrypted(&dec.data) {
+                        if write_part("SMC_dec.bin", &dec.data, output_dir)? {
+                            wrote += 1;
+                        }
+                    }
                 }
             }
 
@@ -1023,8 +1026,18 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
             let smc_off = 0x1000usize;
             let smc_sz = 0x3000usize;
             if smc_off.saturating_add(smc_sz) <= clean.len() {
-                if write_part("SMC.bin", &clean[smc_off..smc_off + smc_sz], output_dir)? {
-                    wrote += 1;
+                let smc = &clean[smc_off..smc_off + smc_sz];
+                if smc.iter().any(|b| *b != 0xFF) {
+                    if write_part("SMC_en.bin", smc, output_dir)? {
+                        wrote += 1;
+                    }
+                    let mut dec = crate::builder::chain::smc::RawSmc::new(smc.to_vec());
+                    dec.ensure_decrypted();
+                    if smc_looks_decrypted(&dec.data) {
+                        if write_part("SMC_dec.bin", &dec.data, output_dir)? {
+                            wrote += 1;
+                        }
+                    }
                 }
             }
         }
