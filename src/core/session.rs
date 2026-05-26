@@ -668,6 +668,7 @@ impl Session {
             "noecc" => o.noecc = Some(is_true),
             "nosecurity" => o.nosecurity = Some(is_true),
             "nosusecurity" => o.nosusecurity = Some(is_true),
+            "nochainpatch" => o.nochainpatch = Some(is_true),
             _ => warn!("[session] set_option: unknown key '{}'", key),
         }
         self.options.merge(o);
@@ -710,8 +711,9 @@ impl Session {
                 &self.active_nand,
                 self.options.gxunsafe,
                 self.options.nofcrt,
-                        self.options.nosecurity,
-                        self.options.nosusecurity,
+                self.options.nosecurity,
+                self.options.nosusecurity,
+                self.options.nochainpatch,
             ) {
                 Ok(search) => {
                     self.bootloader_assets.extend(search.result.bootloader_assets);
@@ -1671,6 +1673,7 @@ impl Session {
                             self.options.nofcrt,
                             self.options.nosecurity,
                             self.options.nosusecurity,
+                            self.options.nochainpatch,
                         ) {
                             Ok(search) => {
                                 // Route each pool to its typed session pool

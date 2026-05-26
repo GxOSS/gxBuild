@@ -73,6 +73,7 @@ pub struct OptionsIni {
     pub noinfo: Option<bool>,
     pub gxunsafe: Option<bool>,
     pub verbose: Option<bool>,
+    pub nochainpatch: Option<bool>,
     pub cba: Option<String>,
     pub cbb: Option<String>,
     pub full_image: Option<bool>,
@@ -118,6 +119,7 @@ impl OptionsIni {
             noinfo: None,
             gxunsafe: None,
             verbose: None,
+            nochainpatch: None,
             cba: None,
             cbb: None,
             cputemp: None,
@@ -233,6 +235,9 @@ impl OptionsIni {
         }
         if let Some(v) = other.verbose {
             self.verbose = Some(v);
+        }
+        if let Some(v) = other.nochainpatch {
+            self.nochainpatch = Some(v);
         }
         if let Some(v) = other.cba {
             self.cba = Some(v);
@@ -351,6 +356,7 @@ pub fn parse_options_ini(content: &str) -> Result<OptionsIni, OptionsIniError> {
                     "noinfo" => options.noinfo = Some(value.eq_ignore_ascii_case("true")),
                     "gxunsafe" | "unsafe" => options.gxunsafe = Some(value.eq_ignore_ascii_case("true")),
                     "verbose" => options.verbose = Some(value.eq_ignore_ascii_case("true")),
+                    "nochainpatch" => options.nochainpatch = Some(value.eq_ignore_ascii_case("true")),
                     "cba" => options.cba = Some(value.clone()),
                     "cbb" => options.cbb = Some(value.clone()),
                     "cputemp" => options.cputemp = Some(value.clone()),

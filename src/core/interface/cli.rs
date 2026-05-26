@@ -387,6 +387,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                 "noenter" => o.noenter = Some(v.eq_ignore_ascii_case("true")),
                 "noremap" => o.noremap = Some(v.eq_ignore_ascii_case("true")),
                 "nandmu" => o.nandmu = Some(v.eq_ignore_ascii_case("true")),
+                "nochainpatch" => o.nochainpatch = Some(v.eq_ignore_ascii_case("true")),
                 "cputemp" => o.cputemp = Some(v.clone()),
                 "gputemp" => o.gputemp = Some(v.clone()),
                 "edramtemp" => o.edramtemp = Some(v.clone()),

@@ -235,7 +235,9 @@ pub fn decrypt_chain(
     if !cd.is_decrypted() {
         cd.decrypt(&cd_key, None);
     }
-    ce.decrypt(&cd_key);
+    if !ce.is_decrypted() {
+        ce.decrypt(&cd_key);
+    }
 
     if let (Some(cf), Some(cg)) = (cf_0, cg_0) {
         if !cf.is_decrypted() {
@@ -358,7 +360,9 @@ pub fn encrypt_chain(
 
     let cd_key: [u8; 16] = if let Some(ref b) = cb_b { b.derived_key() } else { cb_key };
 
-    ce.decrypt(&cd_key);
+    if ce.is_decrypted() {
+        ce.decrypt(&cd_key);
+    }
     if let Some(cb_x_bl) = cb_x {
         cb_x_bl.decrypt_v1(&cb_key, &[0u8; 16]);
     }

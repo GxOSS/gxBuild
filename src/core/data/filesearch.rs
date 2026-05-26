@@ -178,11 +178,13 @@ impl IniSearch {
         nofcrt: Option<bool>,
         nosecurity: Option<bool>,
         nosusecurity: Option<bool>,
+        nochainpatch: Option<bool>,
     ) -> Result<Self, FilesearchError> {
         let unsafe_mode = unsafe_mode.unwrap_or(false);
         let nofcrt = nofcrt.unwrap_or(false);
         let nosecurity = nosecurity.unwrap_or(false);
         let nosusecurity = nosusecurity.unwrap_or(false);
+        let nochainpatch = nochainpatch.unwrap_or(false);
         let mut ini = ini;
         let mut result = IniSearchResult {
             bootloaders: None,
@@ -748,15 +750,17 @@ impl IniSearch {
                 // Need to add rebooter patching
                 if let Some(mut c) = found_content {
                     if let Some(ref parsed_patch) = xe_patch {
-                        if Some(&lower_name) == target_cb.as_ref() {
-                            if let Some(ref cb_patch) = parsed_patch.cb {
-                                let _ = crate::core::images::gxp::apply_records(&cb_patch.records, &mut c);
-                            } else if let Some(ref cbb_patch) = parsed_patch.cb_b {
-                                let _ = crate::core::images::gxp::apply_records(&cbb_patch.records, &mut c);
-                            }
-                        } else if lower_name.starts_with("cd_") || lower_name.starts_with("sd_") {
-                            if let Some(ref cd_patch) = parsed_patch.cd {
-                                let _ = crate::core::images::gxp::apply_records(&cd_patch.records, &mut c);
+                        if !nochainpatch {
+                            if Some(&lower_name) == target_cb.as_ref() {
+                                if let Some(ref cb_patch) = parsed_patch.cb {
+                                    let _ = crate::core::images::gxp::apply_records(&cb_patch.records, &mut c);
+                                } else if let Some(ref cbb_patch) = parsed_patch.cb_b {
+                                    let _ = crate::core::images::gxp::apply_records(&cbb_patch.records, &mut c);
+                                }
+                            } else if lower_name.starts_with("cd_") || lower_name.starts_with("sd_") {
+                                if let Some(ref cd_patch) = parsed_patch.cd {
+                                    let _ = crate::core::images::gxp::apply_records(&cd_patch.records, &mut c);
+                                }
                             }
                         }
                     }

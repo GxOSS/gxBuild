@@ -897,7 +897,21 @@ impl NandSkeleton {
             info!("[builder] Extracting SMC Config (Addr: 0x{:X}, Size: 0x{:X})...", config_offset, config_size);
             image[config_offset..config_offset + config_size].to_vec()
         } else {
-            Vec::new()
+            let fallback_offset = crate::builder::chain::smc::SmcConfig::get_scan_address(&layout) as usize;
+            if fallback_offset > 0 && fallback_offset + config_size <= image.len() {
+                let data = image[fallback_offset..fallback_offset + config_size].to_vec();
+                if data.iter().any(|&b| b != 0xFF) {
+                    info!(
+                        "[builder] Extracting SMC Config (fallback) (Addr: 0x{:X}, Size: 0x{:X})...",
+                        fallback_offset, config_size
+                    );
+                    data
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            }
         };
 
         let mut extra = NandExtra {
@@ -1017,9 +1031,23 @@ impl NandSkeleton {
             image[config_offset..config_offset + config_size].to_vec()
         } else {
             if config_offset > 0 {
-                warn!("[builder] SMC Config offset 0x{:X} is out of bounds, using blank config", config_offset);
+                warn!("[builder] SMC Config offset 0x{:X} is out of bounds, trying fallback scan", config_offset);
             }
-            Vec::new()
+            let fallback_offset = crate::builder::chain::smc::SmcConfig::get_scan_address(&layout) as usize;
+            if fallback_offset > 0 && fallback_offset + config_size <= image.len() {
+                let data = image[fallback_offset..fallback_offset + config_size].to_vec();
+                if data.iter().any(|&b| b != 0xFF) {
+                    info!(
+                        "[builder] Extracting SMC Config (fallback) (Addr: 0x{:X}, Size: 0x{:X})...",
+                        fallback_offset, config_size
+                    );
+                    data
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            }
         };
 
         let mut extra = NandExtra {
