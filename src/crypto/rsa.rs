@@ -102,7 +102,7 @@ pub unsafe extern "C" fn ExCryptBnQwNeModMul(
     input_a: *const u64,
     input_b: *const u64,
     output_c: *mut u64,
-    _inverse: u64,
+    inverse: u64,
     modulus: *const u64,
     modulus_size: u32,
 ) {
@@ -110,53 +110,133 @@ pub unsafe extern "C" fn ExCryptBnQwNeModMul(
         return;
     }
     let size = modulus_size as usize;
-    let a_slice = std::slice::from_raw_parts(input_a, size);
-    let b_slice = std::slice::from_raw_parts(input_b, size);
-    let m_slice = std::slice::from_raw_parts(modulus, size);
-    
-    let a = qw_to_bignum(a_slice);
-    let b = qw_to_bignum(b_slice);
-    let m = qw_to_bignum(m_slice);
-    
-    let mut ctx = BigNumContext::new().unwrap();
-    let mut mul_result = BigNum::new().unwrap();
-    let mut final_result = BigNum::new().unwrap();
-    
-    // result = (a * b) % m
-    mul_result.checked_mul(&a, &b, &mut ctx).unwrap();
-    final_result.nnmod(&mul_result, &m, &mut ctx).unwrap();
-    
-    let out_slice = std::slice::from_raw_parts_mut(output_c, size);
-    let qw_result = bignum_to_qw(&final_result, size);
-    out_slice.copy_from_slice(&qw_result);
+    let input_a = std::slice::from_raw_parts(input_a, size);
+    let input_b = std::slice::from_raw_parts(input_b, size);
+    let modulus = std::slice::from_raw_parts(modulus, size);
+    let output_c = std::slice::from_raw_parts_mut(output_c, size);
+
+    // Two parallel accumulator regions within a flat 0x210-byte buffer.
+    // Region A: buf[0..=size]   accessed as buf[index-1] (index in qwords, 1-based)
+    // Region B: buf[33..=33+size] accessed as buf[index-1 + 33]
+    // Max modulus_size supported by the original is 32 qwords (2048-bit).
+    let mut buf = [0u64; 0x42]; // 0x210 bytes / 8 = 66 qwords
+
+    // Helper: 64x64 -> (hi, lo)
+    #[inline(always)]
+    fn mul128(a: u64, b: u64) -> (u64, u64) {
+        let w = (a as u128).wrapping_mul(b as u128);
+        ((w >> 64) as u64, w as u64)
+    }
+
+    let r10 = inverse.wrapping_mul(input_a[0]);
+
+    for a in 0..size {
+        let r11 = input_b[a];
+        let r12 = {
+            // r12 = r10 * r11 + (buf[1] - buf[34]) * inverse
+            let diff = buf[1].wrapping_sub(buf[0x21]);
+            r10.wrapping_mul(r11).wrapping_add(diff.wrapping_mul(inverse))
+        };
+
+        let mut r14: u64 = 0;
+        let mut r15: u64 = 0;
+
+        for b in 0..size {
+            let idx = b + 1; // 1-based, matches C's index starting at 8 bytes = qword 1
+
+            // --- Region A: input_a[b] * r11 ---
+            let (r17, _) = mul128(r11, input_a[b]);
+            let r18_base = r11.wrapping_mul(input_a[b]);
+            let prev_a = buf[idx];
+            let (r18, c1) = r18_base.overflowing_add(prev_a);
+            let r17 = r17.wrapping_add(c1 as u64);
+            let (r18, c2) = r18.overflowing_add(r14);
+            let r17 = r17.wrapping_add(c2 as u64);
+            r14 = r17;
+            buf[idx - 1] = r18;
+
+            // --- Region B: modulus[b] * r12 ---
+            let (r17, _) = mul128(r12, modulus[b]);
+            let r18_base = r12.wrapping_mul(modulus[b]);
+            let prev_b = buf[idx + 0x21];
+            let (r18, c1) = r18_base.overflowing_add(prev_b);
+            let r17 = r17.wrapping_add(c1 as u64);
+            let (r18, c2) = r18.overflowing_add(r15);
+            let r17 = r17.wrapping_add(c2 as u64);
+            r15 = r17;
+            buf[idx + 0x20] = r18;
+        }
+
+        buf[size] = r14;
+        buf[size + 0x21] = r15;
+    }
+
+    // Comparison pass: scan from top to find first differing element
+    let mut r16: u64 = 0;
+    let mut r17: u64 = 0;
+    let mut idx = size; // top element (1-based buf index)
+    for _ in 0..size {
+        r16 = buf[idx];
+        r17 = buf[idx + 0x21];
+        if r16 != r17 {
+            break;
+        }
+        if idx == 0 { break; }
+        idx = idx.wrapping_sub(1);
+    }
+
+    let mut r14: u64 = 0;
+    let mut r15: u64 = 0;
+
+    if r16 > r17 {
+        // Subtract region B from region A
+        for c in 0..size {
+            let idx = c + 1;
+            let a_val = buf[idx];
+            let b_val = buf[idx + 0x21];
+            let r18 = a_val.wrapping_sub(b_val).wrapping_sub(r14);
+            output_c[c] = r18;
+
+            let r17t = b_val ^ a_val;
+            let r18t = r18 ^ a_val;
+            r14 = ((a_val ^ (r17t | r18t)) >> 63) & 1;
+        }
+    } else {
+        // Add modulus to region A, subtract region B
+        for c in 0..size {
+            let idx = c + 1;
+            let a_val = buf[idx];
+            let b_val = buf[idx + 0x21];
+            let m_val = modulus[c];
+            let r19 = a_val.wrapping_add(m_val).wrapping_add(r14);
+            let r20 = r19.wrapping_sub(b_val).wrapping_sub(r15);
+            output_c[c] = r20;
+
+            let t16 = (m_val ^ r19) | (a_val ^ r19);
+            r14 = ((r19 ^ t16) >> 63) & 1;
+            let t17 = (r20 ^ r19) | (b_val ^ r19);
+            r15 = ((r19 ^ t17) >> 63) & 1;
+        }
+    }
 }
 
 #[no_mangle]
 #[allow(non_snake_case)]
 pub unsafe extern "C" fn ExCryptBnQwNeModInv(input: u64) -> u64 {
-    // Compute modular inverse mod 2^64 using extended Euclidean algorithm
-    // For Montgomery reduction: inv = -a^-1 mod 2^64
-    if input == 0 {
-        return 0;
+    // Compute the 2-adic of qw such that: val = -1 + input^2
+    let mut val = input.wrapping_mul(3) ^ 2;
+    let mut x = 1u64.wrapping_sub(val.wrapping_mul(input));
+
+    // Raise it to another 32 such that: val = -1 + input^64
+    let mut i = 5u32;
+    while i < 32 {
+        val = val.wrapping_mul(x.wrapping_add(1));
+        x = x.wrapping_mul(x);
+        i <<= 1;
     }
-    
-    
-    // Simpler approach for mod 2^64 inverse
-    // inv = (-input^-1) mod 2^64
-    let mut inv: u64 = 1;
-    let mut temp = input;
-    
-    for _ in 0..64 {
-        if temp & 1 == 1 {
-            temp = temp.wrapping_add(input);
-            inv = inv.wrapping_mul(2).wrapping_add(1);
-        } else {
-            temp >>= 1;
-            inv <<= 1;
-        }
-    }
-    
-    inv.wrapping_neg()
+
+    // Done
+    val.wrapping_mul(x.wrapping_add(1))
 }
 
 // --- excrypt_bn_pkcs1.cpp ---
@@ -273,26 +353,64 @@ pub unsafe extern "C" fn ExCryptBnQwNeRsaPrvCrypt(
     if input.is_null() || output.is_null() || key.is_null() {
         return 0;
     }
-    
+
     let rsa_key = &*key;
-    let num_digits = rsa_key.num_digits as usize;
-    let key_size_bits = num_digits * 64;
-    let key_size_bytes = key_size_bits / 8;
-    
-    // For CRT-based private key operation, we need the full private key structure
-    // This is a simplified implementation - full implementation needs ExCryptRsaPrv1024
-    
+    let num_digits = rsa_key.num_digits.swap_bytes() as usize;
+    if num_digits == 0 || num_digits > 0x40 {
+        return 0;
+    }
+    let half = num_digits / 2;
+
+    // The key pointer is actually ExCryptRsaPrv1024 (or 2048).
+    // Layout after ExCryptRsa header (all fields are LE qword arrays):
+    //   modulus[num_digits], prime1[half], prime2[half],
+    //   exponent1[half], exponent2[half], coefficient[half], priv_exponent[num_digits]
+    let base = (key as *const u8).add(std::mem::size_of::<ExCryptRsa>()) as *const u64;
+    let modulus_sl  = std::slice::from_raw_parts(base,                                        num_digits);
+    let prime1_sl   = std::slice::from_raw_parts(base.add(num_digits),                        half);
+    let prime2_sl   = std::slice::from_raw_parts(base.add(num_digits + half),                 half);
+    let exp1_sl     = std::slice::from_raw_parts(base.add(num_digits + half * 2),             half);
+    let exp2_sl     = std::slice::from_raw_parts(base.add(num_digits + half * 3),             half);
+    let coeff_sl    = std::slice::from_raw_parts(base.add(num_digits + half * 4),             half);
+    let privexp_sl  = std::slice::from_raw_parts(base.add(num_digits + half * 5),             num_digits);
+
+    let n    = qw_to_bignum(modulus_sl);
+    let p    = qw_to_bignum(prime1_sl);
+    let q    = qw_to_bignum(prime2_sl);
+    let dp   = qw_to_bignum(exp1_sl);
+    let dq   = qw_to_bignum(exp2_sl);
+    let qi   = qw_to_bignum(coeff_sl);
+    let d    = qw_to_bignum(privexp_sl);
+    let e    = BigNum::from_u32(rsa_key.pub_exponent.swap_bytes()).unwrap();
+
+    let rsa = match openssl::rsa::Rsa::from_private_components(n, e, d, p, q, dp, dq, qi) {
+        Ok(r) => r,
+        Err(_) => return 0,
+    };
+
     let in_slice = std::slice::from_raw_parts(input, num_digits);
     let in_bn = qw_to_bignum(in_slice);
-    
-    // Build RSA private key from components
-    // Note: This requires the ExCryptRsaPrv1024 structure which has p, q, dp, dq, qinv
-    // For now, we do a basic RSA operation using the key structure
-    
-    // The key pointer may actually point to ExCryptRsaPrv1024/2048
+
+    // Raw private-key operation: m = c^d mod n (no padding)
+    let modulus_size = num_digits * 8;
+    let mut buf = vec![0u8; modulus_size];
+
+    // Serialize input as big-endian bytes (OpenSSL expects MSB first)
+    let in_bytes = in_bn.to_vec();
+    let start = modulus_size.saturating_sub(in_bytes.len());
+    buf[start..].copy_from_slice(&in_bytes);
+
+    let mut out_buf = vec![0u8; modulus_size];
+    let result_len = match rsa.private_decrypt(&buf, &mut out_buf, openssl::rsa::Padding::NONE) {
+        Ok(n) => n,
+        Err(_) => return 0,
+    };
+
+    // Convert result back to LE qword array
+    let result_bn = BigNum::from_slice(&out_buf[..result_len]).unwrap_or_else(|_| BigNum::new().unwrap());
     let out_slice = std::slice::from_raw_parts_mut(output, num_digits);
-    out_slice.copy_from_slice(in_slice); // Placeholder
-    
+    out_slice.copy_from_slice(&bignum_to_qw(&result_bn, num_digits));
+
     1
 }
 
@@ -347,113 +465,132 @@ pub unsafe extern "C" fn ExCryptBnQwBeSigFormat(
     if sig.is_null() || hash.is_null() || salt.is_null() {
         return;
     }
-    
-    let sig_struct = &mut *sig;
-    
-    // Clear padding
-    sig_struct.padding.fill(0);
-    
-    // Set marker byte
-    sig_struct.one = 1;
-    
-    // Copy salt (10 bytes)
-    std::ptr::copy_nonoverlapping(salt, sig_struct.salt.as_mut_ptr(), 10);
-    
-    // Copy hash (20 bytes - SHA1)
-    std::ptr::copy_nonoverlapping(hash, sig_struct.hash.as_mut_ptr(), 20);
-    
-    // Set end marker
-    sig_struct.end = 0xBC;
+
+    // Build the pre-encryption struct in a local buffer
+    let mut output = ExCryptSig {
+        padding: [0u64; 28],
+        one: 1,
+        salt: [0u8; 10],
+        hash: [0u8; 20],
+        end: 0xBC,
+    };
+    std::ptr::copy_nonoverlapping(salt, output.salt.as_mut_ptr(), 10);
+
+    // hash field = SHA1(output[0..8] | hash[0..20] | salt[0..10])
+    let output_bytes = std::slice::from_raw_parts(&output as *const ExCryptSig as *const u8, 8);
+    let hash_slice = std::slice::from_raw_parts(hash, 20);
+    let salt_slice = std::slice::from_raw_parts(salt, 10);
+    use sha1::Digest;
+    let mut hasher = sha1::Sha1::new();
+    hasher.update(output_bytes);
+    hasher.update(hash_slice);
+    hasher.update(salt_slice);
+    let computed: [u8; 20] = hasher.finalize().into();
+    output.hash.copy_from_slice(&computed);
+
+    // RC4-encrypt the first 0xEB bytes of output using hash as key
+    let output_raw = std::slice::from_raw_parts_mut(&mut output as *mut ExCryptSig as *mut u8, 0xEB);
+    super::rc4::ExCryptRc4(output.hash.as_ptr(), 20, output_raw.as_mut_ptr(), 0xEB);
+
+    // Clear high bit of first byte
+    let output_raw = std::slice::from_raw_parts_mut(&mut output as *mut ExCryptSig as *mut u8, 0x100);
+    output_raw[0] &= 0x7F;
+
+    // Write to sig reversed in 64-bit qword chunks (out64[0x1F - c] = in64[c])
+    let in64 = std::slice::from_raw_parts(&output as *const ExCryptSig as *const u64, 0x20);
+    let out64 = std::slice::from_raw_parts_mut(sig as *mut u64, 0x20);
+    for c in 0..0x20usize {
+        out64[0x1F - c] = in64[c];
+    }
 }
 
 #[no_mangle]
 #[allow(non_snake_case)]
 pub unsafe extern "C" fn ExCryptBnQwBeSigVerify(
-    sig: *const ExCryptSig,
+    sig: *mut ExCryptSig,
     hash: *const u8,
     salt: *const u8,
     pubkey: *const ExCryptRsa,
 ) -> i32 {
-    if sig.is_null() || hash.is_null() || salt.is_null() || pubkey.is_null() {
-        return 0;
-    }
-    
-    let sig_struct = &*sig;
-    
-    // Check end marker
-    if sig_struct.end != 0xBC {
-        return 0;
-    }
-    
-    // Check the 'one' marker
-    if sig_struct.one != 1 {
-        return 0;
-    }
-    
-    // Verify salt matches
-    let salt_slice = std::slice::from_raw_parts(salt, 10);
-    if &sig_struct.salt[..] != salt_slice {
-        return 0;
-    }
-    
-    // Verify hash matches
-    let hash_slice = std::slice::from_raw_parts(hash, 20);
-    if &sig_struct.hash[..] != hash_slice {
-        return 0;
-    }
-    
-    // Padding should be zeros
-    for &pad in &sig_struct.padding {
-        if pad != 0 {
-            return 0;
-        }
-    }
-    
-    1
+    (ExCryptBnQwBeSigDifference(sig, hash, salt, pubkey) == 0) as i32
 }
 
 #[no_mangle]
 #[allow(non_snake_case)]
 pub unsafe extern "C" fn ExCryptBnQwBeSigDifference(
-    sig: *const ExCryptSig,
+    sig: *mut ExCryptSig,
     hash: *const u8,
     salt: *const u8,
     pubkey: *const ExCryptRsa,
 ) -> i32 {
-    if sig.is_null() || hash.is_null() || salt.is_null() {
+    if sig.is_null() || hash.is_null() || salt.is_null() || pubkey.is_null() {
         return -1;
     }
-    
-    let sig_struct = &*sig;
-    let mut diff = 0i32;
-    
-    // XOR-based difference calculation (constant time-ish)
-    let hash_slice = std::slice::from_raw_parts(hash, 20);
-    let salt_slice = std::slice::from_raw_parts(salt, 10);
-    
-    for i in 0..20 {
-        diff |= (sig_struct.hash[i] ^ hash_slice[i]) as i32;
+
+    let rsa_key = &*pubkey;
+    let num_digits_swap = rsa_key.num_digits.swap_bytes();
+    let exp = rsa_key.pub_exponent.swap_bytes();
+
+    if num_digits_swap != 0x20 || (exp != 3 && exp != 0x10001) {
+        return -1;
     }
-    
-    for i in 0..10 {
-        diff |= (sig_struct.salt[i] ^ salt_slice[i]) as i32;
+
+    // Byteswap the signature in-place (SwapDwQwLeBe on 32 qwords)
+    let qw_sig = std::slice::from_raw_parts_mut(sig as *mut u64, 0x20);
+    for qw in qw_sig.iter_mut() {
+        *qw = qw.swap_bytes();
     }
-    
-    diff |= (sig_struct.end ^ 0xBC) as i32;
-    diff |= (sig_struct.one ^ 1) as i32;
-    
-    // Check padding is zero
-    for &pad in &sig_struct.padding {
-        diff |= pad as i32;
+
+    // Copy for modular exponentiation
+    let mut sig_copy = [0u64; 0x20];
+    sig_copy.copy_from_slice(qw_sig);
+
+    // Get modulus (byteswapped)
+    let modulus_raw = std::slice::from_raw_parts(
+        (pubkey as *const u8).add(std::mem::size_of::<ExCryptRsa>()) as *const u64,
+        0x20,
+    );
+    let mut modulus_swap = [0u64; 0x20];
+    for i in 0..0x20 {
+        modulus_swap[i] = modulus_raw[i].swap_bytes();
     }
-    
-    diff
+
+    let inverse = ExCryptBnQwNeModInv(modulus_swap[0]);
+
+    // Square-and-multiply: result = sig^exp mod modulus
+    // Loop: exp >>= 1; while exp != 0: square; after loop: one final multiply
+    let mut exp_remaining = exp;
+    loop {
+        exp_remaining >>= 1;
+        if exp_remaining == 0 {
+            break;
+        }
+        ExCryptBnQwNeModMul(sig_copy.as_ptr(), sig_copy.as_ptr(), sig_copy.as_mut_ptr(), inverse, modulus_swap.as_ptr(), 0x20);
+    }
+    ExCryptBnQwNeModMul(sig_copy.as_ptr(), qw_sig.as_ptr(), qw_sig.as_mut_ptr(), inverse, modulus_swap.as_ptr(), 0x20);
+
+    // Byteswap result back
+    for qw in qw_sig.iter_mut() {
+        *qw = qw.swap_bytes();
+    }
+
+    // Format the expected signature into sig_copy (reuse as EXCRYPT_SIG buffer)
+    let expected_sig_ptr = sig_copy.as_mut_ptr() as *mut ExCryptSig;
+    ExCryptBnQwBeSigFormat(expected_sig_ptr, hash, salt);
+
+    // Compare
+    super::ExCryptMemDiff(
+        qw_sig.as_ptr() as *const u8,
+        sig_copy.as_ptr() as *const u8,
+        256,
+    )
 }
 
 // --- Safe helpers ---
 
 pub fn verify_signature(sig: &[u8; 256], hash: &[u8; 20], salt: &[u8], pubkey: &ExCryptRsa) -> Result<bool> {
-    let signature_ptr = sig.as_ptr() as *const ExCryptSig;
+    let mut sig_copy = *sig;
+    let signature_ptr = sig_copy.as_mut_ptr() as *mut ExCryptSig;
     unsafe {
         let result = ExCryptBnQwBeSigVerify(signature_ptr, hash.as_ptr(), salt.as_ptr(), pubkey);
         Ok(result == 1)

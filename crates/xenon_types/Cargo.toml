@@ -1,0 +1,16 @@
+[package]
+name = "xenon_types"
+version.workspace = true
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/landaire/acceleration"
+authors = ["Lander Brandt <landerbrandt@gmail.com>"]
+readme = "README.md"
+description = "Common types for Xbox 360 (Xenon) file formats and protocols"
+keywords = ["xbox360", "xenon", "xbox", "types"]
+categories = ["data-structures"]
+
+[dependencies]
+serde = { workspace = true }
+bitflags = { workspace = true }
+jiff = { version = "0.2", optional = true }

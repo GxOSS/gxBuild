@@ -118,5 +118,6 @@ Component breakdown:
 * **ExCrypt:** BSD 3-Clause License
 * **Xenia:** BSD 3-Clause License
 * **x360utils:** Unlicense
+* **XeCrypt:** MIT License
 
 All code taken from other projects has been properly attributed in their respective file headers.
