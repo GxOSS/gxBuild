@@ -4,7 +4,7 @@
     Ported from RGBuildPP CXeFlashImage LoadFileSystems / SaveFileSystems.
 */
 
-use crate::builder::deps::excrypt;
+use crate::crypto::sha;
 use crate::builder::filesystem::flashfs::FileSystemRoot;
 use crate::builder::filesystem::mobile::MobileStore;
 use log::info;
@@ -92,7 +92,7 @@ impl CoronaFsData {
     /// SHA-1 over payload starting at `dwUnknown` (RGBuildPP `XeCryptSha` on struct tail).
     pub fn refresh_digest(&mut self) -> Result<(), String> {
         let mut raw = self.to_bytes();
-        let hash = excrypt::sha(&[&raw[0x14..CORONA_FS_DATA_SIZE]]).map_err(|e| format!("Corona digest SHA failed: {}", e))?;
+        let hash = sha(&[&raw[0x14..CORONA_FS_DATA_SIZE]]).map_err(|e| format!("Corona digest SHA failed: {}", e))?;
         raw[0..0x14].copy_from_slice(&hash[..0x14]);
         self.section_digest.copy_from_slice(&hash[..0x14]);
         Ok(())

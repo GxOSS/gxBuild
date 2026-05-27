@@ -20,7 +20,8 @@
 */
 
 use super::BootloaderHeader;
-use crate::builder::deps::excrypt::{self, ExCryptRsa, Rc4};
+use crate::crypto::{hmac_sha, rot_sum_sha, verify_signature, Rc4};
+use crate::crypto::rsa::ExCryptRsa;
 use log::info;
 use zerocopy::{FromBytes, IntoBytes};
 
@@ -209,7 +210,7 @@ impl BootloaderCb {
             data_to_hash[3] = meta.lockdown_value;
             data_to_hash[4..16].copy_from_slice(&meta.reserved_per_box);
 
-            if let Ok(digest) = excrypt::hmac_sha(cpu_key, &[&data_to_hash]) {
+            if let Ok(digest) = hmac_sha(cpu_key, &[&data_to_hash]) {
                 meta.per_box_digest.copy_from_slice(&digest[..16]);
                 self.sync_metadata();
                 info!("[builder] Recalculated CB PerBoxDigest with updated pairing data");
@@ -234,7 +235,7 @@ impl BootloaderCb {
         }
 
         // rotsum covers first 0x10 bytes (header) and everything from globals (0x130 rel / 0x140 abs) to the end
-        if let Ok(hash) = excrypt::rot_sum_sha(&IntoBytes::as_bytes(&self.header)[..0x10], &self.data[0x130..payload_len]) {
+        if let Ok(hash) = rot_sum_sha(&IntoBytes::as_bytes(&self.header)[..0x10], &self.data[0x130..payload_len]) {
             sha_out.copy_from_slice(&hash);
         }
     }
@@ -249,7 +250,7 @@ impl BootloaderCb {
         let signature: &[u8; 256] = self.data[0x30..0x130].try_into().unwrap(); // Absolute 0x40
 
         let expected_salt = b"XBOX_ROM_2\0";
-        excrypt::verify_signature(signature, &cb_hash, expected_salt, rsa_1bl).unwrap_or(false)
+        verify_signature(signature, &cb_hash, expected_salt, rsa_1bl).unwrap_or(false)
     }
 
     pub fn print_info(&self) {
@@ -302,7 +303,7 @@ impl BootloaderCb {
         }
 
         // Derive RC4 key from 1BL key and the bootloader's key field.
-        if let Ok(derived_key) = excrypt::hmac_sha(onebl_key, &[&self.data[0..16]]) {
+        if let Ok(derived_key) = hmac_sha(onebl_key, &[&self.data[0..16]]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
             self.derived_key = Some(decrypt_key);
@@ -337,7 +338,7 @@ impl BootloaderCb {
         hmac_input[..0x10].copy_from_slice(&self.data[0..0x10]); // cb_b_hdr.key
         hmac_input[0x10..0x20].copy_from_slice(cb_a_key); // cb_a derived key
 
-        if let Ok(derived_key) = excrypt::hmac_sha(&zero_key, &[&hmac_input]) {
+        if let Ok(derived_key) = hmac_sha(&zero_key, &[&hmac_input]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
             self.derived_key = Some(decrypt_key);
@@ -372,7 +373,7 @@ impl BootloaderCb {
         }
 
         // C: ExCryptHmacSha(cb_a_key, cb_b_key, cpu_key, ..., cb_b_key) - writes back in-place.
-        if let Ok(derived_key) = excrypt::hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key]) {
+        if let Ok(derived_key) = hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
             self.derived_key = Some(decrypt_key);
@@ -402,7 +403,7 @@ impl BootloaderCb {
         cb_a_hdr_copy[0x6] = 0; // Clear wFlags low byte
         cb_a_hdr_copy[0x7] = 0; // Clear wFlags high byte
 
-        match excrypt::hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key, &cb_a_hdr_copy]) {
+        match hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key, &cb_a_hdr_copy]) {
             Ok(derived_key) => {
                 let mut decrypt_key = [0u8; 16];
                 decrypt_key.copy_from_slice(&derived_key[..16]);

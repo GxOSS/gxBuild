@@ -20,7 +20,7 @@
 */
 
 use super::BootloaderHeader;
-use crate::builder::deps::excrypt::{self, Rc4};
+use crate::crypto::{hmac_sha, rot_sum_sha, Rc4};
 // use crate::builder::deps::xenia;
 use byteorder::{BigEndian, ByteOrder};
 use log::info;
@@ -122,7 +122,7 @@ impl BootloaderCg {
             return;
         }
 
-        if let Ok(cg_key) = excrypt::hmac_sha(cg_hmac, &[&self.data[0..16]]) {
+        if let Ok(cg_key) = hmac_sha(cg_hmac, &[&self.data[0..16]]) {
             let mut final_key = [0u8; 16];
             final_key.copy_from_slice(&cg_key[..16]);
             info!("[builder] CG Decryption Key Derived: {:02x?}", final_key);
@@ -142,7 +142,7 @@ impl BootloaderCg {
             return;
         }
 
-        if let Ok(hash) = excrypt::rot_sum_sha(&IntoBytes::as_bytes(&self.header)[..0x10], &self.data[0x10..payload_len]) {
+        if let Ok(hash) = rot_sum_sha(&IntoBytes::as_bytes(&self.header)[..0x10], &self.data[0x10..payload_len]) {
             sha_out.copy_from_slice(&hash);
         }
     }
@@ -161,7 +161,7 @@ impl BootloaderCg {
                 return Err("Base data provided is smaller than original_size".into());
             }
 
-            if let Ok(base_kernel_hash) = excrypt::sha(&[base_data]) {
+            if let Ok(base_kernel_hash) = sha(&[base_data]) {
                 if base_kernel_hash != original_hash {
                     return Err("Base kernel hash did not match expected".into());
                 }
@@ -177,7 +177,7 @@ impl BootloaderCg {
             xenia::apply_patch(&self.data[0x40..], 0x8000, &mut output_buf)
                 .map_err(|e| format!("lzxdelta_apply_patch returned error code {}", e))?;
 
-            if let Ok(updated_kernel_hash) = excrypt::sha(&[&output_buf]) {
+            if let Ok(updated_kernel_hash) = sha(&[&output_buf]) {
                 if updated_kernel_hash != new_hash {
                     return Err("Updated kernel hash did not match expected".into());
                 }

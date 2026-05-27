@@ -12,7 +12,8 @@ use zerocopy::byteorder::{BigEndian as ZBigEndian, U16, U32};
 
 use crate::builder::chain::smc::{RawSmc, smc_crypt};
 
-use crate::builder::deps::excrypt::{self, ExCryptRsa, Rc4};
+use crate::crypto::{calculate_smc_hash, hmac_sha, rot_sum_sha, verify_signature, Rc4};
+use crate::crypto::rsa::ExCryptRsa;
 use log::info;
 
 pub const ONEBL_KEY: [u8; 16] = [0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA];
@@ -94,7 +95,7 @@ impl BootloaderGeneric {
             return;
         }
 
-        if let Ok(hash) = excrypt::rot_sum_sha(&zerocopy::IntoBytes::as_bytes(&self.header.header)[..0x10], &self.data[0x110..payload_len]) {
+        if let Ok(hash) = rot_sum_sha(&zerocopy::IntoBytes::as_bytes(&self.header.header)[..0x10], &self.data[0x110..payload_len]) {
             sha_out.copy_from_slice(&hash);
         }
     }
@@ -108,7 +109,7 @@ impl BootloaderGeneric {
         }
         let signature: &[u8; 256] = self.data[0x10..0x110].try_into().expect("Slice to array conversion failed");
 
-        excrypt::verify_signature(signature, &bl_hash, salt, pubkey).unwrap_or(false)
+        verify_signature(signature, &bl_hash, salt, pubkey).unwrap_or(false)
     }
 
     pub fn decrypt(&mut self, dec_key: &[u8; 16]) {
@@ -120,7 +121,7 @@ impl BootloaderGeneric {
             return;
         }
 
-        if let Ok(derived_key) = excrypt::hmac_sha(dec_key, &[&self.data[0..16]]) {
+        if let Ok(derived_key) = hmac_sha(dec_key, &[&self.data[0..16]]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
 
@@ -138,7 +139,7 @@ pub fn fix_per_box_digest(smc_data: &[u8], _cb_header: &BootloaderHeader, cb_pay
         return Err("CB payload too small for digest calculation".into());
     }
 
-    let smc_hash = excrypt::calculate_smc_hash(smc_data);
+    let smc_hash = calculate_smc_hash(smc_data);
 
     digest[0x0..0x10].copy_from_slice(cb_key);
     digest[0x10..0x13].copy_from_slice(&cb_payload[0x10..0x13]);
@@ -146,7 +147,7 @@ pub fn fix_per_box_digest(smc_data: &[u8], _cb_header: &BootloaderHeader, cb_pay
     digest[0x14..0x20].copy_from_slice(&cb_payload[0x14..0x20]);
     digest[0x20..0x30].copy_from_slice(&smc_hash);
 
-    let res = excrypt::hmac_sha(cpukey, &[&digest]).map_err(|e| format!("FixPerBoxDigest HMAC failed: {}", e))?;
+    let res = hmac_sha(cpukey, &[&digest]).map_err(|e| format!("FixPerBoxDigest HMAC failed: {}", e))?;
 
     let mut final_digest = [0u8; 16];
     final_digest.copy_from_slice(&res[..16]);
@@ -182,7 +183,7 @@ pub fn decrypt_chain(
         log::warn!("[builder] CB decryption verification failed - decrypted data may be corrupted.");
     }
 
-    let derived = excrypt::hmac_sha(&ONEBL_KEY, &[&cb_nonce]).map_err(|e| format!("CB key derivation failed: {}", e))?;
+    let derived = hmac_sha(&ONEBL_KEY, &[&cb_nonce]).map_err(|e| format!("CB key derivation failed: {}", e))?;
     let mut cb_key = [0u8; 16];
     cb_key.copy_from_slice(&derived[..16]);
 
@@ -303,7 +304,7 @@ pub fn encrypt_chain(
         cb_nonce.copy_from_slice(&cb.data[0..16]);
     }
 
-    let derived = excrypt::hmac_sha(&ONEBL_KEY, &[&cb_nonce]).map_err(|e| format!("CB key derivation failed: {}", e))?;
+    let derived = hmac_sha(&ONEBL_KEY, &[&cb_nonce]).map_err(|e| format!("CB key derivation failed: {}", e))?;
     let mut cb_key = [0u8; 16];
     cb_key.copy_from_slice(&derived[..16]);
     info!("[builder] Derived CB Key for re-encryption: {:02x?}", cb_key);
@@ -413,7 +414,7 @@ pub fn encrypt_rebooter_chain(
     if cb0.data.len() >= 16 {
         cb0_nonce.copy_from_slice(&cb0.data[0..16]);
     }
-    let derived0 = excrypt::hmac_sha(&ONEBL_KEY, &[&cb0_nonce]).map_err(|e| format!("Base CB key derivation failed: {}", e))?;
+    let derived0 = hmac_sha(&ONEBL_KEY, &[&cb0_nonce]).map_err(|e| format!("Base CB key derivation failed: {}", e))?;
     let mut cb0_key = [0u8; 16];
     cb0_key.copy_from_slice(&derived0[..16]);
 
@@ -448,7 +449,7 @@ pub fn encrypt_rebooter_chain(
     if cb1.data.len() >= 16 {
         cb1_nonce.copy_from_slice(&cb1.data[0..16]);
     }
-    let derived1 = excrypt::hmac_sha(&ONEBL_KEY, &[&cb1_nonce]).map_err(|e| format!("Rebooter CB key derivation failed: {}", e))?;
+    let derived1 = hmac_sha(&ONEBL_KEY, &[&cb1_nonce]).map_err(|e| format!("Rebooter CB key derivation failed: {}", e))?;
     let mut cb1_key = [0u8; 16];
     cb1_key.copy_from_slice(&derived1[..16]);
 

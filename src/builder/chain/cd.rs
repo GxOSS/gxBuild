@@ -22,7 +22,8 @@
 use zerocopy::{FromBytes, IntoBytes};
 
 use super::BootloaderHeader;
-use crate::builder::deps::excrypt::{self, ExCryptRsa, Rc4};
+use crate::crypto::{hmac_sha, rot_sum_sha, verify_signature, Rc4};
+use crate::crypto::rsa::ExCryptRsa;
 use log::info;
 
 #[derive(Clone, Debug)]
@@ -103,7 +104,7 @@ impl BootloaderCd {
             return;
         }
 
-        if let Ok(hash) = excrypt::rot_sum_sha(&IntoBytes::as_bytes(&self.header)[..0x10], &self.data[0x110..payload_len]) {
+        if let Ok(hash) = rot_sum_sha(&IntoBytes::as_bytes(&self.header)[..0x10], &self.data[0x110..payload_len]) {
             sha_out.copy_from_slice(&hash);
         }
     }
@@ -136,13 +137,13 @@ impl BootloaderCd {
             return;
         }
 
-        if let Ok(derived_key) = excrypt::hmac_sha(cbb_key, &[&self.data[0..16]]) {
+        if let Ok(derived_key) = hmac_sha(cbb_key, &[&self.data[0..16]]) {
             let mut final_key = [0u8; 16];
             final_key.copy_from_slice(&derived_key[..16]);
             info!("[builder] CD Decryption Key Derived: {:02x?}", final_key);
 
             if let Some(key) = cpu_key {
-                if let Ok(derived_key_cpu) = excrypt::hmac_sha(key, &[&final_key]) {
+                if let Ok(derived_key_cpu) = hmac_sha(key, &[&final_key]) {
                     final_key.copy_from_slice(&derived_key_cpu[..16]);
                 }
             }
@@ -175,7 +176,7 @@ impl BootloaderCd {
         let signature: &[u8; 256] = self.data[0x10..0x110].try_into().unwrap(); // Absolute 0x20
 
         let expected_salt = b"XBOX_ROM_4\0";
-        excrypt::verify_signature(signature, &cd_hash, expected_salt, pubkey).unwrap_or(false)
+        verify_signature(signature, &cd_hash, expected_salt, pubkey).unwrap_or(false)
     }
 
     pub fn serialize(&self) -> Vec<u8> {

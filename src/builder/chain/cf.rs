@@ -20,7 +20,8 @@
 */
 
 use super::BootloaderHeader;
-use crate::builder::deps::excrypt::{self, ExCryptRsa, Rc4};
+use crate::crypto::{hmac_sha, rot_sum_sha, verify_signature, Rc4};
+use crate::crypto::rsa::ExCryptRsa;
 use byteorder::{BigEndian, ByteOrder};
 use log::info;
 use zerocopy::{FromBytes, IntoBytes};
@@ -195,7 +196,7 @@ impl BootloaderCf {
         combined_header[..0x10].copy_from_slice(&IntoBytes::as_bytes(&self.header)[..0x10]);
         combined_header[0x10..].copy_from_slice(&self.data[0x0..0x10]);
 
-        if let Ok(hash) = excrypt::rot_sum_sha(&combined_header, &self.data[0x320..payload_len]) {
+        if let Ok(hash) = rot_sum_sha(&combined_header, &self.data[0x320..payload_len]) {
             sha_out.copy_from_slice(&hash);
         }
     }
@@ -210,7 +211,7 @@ impl BootloaderCf {
         let signature: &[u8; 256] = self.data[0x220..0x320].try_into().unwrap();
 
         let expected_salt = b"XBOX_ROM_6\0";
-        excrypt::verify_signature(signature, &cf_hash, expected_salt, rsa_1bl).unwrap_or(false)
+        verify_signature(signature, &cf_hash, expected_salt, rsa_1bl).unwrap_or(false)
     }
 
     pub fn print_info(&self) {
@@ -258,7 +259,7 @@ impl BootloaderCf {
             return;
         }
 
-        if let Ok(derived_key) = excrypt::hmac_sha(onebl_key, &[&self.data[0x10..0x20]]) {
+        if let Ok(derived_key) = hmac_sha(onebl_key, &[&self.data[0x10..0x20]]) {
             let mut final_key = [0u8; 16];
             final_key.copy_from_slice(&derived_key[..16]);
             info!("[builder] CF Decryption Key Derived: {:02x?}", final_key);

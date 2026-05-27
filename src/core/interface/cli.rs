@@ -297,7 +297,7 @@ pub fn ggx_cli() {
                 .unwrap_or_else(|| args.output_dir.clone().unwrap_or_else(|| PathBuf::from("updflash.bin")));
             if output_path.exists() {
                 if let Ok(data) = std::fs::read(&output_path) {
-                    if let Ok(hash) = crate::builder::deps::excrypt::sha(&[&data]) {
+                    if let Ok(hash) = crate::crypto::sha(&[&data]) {
                         let sha_str = hash.iter().map(|b| format!("{:02x}", b)).collect::<String>();
                         info!("[cli] Image SHA-1: {}", sha_str);
 
