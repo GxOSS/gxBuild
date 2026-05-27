@@ -487,7 +487,7 @@ impl SmcConfig {
     }
 }
 
-fn smc_crypt(data: &mut [u8], encrypt: bool) {
+pub fn smc_crypt(data: &mut [u8], encrypt: bool) {
     let mut key: [u32; 4] = [0x42, 0x75, 0x4E, 0x79];
     for i in 0..data.len() {
         let ciphertext_byte;

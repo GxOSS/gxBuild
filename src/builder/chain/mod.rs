@@ -10,7 +10,8 @@ pub mod xell;
 
 use zerocopy::byteorder::{BigEndian as ZBigEndian, U16, U32};
 
-use crate::builder::chain::smc::RawSmc;
+use crate::builder::chain::smc::{RawSmc, smc_crypt};
+
 use crate::builder::deps::excrypt::{self, ExCryptRsa, Rc4};
 use log::info;
 
@@ -330,9 +331,11 @@ pub fn encrypt_chain(
         cg.sync_metadata();
     }
 
-    let digest = fix_per_box_digest(&smc.data, &cb.header, &cb.data, &cb_key, cpukey)?;
-    if cb.data.len() >= 0x30 {
-        cb.data[0x20..0x30].copy_from_slice(&digest);
+    let mut smc_for_hash = smc.data.clone();
+    smc_crypt(&mut smc_for_hash, true);
+    let digest = fix_per_box_digest(&smc_for_hash, &cb.header, &cb.data, &cb_key, cpukey)?;
+    if cb.data.len() >= 0x20 {
+        cb.data[0x10..0x20].copy_from_slice(&digest);
     }
 
     // Encrypt in reverse order (innermost first).
@@ -414,7 +417,9 @@ pub fn encrypt_rebooter_chain(
     let mut cb0_key = [0u8; 16];
     cb0_key.copy_from_slice(&derived0[..16]);
 
-    let digest0 = fix_per_box_digest(&smc.data, &cb0.header, &cb0.data, &cb0_key, cpukey)?;
+    let mut smc_for_hash = smc.data.clone();
+    smc_crypt(&mut smc_for_hash, true);
+    let digest0 = fix_per_box_digest(&smc_for_hash, &cb0.header, &cb0.data, &cb0_key, cpukey)?;
     if cb0.data.len() >= 0x20 {
         cb0.data[0x10..0x20].copy_from_slice(&digest0);
     }
