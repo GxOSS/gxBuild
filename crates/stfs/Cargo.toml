@@ -1,0 +1,37 @@
+[package]
+name = "stfs"
+version.workspace = true
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/landaire/acceleration"
+authors = ["Lander Brandt <landerbrandt@gmail.com>"]
+readme = "README.md"
+description = "Parser for Xbox 360 STFS (Secure Transacted File System) packages"
+keywords = ["xbox360", "stfs", "xbox", "parser"]
+categories = ["parser-implementations", "no-std"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+base64-serde = ["dep:base64"]
+vfs = ["dep:fskit", "dep:vfs"]
+async-vfs = ["vfs", "fskit/async-vfs", "dep:async-trait", "dep:futures"]
+
+[dependencies]
+sha-1 = { workspace = true }
+thiserror = { workspace = true }
+bitflags = { workspace = true }
+byteorder = { workspace = true }
+num_enum = { workspace = true }
+serde = { workspace = true }
+xenon_types = { version = "0.2", path = "../xenon_types" }
+base64 = { workspace = true, optional = true }
+fskit = { workspace = true, optional = true }
+vfs = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+
+[dev-dependencies]
+insta = { workspace = true }

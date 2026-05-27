@@ -152,49 +152,6 @@ impl Rc4 {
     }
 }
 
-unsafe fn ffi_slice<'a>(ptr: *const u8, len: u32) -> &'a [u8] {
-    if ptr.is_null() || len == 0 {
-        &[]
-    } else {
-        std::slice::from_raw_parts(ptr, len as usize)
-    }
-}
-
-unsafe fn ffi_slice_mut<'a>(ptr: *mut u8, len: u32) -> &'a mut [u8] {
-    if ptr.is_null() || len == 0 {
-        &mut []
-    } else {
-        std::slice::from_raw_parts_mut(ptr, len as usize)
-    }
-}
-
-#[no_mangle]
-#[allow(non_snake_case)]
-pub unsafe extern "C" fn ExCryptRc4Key(state: *mut ExCryptRc4State, key: *const u8, key_size: u32) {
-    let Some(state) = state.as_mut() else {
-        return;
-    };
-    let _ = rc4_key(state, ffi_slice(key, key_size));
-}
-
-#[no_mangle]
-#[allow(non_snake_case)]
-pub unsafe extern "C" fn ExCryptRc4Ecb(state: *mut ExCryptRc4State, buf: *mut u8, buf_size: u32) {
-    let Some(state) = state.as_mut() else {
-        return;
-    };
-    rc4_crypt(state, ffi_slice_mut(buf, buf_size));
-}
-
-#[no_mangle]
-#[allow(non_snake_case)]
-pub unsafe extern "C" fn ExCryptRc4(key: *const u8, key_size: u32, buf: *mut u8, buf_size: u32) {
-    let mut state = ExCryptRc4State { s: [0; 256], i: 0, j: 0 };
-    if rc4_key(&mut state, ffi_slice(key, key_size)).is_ok() {
-        rc4_crypt(&mut state, ffi_slice_mut(buf, buf_size));
-    }
-}
-
 pub fn hmac_sha(key: &[u8], inputs: &[&[u8]]) -> Result<[u8; 20]> {
     let mut inner_pad = [0u8; 64];
     let mut outer_pad = [0u8; 64];
@@ -221,30 +178,6 @@ pub fn hmac_sha(key: &[u8], inputs: &[&[u8]]) -> Result<[u8; 20]> {
     outer.update(inner_hash);
     let output: [u8; 20] = outer.finalize().into();
     Ok(output)
-}
-
-#[no_mangle]
-#[allow(non_snake_case)]
-pub unsafe extern "C" fn ExCryptHmacSha(
-    key: *const u8,
-    key_size: u32,
-    input1: *const u8,
-    input1_size: u32,
-    input2: *const u8,
-    input2_size: u32,
-    input3: *const u8,
-    input3_size: u32,
-    output: *mut u8,
-    output_size: u32,
-) {
-    if output.is_null() {
-        return;
-    }
-
-    if let Ok(hash) = hmac_sha(ffi_slice(key, key_size), &[ffi_slice(input1, input1_size), ffi_slice(input2, input2_size), ffi_slice(input3, input3_size)]) {
-        let output = ffi_slice_mut(output, output_size.min(hash.len() as u32));
-        output.copy_from_slice(&hash[..output.len()]);
-    }
 }
 
 fn excrypt_rot_sum(state: &mut [u64; 4], input: &[u8]) {
@@ -296,19 +229,6 @@ pub fn rot_sum_sha(input1: &[u8], input2: &[u8]) -> Result<[u8; 20]> {
     Ok(output)
 }
 
-#[no_mangle]
-#[allow(non_snake_case)]
-pub unsafe extern "C" fn ExCryptRotSumSha(input1: *const u8, input1_size: u32, input2: *const u8, input2_size: u32, output: *mut u8, output_size: u32) {
-    if output.is_null() {
-        return;
-    }
-
-    if let Ok(hash) = rot_sum_sha(ffi_slice(input1, input1_size), ffi_slice(input2, input2_size)) {
-        let output = ffi_slice_mut(output, output_size.min(hash.len() as u32));
-        output.copy_from_slice(&hash[..output.len()]);
-    }
-}
-
 pub fn sha(inputs: &[&[u8]]) -> Result<[u8; 20]> {
     let mut hasher = Sha1::new();
     for input in inputs.iter().take(3) {
@@ -316,28 +236,6 @@ pub fn sha(inputs: &[&[u8]]) -> Result<[u8; 20]> {
     }
     let output: [u8; 20] = hasher.finalize().into();
     Ok(output)
-}
-
-#[no_mangle]
-#[allow(non_snake_case)]
-pub unsafe extern "C" fn ExCryptSha(
-    input1: *const u8,
-    input1_size: u32,
-    input2: *const u8,
-    input2_size: u32,
-    input3: *const u8,
-    input3_size: u32,
-    output: *mut u8,
-    output_size: u32,
-) {
-    if output.is_null() {
-        return;
-    }
-
-    if let Ok(hash) = sha(&[ffi_slice(input1, input1_size), ffi_slice(input2, input2_size), ffi_slice(input3, input3_size)]) {
-        let output = ffi_slice_mut(output, output_size.min(hash.len() as u32));
-        output.copy_from_slice(&hash[..output.len()]);
-    }
 }
 
 pub fn verify_signature(sig: &[u8; 256], hash: &[u8; 20], salt: &[u8], pubkey: &ExCryptRsa) -> Result<bool> {

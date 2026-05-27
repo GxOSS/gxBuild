@@ -28,14 +28,7 @@ fn main() {
     // C Source files
     let mut build_c = cc::Build::new();
     build_c.files([
-        format!("{}/excrypt_aes.c", excrypt_path),
-        format!("{}/excrypt_bn.c", excrypt_path),
         format!("{}/excrypt_bn_sig.c", excrypt_path),
-        format!("{}/excrypt_ecc.c", excrypt_path),
-        format!("{}/excrypt_parve.c", excrypt_path),
-        format!("{}/excrypt_rc4.c", excrypt_path),
-        format!("{}/excrypt_sha2.c", excrypt_path),
-        format!("{}/rijndael.c", excrypt_path),
     ]);
 
     build_c.include(excrypt_path);
@@ -61,9 +54,7 @@ fn main() {
         format!("{}/excrypt_bn_rsa.cpp", excrypt_path),
         format!("{}/excrypt_bn_pkcs1.cpp", excrypt_path),
         format!("{}/exkeys.cpp", excrypt_path),
-        format!("{}/excrypt_bn_key.cpp", excrypt_path),
         format!("{}/excrypt_bn_mod.cpp", excrypt_path),
-        format!("{}/excrypt_mem.cpp", excrypt_path),
     ]);
 
     build_cpp.include(excrypt_path);
