@@ -739,10 +739,8 @@ impl IniSearch {
                         }
 
                         if let Some(c) = nand_data {
-                            if check_hash!(c, filename, "NAND Image") {
-                                found_content = Some(c);
-                                found_path = Some(PathBuf::from("NAND_IMAGE"));
-                            }
+                            found_content = Some(c);
+                            found_path = Some(PathBuf::from("NAND_IMAGE"));
                         }
                     }
                 }

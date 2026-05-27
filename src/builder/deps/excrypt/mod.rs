@@ -247,55 +247,38 @@ pub unsafe extern "C" fn ExCryptHmacSha(
     }
 }
 
+fn excrypt_rot_sum(state: &mut [u64; 4], input: &[u8]) {
+    for chunk in input.chunks_exact(8) {
+        let qw = u64::from_be_bytes(chunk.try_into().expect("chunk size is fixed"));
+
+        let sum = state[1].wrapping_add(qw);
+        let carry = if sum < qw { 1u64 } else { 0 };
+        state[0] = state[0].wrapping_add(carry);
+        state[1] = sum.rotate_left(29);
+
+        let borrow = if state[3] < qw { 1u64 } else { 0 };
+        state[3] = state[3].wrapping_sub(qw);
+        state[2] = state[2].wrapping_sub(borrow);
+        state[3] = state[3].rotate_left(31);
+    }
+}
+
 pub fn rot_sum_sha(input1: &[u8], input2: &[u8]) -> Result<[u8; 20]> {
-    fn excrypt_rot_sum(state: &mut [u64; 4], input: &[u8]) {
-        for value in state.iter_mut() {
-            *value = value.swap_bytes();
-        }
-
-        for chunk in input.chunks_exact(8) {
-            let data = u64::from_be_bytes(chunk.try_into().expect("chunk size is fixed"));
-
-            state[1] = state[1].wrapping_add(data);
-            state[3] = state[3].wrapping_sub(data);
-
-            if state[1] < data {
-                state[0] = state[0].wrapping_add(1);
-            }
-            if state[3] > data {
-                state[2] = state[2].wrapping_sub(1);
-            }
-
-            state[1] = state[1].rotate_left(29);
-            state[3] = state[3].rotate_left(31);
-        }
-
-        for value in state.iter_mut() {
-            *value = value.swap_bytes();
-        }
-    }
-
-    fn update_rotsum_bytes(hasher: &mut Sha1, state: &[u64; 4]) {
-        for value in state {
-            hasher.update(value.to_le_bytes());
-        }
-    }
-
     let mut rotsum = [0u64; 4];
     excrypt_rot_sum(&mut rotsum, input1);
     excrypt_rot_sum(&mut rotsum, input2);
 
+    let rot_bytes: Vec<u8> = rotsum.iter().flat_map(|q| q.to_be_bytes()).collect();
+
     let mut hasher = Sha1::new();
-    update_rotsum_bytes(&mut hasher, &rotsum);
-    update_rotsum_bytes(&mut hasher, &rotsum);
+    hasher.update(&rot_bytes);
+    hasher.update(&rot_bytes);
     hasher.update(input1);
     hasher.update(input2);
 
-    for value in &mut rotsum {
-        *value = !*value;
-    }
-    update_rotsum_bytes(&mut hasher, &rotsum);
-    update_rotsum_bytes(&mut hasher, &rotsum);
+    let inv_bytes: Vec<u8> = rotsum.iter().map(|q| !q).flat_map(|q| q.to_be_bytes()).collect();
+    hasher.update(&inv_bytes);
+    hasher.update(&inv_bytes);
 
     let output: [u8; 20] = hasher.finalize().into();
     Ok(output)

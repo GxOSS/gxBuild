@@ -366,8 +366,14 @@ pub fn encrypt_chain(
     if let Some(cb_x_bl) = cb_x {
         cb_x_bl.decrypt_v1(&cb_key, &[0u8; 16]);
     }
+    let cb_a_uses_new_crypto = (cb.header.flags.get() & 0x1000) != 0;
     if let Some(cb_b_bl) = cb_b {
-        cb_b_bl.decrypt_v1(&cb_key, cpukey);
+        if cb_a_uses_new_crypto {
+            info!("[builder] CB_A new crypto (flags & 0x1000): using encrypt_v2 for CB_B");
+            cb_b_bl.decrypt_v2(&cb.header, &cb_key, cpukey);
+        } else {
+            cb_b_bl.decrypt_v1(&cb_key, cpukey);
+        }
         info!("[builder] CB_B re-encrypted.");
     }
     if keep_cd_plaintext {
@@ -376,6 +382,9 @@ pub fn encrypt_chain(
         cd.decrypt(&cd_key, None);
         info!("[builder] CD re-encrypted.");
     }
+    let mut cb_rotsum = [0u8; 0x14];
+    cb.calculate_rotsum(&mut cb_rotsum);
+    info!("[builder] CB_A rotsum hash (pre-encrypt): {:02x?}", cb_rotsum);
     cb.decrypt(&ONEBL_KEY);
     info!("[builder] CB re-encrypted.");
 
