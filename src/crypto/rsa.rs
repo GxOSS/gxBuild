@@ -169,73 +169,54 @@ pub unsafe extern "C" fn ExCryptBnDwLePkcs1Format(
     output_sig: *mut u8,
     output_sig_size: u32,
 ) {
-    if hash.is_null() || output_sig.is_null() || output_sig_size == 0 {
+    if hash.is_null() || output_sig.is_null() || output_sig_size < 39 {
         return;
     }
     
-    // format: 0=SHA1, 1=SHA256, 2=MD5, 3=MD4
-    let (digest_info, digest_len): (&[u8], usize) = match format {
-        0 => {
-            // SHA-1: OID 1.3.14.3.2.26
-            const INFO: &[u8] = &[
-                0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e,
-                0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14,
-            ];
-            (INFO, 20usize)
-        }
-        1 => {
-            // SHA-256: OID 2.16.840.1.101.3.4.2.1
-            const INFO: &[u8] = &[
-                0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86,
-                0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05,
-                0x00, 0x04, 0x20,
-            ];
-            (INFO, 32usize)
-        }
-        2 => {
-            // MD5: OID 1.2.840.113549.2.5
-            const INFO: &[u8] = &[
-                0x30, 0x20, 0x30, 0x0c, 0x06, 0x08, 0x2a, 0x86,
-                0x48, 0x86, 0xf7, 0x0d, 0x02, 0x05, 0x05, 0x00,
-                0x04, 0x10,
-            ];
-            (INFO, 16usize)
-        }
-        3 => {
-            // MD4: OID 1.2.840.113549.2.4
-            const INFO: &[u8] = &[
-                0x30, 0x20, 0x30, 0x0c, 0x06, 0x08, 0x2a, 0x86,
-                0x48, 0x86, 0xf7, 0x0d, 0x02, 0x04, 0x05, 0x00,
-                0x04, 0x10,
-            ];
-            (INFO, 16usize)
-        }
-        _ => return,
-    };
-    
-    let total_len = digest_info.len() + digest_len;
-    let ps_len = output_sig_size as usize - total_len - 3;
-    
-    if (output_sig_size as usize) < total_len + 3 {
+    // Size check from C: output_sig_size - 39 > 473 means max 512 bytes
+    if output_sig_size - 39 > 473 {
         return;
     }
     
     let out = std::slice::from_raw_parts_mut(output_sig, output_sig_size as usize);
     
-    // PKCS#1 v1.5 padding: 0x00 0x01 0xFF...0xFF 0x00 || DigestInfo || Digest
-    out[0] = 0x00;
-    out[1] = 0x01;
-    for i in 0..ps_len {
-        out[2 + i] = 0xFF;
-    }
-    out[2 + ps_len] = 0x00;
+    // Fill entire buffer with 0xFF
+    out.fill(0xFF);
     
-    out[3 + ps_len..3 + ps_len + digest_info.len()].copy_from_slice(digest_info);
-    std::ptr::copy_nonoverlapping(
-        hash,
-        out.as_mut_ptr().add(3 + ps_len + digest_info.len()),
-        digest_len,
-    );
+    // End markers (little-endian at the very end)
+    out[output_sig_size as usize - 1] = 0x00;
+    out[output_sig_size as usize - 2] = 0x01;
+    
+    // Copy reversed hash (20 bytes) to the START of the buffer
+    let hash_slice = std::slice::from_raw_parts(hash, 20);
+    for i in 0..20 {
+        out[19 - i] = hash_slice[i];
+    }
+    
+    // Format-specific bytes after the reversed hash (offset 0x14 = 20)
+    match format {
+        0 => {
+            // SHA1 format bytes (from kPkcs1Format0_0 and kPkcs1Format0_1)
+            // 0xE03021A05000414 as LE u64 -> 14 04 00 05 1A 21 30 E0
+            out[0x14..0x1C].copy_from_slice(&[0x14, 0x04, 0x00, 0x05, 0x1A, 0x21, 0x30, 0xE0]);
+            // 0x3021300906052B as LE u64 -> 2B 05 06 09 30 21 00 00
+            out[0x1C..0x24].copy_from_slice(&[0x2B, 0x05, 0x06, 0x09, 0x30, 0x21, 0x00, 0x00]);
+        }
+        1 => {
+            // SHA256 format bytes (from kPkcs1Format1_0, kPkcs1Format1_1, kPkcs1Format1_2)
+            // 0x052B0E03021A0414 as LE u64 -> 14 04 1A 02 03 0E 2B 05
+            out[0x14..0x1C].copy_from_slice(&[0x14, 0x04, 0x1A, 0x02, 0x03, 0x0E, 0x2B, 0x05]);
+            // 0x1F300706 as LE u32 -> 06 07 30 1F
+            out[0x1C..0x20].copy_from_slice(&[0x06, 0x07, 0x30, 0x1F]);
+            // 0x30 as LE u16 -> 30 00
+            out[0x20..0x22].copy_from_slice(&[0x30, 0x00]);
+        }
+        2 => {
+            // MD5 format (case 2 in C)
+            out[0x14] = 0x00;
+        }
+        _ => {}
+    }
 }
 
 #[no_mangle]
@@ -245,40 +226,35 @@ pub unsafe extern "C" fn ExCryptBnDwLePkcs1Verify(
     input_sig: *const u8,
     input_sig_size: u32,
 ) -> i32 {
-    if hash.is_null() || input_sig.is_null() || input_sig_size == 0 {
+    if hash.is_null() || input_sig.is_null() || input_sig_size < 39 {
         return 0;
     }
     
+    // Size check from C
+    if input_sig_size - 39 > 473 {
+        return 0;
+    }
+    
+    // Determine format based on input_sig[0x16] (offset 22)
+    // format = 0 if 0x16 == 0
+    // format = 1 if 0x16 == 0x1A
+    // format = 2 if 0x16 != 0x1A
     let sig = std::slice::from_raw_parts(input_sig, input_sig_size as usize);
+    let format = if sig[0x16] == 0 {
+        0
+    } else if sig[0x16] == 0x1A {
+        1
+    } else {
+        2
+    };
     
-    // Check basic PKCS#1 v1.5 structure
-    if sig[0] != 0x00 || sig[1] != 0x01 {
-        return 0;
-    }
+    // Create expected signature
+    let mut test_sig = vec![0u8; input_sig_size as usize];
+    ExCryptBnDwLePkcs1Format(hash, format, test_sig.as_mut_ptr(), input_sig_size);
     
-    // Find 0x00 separator after padding
-    let mut sep_pos = 2;
-    while sep_pos < sig.len() && sig[sep_pos] == 0xFF {
-        sep_pos += 1;
-    }
-    
-    if sep_pos >= sig.len() || sig[sep_pos] != 0x00 {
-        return 0;
-    }
-    
-    // The rest should be DigestInfo || Digest
-    let digest_data = &sig[sep_pos + 1..];
-    
-    // Extract hash from the end (typically 20 bytes for SHA1)
-    if digest_data.len() < 20 {
-        return 0;
-    }
-    
-    // Compare the hash at the end
-    let expected_hash = std::slice::from_raw_parts(hash, 20);
-    let embedded_hash = &digest_data[digest_data.len() - 20..];
-    
-    if expected_hash == embedded_hash {
+    // Compare
+    let input = std::slice::from_raw_parts(input_sig, input_sig_size as usize);
+    if test_sig == input {
         1
     } else {
         0
