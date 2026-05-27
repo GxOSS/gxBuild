@@ -30,6 +30,7 @@ use crate::builder::filesystem::flashfs::FlashFS;
 use crate::builder::filesystem::mobile::MobileStore;
 use crate::core::images::blocks::*;
 use crate::core::images::gxp::{apply_records, GxpBinary, GxpPatchType, PatchRecord};
+use crate::crypto::{hmac_sha, Rc4};
 
 const NAND_RETAIL_1BL_KEY: [u8; 16] = [0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA];
 
@@ -59,7 +60,6 @@ fn bl_magic_to_str(magic: u16) -> String {
 }
 
 fn bl_try_identify(data: &[u8], parent_key: &[u8; 16]) -> Option<BlDiscovery> {
-    use crate::builder::deps::excrypt::{self, Rc4};
     if data.len() < 0x10 {
         return None;
     }
@@ -83,7 +83,7 @@ fn bl_try_identify(data: &[u8], parent_key: &[u8; 16]) -> Option<BlDiscovery> {
             if data.len() < salt_off + 0x10 {
                 continue;
             }
-            let dk = match excrypt::hmac_sha(key_base, &[&data[salt_off..salt_off + 0x10]]) {
+            let dk = match hmac_sha(key_base, &[&data[salt_off..salt_off + 0x10]]) {
                 Ok(k) => k,
                 Err(_) => continue,
             };

@@ -20,7 +20,7 @@
   3. This notice may not be removed or altered from any source distribution.
 */
 
-use crate::builder::deps::excrypt::{self, Rc4};
+use crate::crypto::{hmac_sha, Rc4};
 use log::info;
 use zerocopy::byteorder::{BigEndian, U16};
 use zerocopy::FromBytes;
@@ -147,7 +147,7 @@ impl Keyvault {
 
         let mut nonce = [0u8; 16];
         nonce.copy_from_slice(&kv1_data[..0x10]);
-        let hmac_res = excrypt::hmac_sha(cpukey, &[&nonce]).map_err(|e| format!("KV key derivation failed: {}", e))?;
+        let hmac_res = hmac_sha(cpukey, &[&nonce]).map_err(|e| format!("KV key derivation failed: {}", e))?;
 
         let mut decrypt_key = [0u8; 16];
         decrypt_key.copy_from_slice(&hmac_res[..16]);
@@ -170,7 +170,7 @@ impl Keyvault {
             return Ok(());
         }
 
-        let hmac_res_v2 = excrypt::hmac_sha(cpukey, &[&hmac_res[..16]]).map_err(|e| format!("KV2 double-HMAC failed: {}", e))?;
+        let hmac_res_v2 = hmac_sha(cpukey, &[&hmac_res[..16]]).map_err(|e| format!("KV2 double-HMAC failed: {}", e))?;
         let mut fallback_key = [0u8; 16];
         fallback_key.copy_from_slice(&hmac_res_v2[..16]);
 
@@ -202,9 +202,9 @@ impl Keyvault {
             let mut message = self.data[0x10..].to_vec();
             message.extend_from_slice(&[0x07, 0x12]);
 
-            let salt = excrypt::hmac_sha(cpukey, &[&message]).map_err(|e| format!("KV2 salt derivation failed: {}", e))?;
+            let salt = hmac_sha(cpukey, &[&message]).map_err(|e| format!("KV2 salt derivation failed: {}", e))?;
 
-            let final_key = excrypt::hmac_sha(cpukey, &[&salt[..16]]).map_err(|e| format!("KV2 key derivation failed: {}", e))?;
+            let final_key = hmac_sha(cpukey, &[&salt[..16]]).map_err(|e| format!("KV2 key derivation failed: {}", e))?;
 
             let mut rc4 = Rc4::new(&final_key[..16]).map_err(|e| format!("RC4 init failed: {}", e))?;
 
@@ -214,7 +214,7 @@ impl Keyvault {
         } else {
             let mut nonce = [0u8; 16];
             nonce.copy_from_slice(&self.data[..0x10]);
-            let hmac_res = excrypt::hmac_sha(cpukey, &[&nonce]).map_err(|e| format!("Key derivation failed: {}", e))?;
+            let hmac_res = hmac_sha(cpukey, &[&nonce]).map_err(|e| format!("Key derivation failed: {}", e))?;
             let mut rc4 = Rc4::new(&hmac_res[..16]).map_err(|e| format!("RC4 init failed: {}", e))?;
             rc4.crypt(&mut self.data[0x10..]).map_err(|e| format!("Encryption failed: {}", e))?;
         }

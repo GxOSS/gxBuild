@@ -22,7 +22,7 @@
 use super::BootloaderHeader;
 // use crate::builder::chain::cf::BootloaderCf;
 // use crate::builder::chain::cg::BootloaderCg;
-use crate::builder::deps::excrypt::{self, Rc4};
+use crate::crypto::{hmac_sha, rot_sum_sha, Rc4};
 // use crate::builder::deps::xenia;
 use byteorder::{BigEndian as RealBigEndian, ByteOrder};
 use log::info;
@@ -123,7 +123,7 @@ impl BootloaderCe {
             return;
         }
 
-        if let Ok(hash) = excrypt::rot_sum_sha(&IntoBytes::as_bytes(&self.header)[..0x10], &self.data[0x10..payload_len]) {
+        if let Ok(hash) = rot_sum_sha(&IntoBytes::as_bytes(&self.header)[..0x10], &self.data[0x10..payload_len]) {
             sha_out.copy_from_slice(&hash);
         }
     }
@@ -153,7 +153,7 @@ impl BootloaderCe {
             return;
         }
 
-        if let Ok(derived_key) = excrypt::hmac_sha(cd_key, &[&self.data[0..16]]) {
+        if let Ok(derived_key) = hmac_sha(cd_key, &[&self.data[0..16]]) {
             let mut final_key = [0u8; 16];
             final_key.copy_from_slice(&derived_key[..16]);
             info!("[builder] CE Decryption Key Derived: {:02x?}", final_key);

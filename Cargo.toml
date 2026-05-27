@@ -41,5 +41,3 @@ ffi = ["dep:interoptopus", "dep:interoptopus_backend_c", "dep:interoptopus_backe
 # Rhai scripting engine + rustyline REPL (--script <file>, --shell).
 rhai = ["dep:rhai", "dep:rustyline"]
 
-[build-dependencies]
-cc = "1.0"

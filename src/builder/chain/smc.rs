@@ -21,7 +21,8 @@
 */
 
 use super::BootloaderHeader;
-use crate::builder::deps::excrypt::{self, ExCryptRsa};
+use crate::crypto::rsa::ExCryptRsa;
+use crate::crypto::{rot_sum_sha, verify_signature};
 use crate::core::images::blocks::NandLayout;
 use log::info;
 use zerocopy::{FromBytes, IntoBytes};
@@ -154,7 +155,7 @@ impl Smc {
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
 
         if let Ok(hash) =
-            excrypt::rot_sum_sha(&IntoBytes::as_bytes(&self.header.header)[..0x10], &self.data[..(size_aligned as usize - std::mem::size_of::<SmcHeader>())])
+            rot_sum_sha(&IntoBytes::as_bytes(&self.header.header)[..0x10], &self.data[..(size_aligned as usize - std::mem::size_of::<SmcHeader>())])
         {
             sha_out.copy_from_slice(&hash);
         }
@@ -164,7 +165,7 @@ impl Smc {
         let mut bl_hash = [0u8; 0x14];
         self.calculate_rotsum(&mut bl_hash);
         let expected_salt = b"XBOX_ROM_S\0";
-        excrypt::verify_signature(&self.header.signature, &bl_hash, expected_salt, pubkey).unwrap_or(false)
+        verify_signature(&self.header.signature, &bl_hash, expected_salt, pubkey).unwrap_or(false)
     }
 
     pub fn decrypt(&mut self) -> &mut Self {

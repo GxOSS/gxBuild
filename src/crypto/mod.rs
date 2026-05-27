@@ -4,6 +4,11 @@ pub mod aes;
 pub mod rsa;
 pub mod rc4;
 
+// Re-exports for convenient access
+pub use rc4::Rc4;
+pub use sha::{calculate_smc_hash, hmac_sha, sha, rot_sum_sha};
+pub use rsa::verify_signature;
+
 pub type Result<T> = std::result::Result<T, CryptoError>;
 
 #[derive(Debug, thiserror::Error)]

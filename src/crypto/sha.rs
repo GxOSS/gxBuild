@@ -110,6 +110,55 @@ pub unsafe extern "C" fn ExCryptSha(
     }
 }
 
+fn excrypt_rot_sum(state: &mut [u64; 4], input: &[u8]) {
+    for value in state.iter_mut() {
+        *value = value.swap_bytes();
+    }
+    for chunk in input.chunks_exact(8) {
+        let data = u64::from_be_bytes(chunk.try_into().expect("chunk size is fixed"));
+        state[1] = state[1].wrapping_add(data);
+        state[3] = state[3].wrapping_sub(data);
+        if state[1] < data {
+            state[0] = state[0].wrapping_add(1);
+        }
+        if state[3] > data {
+            state[2] = state[2].wrapping_sub(1);
+        }
+        state[1] = state[1].rotate_left(29);
+        state[3] = state[3].rotate_left(31);
+    }
+    for value in state.iter_mut() {
+        *value = value.swap_bytes();
+    }
+}
+
+pub fn rot_sum_sha(input1: &[u8], input2: &[u8]) -> Result<[u8; 20]> {
+    fn update_rotsum_bytes(hasher: &mut Sha1, state: &[u64; 4]) {
+        for value in state {
+            hasher.update(value.to_le_bytes());
+        }
+    }
+
+    let mut rotsum = [0u64; 4];
+    excrypt_rot_sum(&mut rotsum, input1);
+    excrypt_rot_sum(&mut rotsum, input2);
+
+    let mut hasher = Sha1::new();
+    update_rotsum_bytes(&mut hasher, &rotsum);
+    update_rotsum_bytes(&mut hasher, &rotsum);
+    hasher.update(input1);
+    hasher.update(input2);
+
+    for value in &mut rotsum {
+        *value = !*value;
+    }
+    update_rotsum_bytes(&mut hasher, &rotsum);
+    update_rotsum_bytes(&mut hasher, &rotsum);
+
+    let output: [u8; 20] = hasher.finalize().into();
+    Ok(output)
+}
+
 pub fn calculate_smc_hash(data: &[u8]) -> [u8; 16] {
     let mut s0: u64 = 0;
     let mut s1: u64 = 0;

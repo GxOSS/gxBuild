@@ -20,7 +20,8 @@
 */
 
 use super::BootloaderHeader;
-use crate::builder::deps::excrypt::{self, ExCryptRsa, Rc4};
+use crate::crypto::{hmac_sha, rot_sum_sha, verify_signature, Rc4};
+use crate::crypto::rsa::ExCryptRsa;
 use zerocopy::{FromBytes, IntoBytes};
 
 #[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
@@ -51,7 +52,7 @@ impl BootloaderSc {
             return;
         }
 
-        if let Ok(hash) = excrypt::rot_sum_sha(&IntoBytes::as_bytes(&self.header)[..0x10], &self.data[0x110..payload_len]) {
+        if let Ok(hash) = rot_sum_sha(&IntoBytes::as_bytes(&self.header)[..0x10], &self.data[0x110..payload_len]) {
             sha_out.copy_from_slice(&hash);
         }
     }
@@ -65,7 +66,7 @@ impl BootloaderSc {
         }
         let signature: &[u8; 256] = self.data[0x10..0x110].try_into().unwrap();
 
-        excrypt::verify_signature(signature, &bl_hash, salt, pubkey).unwrap_or(false)
+        verify_signature(signature, &bl_hash, salt, pubkey).unwrap_or(false)
     }
 
     pub fn decrypt(&mut self, dec_key: &[u8; 16]) {
@@ -77,7 +78,7 @@ impl BootloaderSc {
             return;
         }
 
-        if let Ok(derived_key) = excrypt::hmac_sha(dec_key, &[&self.data[0..16]]) {
+        if let Ok(derived_key) = hmac_sha(dec_key, &[&self.data[0..16]]) {
             let mut decrypt_key = [0u8; 16];
             decrypt_key.copy_from_slice(&derived_key[..16]);
 
