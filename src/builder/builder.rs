@@ -2604,6 +2604,16 @@ impl NandSkeleton {
                 }
             }
 
+            if let Some(cb_b) = skel.bootloaders.cb_b.as_mut() {
+                if let Some(meta) = cb_b.metadata.as_mut() {
+                    meta.pairing_data = pd;
+                    if let Some(ldv) = skel.input_ldv_cb {
+                        meta.lockdown_value = ldv;
+                    }
+                    cb_b.recalculate_per_box_digest(&cpukey);
+                }
+            }
+
             if let Some(rebooter) = skel.rebooter.as_mut() {
                 if let Some(cb) = rebooter.cb.as_mut() {
                     if let Some(meta) = cb.metadata.as_mut() {

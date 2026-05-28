@@ -58,7 +58,7 @@ impl FsSpareData {
                 let fs_sequence = (data[5] as u32) | ((data[4] as u32) << 8) | ((data[3] as u32) << 16);
                 let bad_block = data[0] != 0xFF;
                 let fs_size = u16::from_be_bytes([data[8], data[7]]);
-                let fs_page_count = (data[9] as u16) * 4;
+                let fs_page_count = data[9] as u16;
                 let fs_block_type = data[12] & 0x3F;
                 FsSpareData { block_id, fs_sequence, fs_size, fs_page_count, fs_block_type, bad_block }
             }
@@ -971,11 +971,12 @@ impl FlashFS {
             }
         }
 
+        let bb_fmt = if *layout == NandLayout::Bb { detect_bb_physical_format(image) } else { BbPhysicalFormat::PerPage };
         for block in 0..total_blocks {
             if is_bad_block(image, block, layout) {
                 continue;
             }
-            if let Some(spare) = get_page_spare(image, block * pages_per_block, layout) {
+            if let Some(spare) = get_page_spare_fmt(image, block * pages_per_block, layout, bb_fmt) {
                 let parsed = FsSpareData::parse(&spare, layout);
                 let btype = parsed.fs_block_type;
                 let seq = parsed.fs_sequence;
@@ -1040,11 +1041,12 @@ impl FlashFS {
         info!("[flashfs] FlashFS scan: {} blocks to examine, {} known bad blocks", total_blocks, lba_map.bad_blocks.len());
 
         if *layout != NandLayout::Emmc {
+            let bb_fmt = if *layout == NandLayout::Bb { detect_bb_physical_format(image) } else { BbPhysicalFormat::PerPage };
             for block in 0..total_blocks {
                 if lba_map.is_bad(block) || is_bad_block(image, block, layout) {
                     continue;
                 }
-                if let Some(spare) = get_page_spare(image, block * pages_per_block, layout) {
+                if let Some(spare) = get_page_spare_fmt(image, block * pages_per_block, layout, bb_fmt) {
                     let parsed = FsSpareData::parse(&spare, layout);
                     let seq = parsed.fs_sequence;
                     match parsed.fs_block_type {

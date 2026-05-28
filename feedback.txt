@@ -1,0 +1,140 @@
+Here is a critical evaluation of gxBuild’s spare/ECC handling, from generation through parsing and bad-block management.
+
+## Critical Issues
+
+### 1. ECC errors are detected but **never corrected** ([remove_spare](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:806:0-900:1))
+`@/home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:504-511`
+
+```rust
+pub fn ecc_verify_and_correct(page: &mut [u8]) -> bool {
+    let stored = [page[0x20C], page[0x20D], page[0x20E], page[0x20F]];
+    let computed = compute_ecc(page);
+    stored == computed
+}
+```
+
+Despite the name, this function **only verifies**; it never modifies `page`. In [remove_spare](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:806:0-900:1) (BB chunked, per-page, and SB paths), the result is logged and discarded, and the **raw, potentially corrupted data** is copied straight into the logical buffer:
+
+`@/home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:829-848`
+
+```rust
+for p in 0..4 {
+    buf[..0x200].copy_from_slice(&image[data_start..]);
+    buf[0x200..0x210].copy_from_slice(&image[spare_start..]);
+    if !ecc_verify_and_correct(&mut buf) { ecc_bad += 1; }
+}
+result[out_offset..].copy_from_slice(&image[in_offset..in_offset + chunk_out]);
+```
+
+The corrected bytes in `buf` are never written back to `result`. Single-bit flips in a dump will survive into the logical image and propagate through the build pipeline.
+
+### 2. [add_spare](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:520:0-651:1) stamps block IDs into **reserve region blocks**
+`@/home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:521-652`
+
+[add_spare](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:520:0-651:1) initializes `spare = [0u8; 16]` and writes block IDs into every non-FlashFS/non-mobile page:
+- **SB / XSB:** `spare[1..2]` = block ID, `spare[5] = 0xFF`
+- **BB:** `spare[1..2]` = block ID, `spare[0] = 0xFF`
+
+**Reference image analysis** confirms the reserve region must remain fully erased:
+
+- **SB reference** (`t1_xebuild_retail_17559.bin`): Blocks 992–1023 (32 reserve blocks) are all `FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF`.
+- **BB reference** (`nanddump1.bin`): Blocks 480–511 (32 reserve blocks) are all `FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF`.
+- **Both**: Zero bad blocks across the entire image.
+
+In both layouts, non-reserve data blocks *do* carry block IDs — that part is correct. The bug is specifically that **reserve blocks get block IDs stamped when they should remain untouched** (fully erased `0xFF`). The console knows the reserve boundary via the fixed `reserve_start` offset, not via bad-block markers.
+
+## Correctness & Robustness Observations
+
+### 3. [FsSpareData::parse](cci:1://file:///home/e3xp0/Projects/gxBuild/src/builder/filesystem/flashfs.rs:23:4-66:5) `fs_page_count` is misleading for Big Block
+`@/home/e3xp0/Projects/gxBuild/src/builder/filesystem/flashfs.rs:56-63`
+
+```rust
+SpareMetaType::MetaType2 => {
+    ...
+    let fs_page_count = (data[9] as u16) * 4;
+    ...
+}
+```
+
+For BB, the raw `spare[9]` is an *encoded* value (`0x40 - pagecount` for mobile blobs). Multiplying by 4 yields 252 for a 1-page mobile blob, which is nonsensical. The mobile scanner works around this by reading `spare[9]` directly and calling [decode_pagecount](cci:1://file:///home/e3xp0/Projects/gxBuild/src/builder/filesystem/mobile.rs:40:0-53:1), but any generic consumer of [FsSpareData::parse](cci:1://file:///home/e3xp0/Projects/gxBuild/src/builder/filesystem/flashfs.rs:23:4-66:5) will get a garbage page count for BB layouts.
+
+### 4. `page_count_encoded` for FS blocks is a deliberate trip-wire
+`@/home/e3xp0/Projects/gxBuild/src/core/session.rs:1565-1572`
+
+```rust
+let page_count_encoded = if layout == ... NandLayout::Bb => 0x00, ... else { 0x01 };
+```
+
+For BB FS blocks, `spare[9]` becomes `0x00`; for SB FS blocks, `0x01`. In [mobile.rs::scan_physical](cci:1://file:///home/e3xp0/Projects/gxBuild/src/builder/filesystem/flashfs.rs:958:4-1000:5), [decode_pagecount(0x00)](cci:1://file:///home/e3xp0/Projects/gxBuild/src/builder/filesystem/mobile.rs:40:0-53:1) returns `None` and [decode_pagecount(0x01)](cci:1://file:///home/e3xp0/Projects/gxBuild/src/builder/filesystem/mobile.rs:40:0-53:1) returns 31. Neither matches the actual file size, so the mobile scanner skips FS blocks. This is a fragile but functional anti-collision trick.
+
+### 5. [get_page_spare](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:902:0-931:1) re-detects BB format on every call
+`@/home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:903-932`
+
+```rust
+NandLayout::Bb => {
+    let fmt = detect_bb_physical_format(image);
+    ...
+}
+```
+
+[detect_bb_physical_format](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:178:0-221:1) samples 64 blocks each time. When [scan_physical](cci:1://file:///home/e3xp0/Projects/gxBuild/src/builder/filesystem/flashfs.rs:958:4-1000:5) calls this in a loop over hundreds of blocks, it performs redundant scans. This is safe but wasteful; the format should be cached.
+
+### 6. [write_logical_data](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:264:0-297:1) on physical images leaves stale spare/ECC
+`@/home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:265-298`
+
+When writing logical data into a buffer that still contains physical spare areas, only the data bytes are updated. Spare metadata and ECC for the affected pages become inconsistent until [add_spare](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:520:0-651:1) regenerates everything at finalization. Within gxBuild’s current flow this is masked, but any intermediate read of that buffer would see corrupt spare.
+
+### 7. [add_spare](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:520:0-651:1) `blockstart` is always zero
+`@/home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:1203-1214`
+
+```rust
+add_spare(clean_data, layout, meta_type, 0, fs_meta, mobile_meta, jtag_syscall)
+```
+
+[finalize_nand](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:1202:4-1214:5) hardcodes `blockstart = 0`. The function supports non-zero offsets ([block_number_base = blockstart / layout.block_size()](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:60:4-66:5)), but that path is unreachable, limiting reuse for partial-image operations.
+
+### 8. SB block-ID encoding is imprecise
+`@/home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:614-616`
+
+```rust
+SpareMetaType::MetaType0 => {
+    spare[0] = (val & 0xFF) as u8;
+    spare[1] = ((val / 0x100) & 0xFF) as u8;
+}
+```
+
+MetaType0 stores the 12-bit block ID with the high nibble in `spare[1]`. The code writes the full `(val / 0x100)` byte. For SB (max 0x400 blocks), the value is at most `0x03`, so it still fits in the low nibble. It is not a live bug, but it is architecturally incorrect for larger block numbers.
+
+### 9. [has_spare](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:653:0-716:1) is heuristic and can be fooled
+`@/home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:654-717`
+
+The spare-detection routine relies on alignment and byte-pattern heuristics. It is generally correct for standard dumps, but edge-case data that happens to align to 0x210 and contains `0xFF` / `0x00` patterns in the right places can trigger false positives.
+
+## Minor Issues
+
+### 10. [calculate_ecc](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:455:0-478:1) and [compute_ecc](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:480:0-499:1) are near-duplicates
+`@/home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:456-500`
+
+The two functions implement the same bit-serial ECC algorithm; one writes in-place and the other returns bytes. They should be deduplicated to prevent divergence.
+
+### 11. [remove_spare](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:806:0-900:1) chunked path silently truncates unaligned tail
+`@/home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:826`
+
+```rust
+let chunks = image.len() / chunk_in;
+```
+
+Any trailing bytes after the last full 0x840 chunk are ignored. Standard dumps are aligned, but malformed inputs lose data without warning.
+
+## Summary
+
+| Area | Verdict |
+|------|---------|
+| **Spare generation ([add_spare](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:520:0-651:1))** | Structurally correct for FS and mobile metadata, but **incorrectly stamps block IDs into reserve blocks** (should remain fully erased `0xFF`). `blockstart` is also hardcoded to 0. |
+| **Spare stripping ([remove_spare](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:806:0-900:1))** | Geometry handling is correct, but **ECC errors are reported and ignored without correction**, leaving potentially corrupted data in the logical buffer. |
+| **Bad-block detection** | Heuristic-based; mostly robust, though [get_page_spare](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:902:0-931:1) format re-detection is inefficient. |
+| **Build finalization** | `fs_meta` / `mobile_meta` injection into spare is correct, but the pipeline assumes a perfect LBA map with no bad blocks, which is standard for image builders but relies on the console to handle factory remapping. |
+
+The two highest-priority fixes are:
+1. Implement actual ECC correction in [remove_spare](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:806:0-900:1) (or at minimum, copy the verified-correct data back when the syndrome indicates a correctable error).
+2. Stop writing block IDs into reserve-region blocks in [add_spare](cci:1://file:///home/e3xp0/Projects/gxBuild/src/core/images/blocks.rs:520:0-651:1). Reserve blocks must remain fully erased (`0xFF`).
