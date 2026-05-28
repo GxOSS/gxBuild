@@ -25,12 +25,13 @@ use zerocopy::byteorder::{BigEndian, I16, U16, U32};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::builder::chain::*;
+use crate::builder::chain::smc::smc_crypt;
 use crate::builder::filesystem::corona::{self, CoronaFsSlots};
 use crate::builder::filesystem::flashfs::FlashFS;
 use crate::builder::filesystem::mobile::MobileStore;
 use crate::core::images::blocks::*;
 use crate::core::images::gxp::{apply_records, GxpBinary, GxpPatchType, PatchRecord};
-use crate::crypto::{hmac_sha, Rc4};
+use crate::crypto::{calculate_smc_hash, hmac_sha, Rc4};
 
 const NAND_RETAIL_1BL_KEY: [u8; 16] = [0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA];
 
@@ -2598,13 +2599,18 @@ impl NandSkeleton {
                 debug!("[builder] Pairing Data: {:02x?}", pd);
             }
 
+            let mut smc_for_hash = skel.extra.smc.clone();
+            smc_crypt(&mut smc_for_hash, true);
+            let smc_hash = calculate_smc_hash(&smc_for_hash);
+
             if let Some(cb) = skel.bootloaders.cb_a.as_mut().or(skel.bootloaders.cb.as_mut()) {
                 if let Some(meta) = cb.metadata.as_mut() {
                     meta.pairing_data = pd;
                     if let Some(ldv) = skel.input_ldv_cb {
                         meta.lockdown_value = ldv;
                     }
-                    cb.recalculate_per_box_digest(&cpukey);
+                    let rc4_key = cb.derived_key();
+                    cb.recalculate_per_box_digest(&cpukey, &rc4_key, &smc_hash);
                 }
             }
 
@@ -2614,7 +2620,8 @@ impl NandSkeleton {
                     if let Some(ldv) = skel.input_ldv_cb {
                         meta.lockdown_value = ldv;
                     }
-                    cb_b.recalculate_per_box_digest(&cpukey);
+                    let rc4_key = cb_b.derived_key();
+                    cb_b.recalculate_per_box_digest(&cpukey, &rc4_key, &smc_hash);
                 }
             }
 
@@ -2625,7 +2632,8 @@ impl NandSkeleton {
                         if let Some(ldv) = skel.input_ldv_cb {
                             meta.lockdown_value = ldv;
                         }
-                        cb.recalculate_per_box_digest(&cpukey);
+                        let rc4_key = cb.derived_key();
+                        cb.recalculate_per_box_digest(&cpukey, &rc4_key, &smc_hash);
                     }
                 }
             }

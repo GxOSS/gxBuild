@@ -1,5 +1,5 @@
 cargo build --release --no-default-features --features cli
 
-cp ./target/release/gxbuild ~/Projects/gxBuild-support-files/
+cp ./target/release/gxbuild ~/Projects/GxOSS/gxBuild-support-files/
 
-chmod +x ~/Projects/gxBuild-support-files/gxbuild
+chmod +x ~/Projects/GxOSS/gxBuild-support-files/gxbuild

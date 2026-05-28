@@ -102,9 +102,9 @@ impl BootloaderCb {
         let mut pairing_data = pd_raw;
         pairing_data.reverse();
 
-        let ldv_raw = self.data.get(0x3A1).copied().unwrap_or(0);
+        let ldv_raw = self.data.get(0x13).copied().unwrap_or(0);
         let mut lockdown_value = if ldv_raw <= 16 { ldv_raw } else { 0 };
-        info!("[cb] populate_metadata: PD={:02x?} LDV={} (raw={} at self.data[0x3A1])", pairing_data, lockdown_value, ldv_raw);
+        info!("[cb] populate_metadata: PD={:02x?} LDV={} (raw={} at self.data[0x13])", pairing_data, lockdown_value, ldv_raw);
 
         if self.header.version.get() == 0x3C48 {
             lockdown_value = 0;
@@ -184,7 +184,6 @@ impl BootloaderCb {
             self.data[0x38C..0x3A0].copy_from_slice(&meta.digest_4bl);
 
             self.data[0x3A0..0x3A4].copy_from_slice(&meta.console_allow);
-            self.data[0x3A1] = meta.lockdown_value;
 
             if self.data.len() > 0x2400 && self.data[0x1FF0] == 0x43 && self.data[0x1FF1] == 0x42 {
                 self.data[0x2010..0x2013].copy_from_slice(&pd_sync);
@@ -193,7 +192,6 @@ impl BootloaderCb {
                 self.data[0x2020..0x2030].copy_from_slice(&meta.per_box_digest);
                 if self.data.len() >= 0x23A4 {
                     self.data[0x23A0..0x23A4].copy_from_slice(&meta.console_allow);
-                    self.data[0x23A1] = meta.lockdown_value;
                 }
                 if self.data.len() > 0x23B1 {
                     self.data[0x23B1] = meta.lockdown_value;
@@ -203,14 +201,16 @@ impl BootloaderCb {
         }
     }
 
-    pub fn recalculate_per_box_digest(&mut self, cpu_key: &[u8; 16]) {
+    pub fn recalculate_per_box_digest(&mut self, cpu_key: &[u8; 16], rc4_key: &[u8; 16], smc_hash: &[u8; 16]) {
         if let Some(ref mut meta) = self.metadata {
-            let mut data_to_hash = [0u8; 0x10];
+            let mut data_to_hash = [0u8; 0x30];
             let mut pd_on_disk = meta.pairing_data;
             pd_on_disk.reverse();
-            data_to_hash[0..3].copy_from_slice(&pd_on_disk);
-            data_to_hash[3] = meta.lockdown_value;
-            data_to_hash[4..16].copy_from_slice(&meta.reserved_per_box);
+            data_to_hash[0x00..0x10].copy_from_slice(rc4_key);
+            data_to_hash[0x10..0x13].copy_from_slice(&pd_on_disk);
+            data_to_hash[0x13] = meta.lockdown_value;
+            data_to_hash[0x14..0x20].copy_from_slice(&meta.reserved_per_box);
+            data_to_hash[0x20..0x30].copy_from_slice(smc_hash);
 
             if let Ok(digest) = hmac_sha(cpu_key, &[&data_to_hash]) {
                 meta.per_box_digest.copy_from_slice(&digest[..16]);
