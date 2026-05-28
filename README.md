@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ExposureMG/gxBuild/issues"><img src="https://img.shields.io/github/issues/ExposureMG/gxBuild?" alt="GitHub issues"></a>
+  <a href="https://github.com/ExposureMG/gxBuild/issues"><img src="https://img.shields.io/github/issues/gxOSS/gxBuild?" alt="GitHub issues"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-%23E32F26.svg?&logo=rust&logoColor=white" alt="Rust"></a>
 </p>
 
