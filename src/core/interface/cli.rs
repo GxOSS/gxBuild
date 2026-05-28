@@ -754,9 +754,7 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     let all = matches!(args.mode, Some(GgxMode::Extract { all: true }));
 
     if args.ecc.is_some() && args.source_nand.is_some() {
-        return Err(anyhow::anyhow!(
-            "Provide either -l/--image (NAND) or --ecc (ECC image), not both."
-        ));
+        return Err(anyhow::anyhow!("Provide either -l/--image (NAND) or --ecc (ECC image), not both."));
     }
 
     // -o options: nomobile
@@ -769,10 +767,7 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     }
 
     let base_output_dir = args.output_dir.clone().unwrap_or_else(|| data_dir.clone());
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+    let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
     let output_dir = base_output_dir.join(format!("extract-{}", timestamp));
 
     let strip_ecc = |ecc_raw: &[u8]| -> Vec<u8> {
@@ -820,8 +815,7 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     let extract_ecc = |ecc_path: &PathBuf, output_dir: &PathBuf| -> anyhow::Result<()> {
         let _ = std::fs::create_dir_all(&output_dir);
 
-        let ecc_raw = std::fs::read(ecc_path)
-            .map_err(|e| anyhow::anyhow!("Failed to read ECC file '{}': {}", ecc_path.display(), e))?;
+        let ecc_raw = std::fs::read(ecc_path).map_err(|e| anyhow::anyhow!("Failed to read ECC file '{}': {}", ecc_path.display(), e))?;
         let clean = strip_ecc(&ecc_raw);
         let layout = crate::core::images::blocks::NandLayout::detect(&ecc_raw)
             .or_else(|_| crate::core::images::blocks::NandLayout::detect(&clean))
@@ -884,10 +878,7 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                         let has_cba_flag = (flags & 0x800) == 0x800;
                         let is_single = cb_seen == 1 && !has_cba_flag;
                         let is_cba = cb_seen == 1 && has_cba_flag;
-                        let is_cbx = cb_seen == 2
-                            && has_cba_flag
-                            && bl_size <= 0x800
-                            && (blh.version.get() == 0x3C48 || bl_size == 0x400);
+                        let is_cbx = cb_seen == 2 && has_cba_flag && bl_size <= 0x800 && (blh.version.get() == 0x3C48 || bl_size == 0x400);
 
                         let name = if is_single {
                             "CB.bin"
@@ -1076,23 +1067,10 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         }
 
         if wrote == 0 {
-            return Err(anyhow::anyhow!(
-                "No extractable components found in ECC image (layout={:?}, raw={}, clean={})",
-                layout,
-                ecc_raw.len(),
-                clean.len()
-            ));
+            return Err(anyhow::anyhow!("No extractable components found in ECC image (layout={:?}, raw={}, clean={})", layout, ecc_raw.len(), clean.len()));
         }
 
-        info!(
-            "[cli] Extract (ECC): INPUT={:?}, Output={:?} (layout={:?}, raw={}, clean={}, files={})",
-            ecc_path,
-            output_dir,
-            layout,
-            ecc_raw.len(),
-            clean.len(),
-            wrote
-        );
+        info!("[cli] Extract (ECC): INPUT={:?}, Output={:?} (layout={:?}, raw={}, clean={}, files={})", ecc_path, output_dir, layout, ecc_raw.len(), clean.len(), wrote);
         Ok(())
     };
 
@@ -1116,11 +1094,10 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
             data_dir.join("updflash.bin"),
             data_dir.join("updflash.ecc"),
         ];
-        candidates.into_iter().find(|p| p.exists()).ok_or_else(|| {
-            anyhow::anyhow!(
-                "No NAND/ECC image found. Provide one via -l/--image or --ecc, or place it in the data dir (-f/--data)."
-            )
-        })?
+        candidates
+            .into_iter()
+            .find(|p| p.exists())
+            .ok_or_else(|| anyhow::anyhow!("No NAND/ECC image found. Provide one via -l/--image or --ecc, or place it in the data dir (-f/--data)."))?
     };
 
     if image_path.extension().is_some_and(|e| e.eq_ignore_ascii_case("ecc")) {

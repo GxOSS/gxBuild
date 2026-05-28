@@ -1,5 +1,5 @@
-use super::{CryptoError, Result};
 use super::{ffi_slice, ffi_slice_mut};
+use super::{CryptoError, Result};
 
 #[repr(C)]
 pub struct ExCryptRc4State {

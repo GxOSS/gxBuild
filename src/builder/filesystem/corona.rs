@@ -4,9 +4,9 @@
     Ported from RGBuildPP CXeFlashImage LoadFileSystems / SaveFileSystems.
 */
 
-use crate::crypto::sha;
 use crate::builder::filesystem::flashfs::FileSystemRoot;
 use crate::builder::filesystem::mobile::MobileStore;
+use crate::crypto::sha;
 use log::info;
 
 /// RGBuildPP `XE_FLASH_CORONA_FS_DATA_ADDR`

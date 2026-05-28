@@ -21,9 +21,9 @@
 */
 
 use super::BootloaderHeader;
+use crate::core::images::blocks::NandLayout;
 use crate::crypto::rsa::ExCryptRsa;
 use crate::crypto::{rot_sum_sha, verify_signature};
-use crate::core::images::blocks::NandLayout;
 use log::info;
 use zerocopy::{FromBytes, IntoBytes};
 
@@ -154,9 +154,7 @@ impl Smc {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
 
-        if let Ok(hash) =
-            rot_sum_sha(&IntoBytes::as_bytes(&self.header.header)[..0x10], &self.data[..(size_aligned as usize - std::mem::size_of::<SmcHeader>())])
-        {
+        if let Ok(hash) = rot_sum_sha(&IntoBytes::as_bytes(&self.header.header)[..0x10], &self.data[..(size_aligned as usize - std::mem::size_of::<SmcHeader>())]) {
             sha_out.copy_from_slice(&hash);
         }
     }

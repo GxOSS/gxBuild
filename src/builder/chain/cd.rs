@@ -22,8 +22,8 @@
 use zerocopy::{FromBytes, IntoBytes};
 
 use super::BootloaderHeader;
-use crate::crypto::{hmac_sha, rot_sum_sha, verify_signature, Rc4};
 use crate::crypto::rsa::ExCryptRsa;
+use crate::crypto::{hmac_sha, rot_sum_sha, verify_signature, Rc4};
 use log::info;
 
 #[derive(Clone, Debug)]

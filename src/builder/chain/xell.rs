@@ -125,7 +125,14 @@ impl Xell {
     }
 
     /// return the target offset for the XeLL variant
-    pub fn get_target_offset(&self, layout: crate::core::images::blocks::NandLayout, image_profile: &str, has_vfuses: bool, cf_offset: u32, patch_slot_size: u32) -> Result<u32, XellError> {
+    pub fn get_target_offset(
+        &self,
+        layout: crate::core::images::blocks::NandLayout,
+        image_profile: &str,
+        has_vfuses: bool,
+        cf_offset: u32,
+        patch_slot_size: u32,
+    ) -> Result<u32, XellError> {
         let profile = image_profile.to_ascii_lowercase();
         let is_rgloader = profile.contains("rgloader") || profile.contains("glitchr") || profile.contains("glitch2r") || profile.contains("rgl");
 

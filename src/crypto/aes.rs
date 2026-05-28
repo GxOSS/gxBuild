@@ -7,10 +7,7 @@ pub struct Aes {
 
 impl Aes {
     pub fn new(key: &[u8]) -> Result<Self> {
-        let key: [u8; 16] = key.try_into().map_err(|_| CryptoError::InvalidKeySize {
-            expected: 16,
-            got: key.len(),
-        })?;
+        let key: [u8; 16] = key.try_into().map_err(|_| CryptoError::InvalidKeySize { expected: 16, got: key.len() })?;
         Ok(Self { key })
     }
 

@@ -1,13 +1,13 @@
-pub mod keys;
-pub mod sha;
 pub mod aes;
-pub mod rsa;
+pub mod keys;
 pub mod rc4;
+pub mod rsa;
+pub mod sha;
 
 // Re-exports for convenient access
 pub use rc4::Rc4;
-pub use sha::{calculate_smc_hash, hmac_sha, sha, rot_sum_sha};
 pub use rsa::verify_signature;
+pub use sha::{calculate_smc_hash, hmac_sha, rot_sum_sha, sha};
 
 pub type Result<T> = std::result::Result<T, CryptoError>;
 

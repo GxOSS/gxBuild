@@ -971,7 +971,11 @@ impl FlashFS {
             }
         }
 
-        let bb_fmt = if *layout == NandLayout::Bb { detect_bb_physical_format(image) } else { BbPhysicalFormat::PerPage };
+        let bb_fmt = if *layout == NandLayout::Bb {
+            detect_bb_physical_format(image)
+        } else {
+            BbPhysicalFormat::PerPage
+        };
         for block in 0..total_blocks {
             if is_bad_block(image, block, layout) {
                 continue;
@@ -1041,7 +1045,11 @@ impl FlashFS {
         info!("[flashfs] FlashFS scan: {} blocks to examine, {} known bad blocks", total_blocks, lba_map.bad_blocks.len());
 
         if *layout != NandLayout::Emmc {
-            let bb_fmt = if *layout == NandLayout::Bb { detect_bb_physical_format(image) } else { BbPhysicalFormat::PerPage };
+            let bb_fmt = if *layout == NandLayout::Bb {
+                detect_bb_physical_format(image)
+            } else {
+                BbPhysicalFormat::PerPage
+            };
             for block in 0..total_blocks {
                 if lba_map.is_bad(block) || is_bad_block(image, block, layout) {
                     continue;

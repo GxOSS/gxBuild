@@ -81,11 +81,7 @@ pub struct ExCryptSig {
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub unsafe extern "C" fn ExCryptBnQw_Copy(
-    source: *const u64,
-    dest: *mut u64,
-    num_qwords: u32,
-) {
+pub unsafe extern "C" fn ExCryptBnQw_Copy(source: *const u64, dest: *mut u64, num_qwords: u32) {
     if source.is_null() || dest.is_null() || num_qwords == 0 {
         return;
     }
@@ -98,14 +94,7 @@ pub unsafe extern "C" fn ExCryptBnQw_Copy(
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub unsafe extern "C" fn ExCryptBnQwNeModMul(
-    input_a: *const u64,
-    input_b: *const u64,
-    output_c: *mut u64,
-    inverse: u64,
-    modulus: *const u64,
-    modulus_size: u32,
-) {
+pub unsafe extern "C" fn ExCryptBnQwNeModMul(input_a: *const u64, input_b: *const u64, output_c: *mut u64, inverse: u64, modulus: *const u64, modulus_size: u32) {
     if input_a.is_null() || input_b.is_null() || output_c.is_null() || modulus.is_null() {
         return;
     }
@@ -181,7 +170,9 @@ pub unsafe extern "C" fn ExCryptBnQwNeModMul(
         if r16 != r17 {
             break;
         }
-        if idx == 0 { break; }
+        if idx == 0 {
+            break;
+        }
         idx = idx.wrapping_sub(1);
     }
 
@@ -243,36 +234,31 @@ pub unsafe extern "C" fn ExCryptBnQwNeModInv(input: u64) -> u64 {
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub unsafe extern "C" fn ExCryptBnDwLePkcs1Format(
-    hash: *const u8,
-    format: u32,
-    output_sig: *mut u8,
-    output_sig_size: u32,
-) {
+pub unsafe extern "C" fn ExCryptBnDwLePkcs1Format(hash: *const u8, format: u32, output_sig: *mut u8, output_sig_size: u32) {
     if hash.is_null() || output_sig.is_null() || output_sig_size < 39 {
         return;
     }
-    
+
     // Size check from C: output_sig_size - 39 > 473 means max 512 bytes
     if output_sig_size - 39 > 473 {
         return;
     }
-    
+
     let out = std::slice::from_raw_parts_mut(output_sig, output_sig_size as usize);
-    
+
     // Fill entire buffer with 0xFF
     out.fill(0xFF);
-    
+
     // End markers (little-endian at the very end)
     out[output_sig_size as usize - 1] = 0x00;
     out[output_sig_size as usize - 2] = 0x01;
-    
+
     // Copy reversed hash (20 bytes) to the START of the buffer
     let hash_slice = std::slice::from_raw_parts(hash, 20);
     for i in 0..20 {
         out[19 - i] = hash_slice[i];
     }
-    
+
     // Format-specific bytes after the reversed hash (offset 0x14 = 20)
     match format {
         0 => {
@@ -301,20 +287,16 @@ pub unsafe extern "C" fn ExCryptBnDwLePkcs1Format(
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub unsafe extern "C" fn ExCryptBnDwLePkcs1Verify(
-    hash: *const u8,
-    input_sig: *const u8,
-    input_sig_size: u32,
-) -> i32 {
+pub unsafe extern "C" fn ExCryptBnDwLePkcs1Verify(hash: *const u8, input_sig: *const u8, input_sig_size: u32) -> i32 {
     if hash.is_null() || input_sig.is_null() || input_sig_size < 39 {
         return 0;
     }
-    
+
     // Size check from C
     if input_sig_size - 39 > 473 {
         return 0;
     }
-    
+
     // Determine format based on input_sig[0x16] (offset 22)
     // format = 0 if 0x16 == 0
     // format = 1 if 0x16 == 0x1A
@@ -327,11 +309,11 @@ pub unsafe extern "C" fn ExCryptBnDwLePkcs1Verify(
     } else {
         2
     };
-    
+
     // Create expected signature
     let mut test_sig = vec![0u8; input_sig_size as usize];
     ExCryptBnDwLePkcs1Format(hash, format, test_sig.as_mut_ptr(), input_sig_size);
-    
+
     // Compare
     let input = std::slice::from_raw_parts(input_sig, input_sig_size as usize);
     if test_sig == input {
@@ -345,11 +327,7 @@ pub unsafe extern "C" fn ExCryptBnDwLePkcs1Verify(
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub unsafe extern "C" fn ExCryptBnQwNeRsaPrvCrypt(
-    input: *const u64,
-    output: *mut u64,
-    key: *const ExCryptRsa,
-) -> i32 {
+pub unsafe extern "C" fn ExCryptBnQwNeRsaPrvCrypt(input: *const u64, output: *mut u64, key: *const ExCryptRsa) -> i32 {
     if input.is_null() || output.is_null() || key.is_null() {
         return 0;
     }
@@ -366,22 +344,22 @@ pub unsafe extern "C" fn ExCryptBnQwNeRsaPrvCrypt(
     //   modulus[num_digits], prime1[half], prime2[half],
     //   exponent1[half], exponent2[half], coefficient[half], priv_exponent[num_digits]
     let base = (key as *const u8).add(std::mem::size_of::<ExCryptRsa>()) as *const u64;
-    let modulus_sl  = std::slice::from_raw_parts(base,                                        num_digits);
-    let prime1_sl   = std::slice::from_raw_parts(base.add(num_digits),                        half);
-    let prime2_sl   = std::slice::from_raw_parts(base.add(num_digits + half),                 half);
-    let exp1_sl     = std::slice::from_raw_parts(base.add(num_digits + half * 2),             half);
-    let exp2_sl     = std::slice::from_raw_parts(base.add(num_digits + half * 3),             half);
-    let coeff_sl    = std::slice::from_raw_parts(base.add(num_digits + half * 4),             half);
-    let privexp_sl  = std::slice::from_raw_parts(base.add(num_digits + half * 5),             num_digits);
+    let modulus_sl = std::slice::from_raw_parts(base, num_digits);
+    let prime1_sl = std::slice::from_raw_parts(base.add(num_digits), half);
+    let prime2_sl = std::slice::from_raw_parts(base.add(num_digits + half), half);
+    let exp1_sl = std::slice::from_raw_parts(base.add(num_digits + half * 2), half);
+    let exp2_sl = std::slice::from_raw_parts(base.add(num_digits + half * 3), half);
+    let coeff_sl = std::slice::from_raw_parts(base.add(num_digits + half * 4), half);
+    let privexp_sl = std::slice::from_raw_parts(base.add(num_digits + half * 5), num_digits);
 
-    let n    = qw_to_bignum(modulus_sl);
-    let p    = qw_to_bignum(prime1_sl);
-    let q    = qw_to_bignum(prime2_sl);
-    let dp   = qw_to_bignum(exp1_sl);
-    let dq   = qw_to_bignum(exp2_sl);
-    let qi   = qw_to_bignum(coeff_sl);
-    let d    = qw_to_bignum(privexp_sl);
-    let e    = BigNum::from_u32(rsa_key.pub_exponent.swap_bytes()).unwrap();
+    let n = qw_to_bignum(modulus_sl);
+    let p = qw_to_bignum(prime1_sl);
+    let q = qw_to_bignum(prime2_sl);
+    let dp = qw_to_bignum(exp1_sl);
+    let dq = qw_to_bignum(exp2_sl);
+    let qi = qw_to_bignum(coeff_sl);
+    let d = qw_to_bignum(privexp_sl);
+    let e = BigNum::from_u32(rsa_key.pub_exponent.swap_bytes()).unwrap();
 
     let rsa = match openssl::rsa::Rsa::from_private_components(n, e, d, p, q, dp, dq, qi) {
         Ok(r) => r,
@@ -416,40 +394,33 @@ pub unsafe extern "C" fn ExCryptBnQwNeRsaPrvCrypt(
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub unsafe extern "C" fn ExCryptBnQwNeRsaPubCrypt(
-    input: *const u64,
-    output: *mut u64,
-    key: *const ExCryptRsa,
-) -> i32 {
+pub unsafe extern "C" fn ExCryptBnQwNeRsaPubCrypt(input: *const u64, output: *mut u64, key: *const ExCryptRsa) -> i32 {
     if input.is_null() || output.is_null() || key.is_null() {
         return 0;
     }
-    
+
     let rsa_key = &*key;
     let num_digits = rsa_key.num_digits as usize;
     let exp = rsa_key.pub_exponent as u32;
-    
+
     let in_slice = std::slice::from_raw_parts(input, num_digits);
     let in_bn = qw_to_bignum(in_slice);
-    
+
     // Get modulus - the key may be ExCryptRsaPub1024 or ExCryptRsaPub2048
-    let modulus_slice = std::slice::from_raw_parts(
-        (key as *const u8).add(std::mem::size_of::<ExCryptRsa>()) as *const u64,
-        num_digits,
-    );
+    let modulus_slice = std::slice::from_raw_parts((key as *const u8).add(std::mem::size_of::<ExCryptRsa>()) as *const u64, num_digits);
     let modulus = qw_to_bignum(modulus_slice);
-    
+
     let mut ctx = BigNumContext::new().unwrap();
     let mut result = BigNum::new().unwrap();
-    
+
     // RSA public operation: result = input^exp mod modulus
     let exp_bn = BigNum::from_u32(exp).unwrap();
     result.mod_exp(&in_bn, &exp_bn, &modulus, &mut ctx).unwrap();
-    
+
     let out_slice = std::slice::from_raw_parts_mut(output, num_digits);
     let qw_result = bignum_to_qw(&result, num_digits);
     out_slice.copy_from_slice(&qw_result);
-    
+
     1
 }
 
@@ -457,23 +428,13 @@ pub unsafe extern "C" fn ExCryptBnQwNeRsaPubCrypt(
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub unsafe extern "C" fn ExCryptBnQwBeSigFormat(
-    sig: *mut ExCryptSig,
-    hash: *const u8,
-    salt: *const u8,
-) {
+pub unsafe extern "C" fn ExCryptBnQwBeSigFormat(sig: *mut ExCryptSig, hash: *const u8, salt: *const u8) {
     if sig.is_null() || hash.is_null() || salt.is_null() {
         return;
     }
 
     // Build the pre-encryption struct in a local buffer
-    let mut output = ExCryptSig {
-        padding: [0u64; 28],
-        one: 1,
-        salt: [0u8; 10],
-        hash: [0u8; 20],
-        end: 0xBC,
-    };
+    let mut output = ExCryptSig { padding: [0u64; 28], one: 1, salt: [0u8; 10], hash: [0u8; 20], end: 0xBC };
     std::ptr::copy_nonoverlapping(salt, output.salt.as_mut_ptr(), 10);
 
     // hash field = SHA1(output[0..8] | hash[0..20] | salt[0..10])
@@ -506,23 +467,13 @@ pub unsafe extern "C" fn ExCryptBnQwBeSigFormat(
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub unsafe extern "C" fn ExCryptBnQwBeSigVerify(
-    sig: *mut ExCryptSig,
-    hash: *const u8,
-    salt: *const u8,
-    pubkey: *const ExCryptRsa,
-) -> i32 {
+pub unsafe extern "C" fn ExCryptBnQwBeSigVerify(sig: *mut ExCryptSig, hash: *const u8, salt: *const u8, pubkey: *const ExCryptRsa) -> i32 {
     (ExCryptBnQwBeSigDifference(sig, hash, salt, pubkey) == 0) as i32
 }
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub unsafe extern "C" fn ExCryptBnQwBeSigDifference(
-    sig: *mut ExCryptSig,
-    hash: *const u8,
-    salt: *const u8,
-    pubkey: *const ExCryptRsa,
-) -> i32 {
+pub unsafe extern "C" fn ExCryptBnQwBeSigDifference(sig: *mut ExCryptSig, hash: *const u8, salt: *const u8, pubkey: *const ExCryptRsa) -> i32 {
     if sig.is_null() || hash.is_null() || salt.is_null() || pubkey.is_null() {
         return -1;
     }
@@ -546,10 +497,7 @@ pub unsafe extern "C" fn ExCryptBnQwBeSigDifference(
     sig_copy.copy_from_slice(qw_sig);
 
     // Get modulus (byteswapped)
-    let modulus_raw = std::slice::from_raw_parts(
-        (pubkey as *const u8).add(std::mem::size_of::<ExCryptRsa>()) as *const u64,
-        0x20,
-    );
+    let modulus_raw = std::slice::from_raw_parts((pubkey as *const u8).add(std::mem::size_of::<ExCryptRsa>()) as *const u64, 0x20);
     let mut modulus_swap = [0u64; 0x20];
     for i in 0..0x20 {
         modulus_swap[i] = modulus_raw[i].swap_bytes();
@@ -579,11 +527,7 @@ pub unsafe extern "C" fn ExCryptBnQwBeSigDifference(
     ExCryptBnQwBeSigFormat(expected_sig_ptr, hash, salt);
 
     // Compare
-    super::ExCryptMemDiff(
-        qw_sig.as_ptr() as *const u8,
-        sig_copy.as_ptr() as *const u8,
-        256,
-    )
+    super::ExCryptMemDiff(qw_sig.as_ptr() as *const u8, sig_copy.as_ptr() as *const u8, 256)
 }
 
 // --- Safe helpers ---

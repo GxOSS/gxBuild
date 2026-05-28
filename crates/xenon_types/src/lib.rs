@@ -45,10 +45,10 @@ pub struct SavegameId(pub u32);
 pub struct ConsoleId(#[serde(with = "serde_hex::fixed5")] pub [u8; 5]);
 
 impl std::ops::Deref for ConsoleId {
-	type Target = [u8; 5];
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
+    type Target = [u8; 5];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 /// 8-byte Xbox LIVE profile identifier (XUID).
@@ -56,10 +56,10 @@ impl std::ops::Deref for ConsoleId {
 pub struct ProfileId(#[serde(with = "serde_hex::fixed8")] pub [u8; 8]);
 
 impl std::ops::Deref for ProfileId {
-	type Target = [u8; 8];
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
+    type Target = [u8; 8];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 /// 20-byte device identifier used for HDD/MU/USB device binding.
@@ -67,10 +67,10 @@ impl std::ops::Deref for ProfileId {
 pub struct DeviceId(#[serde(with = "serde_hex::fixed20")] pub [u8; 0x14]);
 
 impl std::ops::Deref for DeviceId {
-	type Target = [u8; 0x14];
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
+    type Target = [u8; 0x14];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 /// 20-byte content identifier from an XContent package header.
@@ -95,19 +95,19 @@ impl std::ops::Deref for DeviceId {
 pub struct ContentId(#[serde(with = "serde_hex::fixed20")] pub [u8; 0x14]);
 
 impl std::ops::Deref for ContentId {
-	type Target = [u8; 0x14];
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
+    type Target = [u8; 0x14];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl std::fmt::Display for ContentId {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		for b in &self.0 {
-			write!(f, "{:02X}", b)?;
-		}
-		Ok(())
-	}
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for b in &self.0 {
+            write!(f, "{:02X}", b)?;
+        }
+        Ok(())
+    }
 }
 
 /// A 20-byte SHA-1 digest.
@@ -133,29 +133,29 @@ impl std::fmt::Display for ContentId {
 pub struct Sha1Hash(#[serde(with = "serde_hex::fixed20")] pub [u8; 20]);
 
 impl Sha1Hash {
-	pub const ZERO: Self = Self([0u8; 20]);
+    pub const ZERO: Self = Self([0u8; 20]);
 }
 
 impl std::ops::Deref for Sha1Hash {
-	type Target = [u8; 20];
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
+    type Target = [u8; 20];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl From<[u8; 20]> for Sha1Hash {
-	fn from(v: [u8; 20]) -> Self {
-		Self(v)
-	}
+    fn from(v: [u8; 20]) -> Self {
+        Self(v)
+    }
 }
 
 impl std::fmt::Display for Sha1Hash {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		for b in &self.0 {
-			write!(f, "{:02x}", b)?;
-		}
-		Ok(())
-	}
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for b in &self.0 {
+            write!(f, "{:02x}", b)?;
+        }
+        Ok(())
+    }
 }
 
 /// 32-bit virtual address in PowerPC address space (Xbox 360 is big-endian PPC).
@@ -168,46 +168,46 @@ pub struct VirtualAddress(pub u32);
 pub struct FileOffset(pub u64);
 
 impl FileOffset {
-	pub const ZERO: Self = Self(0);
+    pub const ZERO: Self = Self(0);
 
-	pub fn get(self) -> u64 {
-		self.0
-	}
+    pub fn get(self) -> u64 {
+        self.0
+    }
 
-	pub fn as_usize(self) -> usize {
-		self.0 as usize
-	}
+    pub fn as_usize(self) -> usize {
+        self.0 as usize
+    }
 }
 
 impl From<usize> for FileOffset {
-	fn from(v: usize) -> Self {
-		Self(v as u64)
-	}
+    fn from(v: usize) -> Self {
+        Self(v as u64)
+    }
 }
 
 impl From<u32> for FileOffset {
-	fn from(v: u32) -> Self {
-		Self(v as u64)
-	}
+    fn from(v: u32) -> Self {
+        Self(v as u64)
+    }
 }
 
 impl From<u64> for FileOffset {
-	fn from(v: u64) -> Self {
-		Self(v)
-	}
+    fn from(v: u64) -> Self {
+        Self(v)
+    }
 }
 
 impl std::ops::Add<usize> for FileOffset {
-	type Output = Self;
-	fn add(self, rhs: usize) -> Self {
-		Self(self.0 + rhs as u64)
-	}
+    type Output = Self;
+    fn add(self, rhs: usize) -> Self {
+        Self(self.0 + rhs as u64)
+    }
 }
 
 impl std::fmt::Display for FileOffset {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "{:#x}", self.0)
-	}
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#x}", self.0)
+    }
 }
 
 /// 128-bit AES key.
@@ -215,10 +215,10 @@ impl std::fmt::Display for FileOffset {
 pub struct AesKey(pub [u8; 16]);
 
 impl std::ops::Deref for AesKey {
-	type Target = [u8; 16];
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
+    type Target = [u8; 16];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 /// Xbox 360 version format (major.minor.build.revision).
@@ -238,88 +238,88 @@ impl std::ops::Deref for AesKey {
 /// ```
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Version {
-	pub major: u16,
-	pub minor: u16,
-	pub build: u16,
-	pub revision: u16,
+    pub major: u16,
+    pub minor: u16,
+    pub build: u16,
+    pub revision: u16,
 }
 
 impl std::fmt::Display for Version {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "{}.{}.{}.{}", self.major, self.minor, self.build, self.revision)
-	}
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}.{}.{}", self.major, self.minor, self.build, self.revision)
+    }
 }
 
 impl From<u32> for Version {
-	fn from(input: u32) -> Self {
-		Version {
-			major: ((input & 0xF000_0000) >> 28) as u16,
-			minor: ((input & 0x0F00_0000) >> 24) as u16,
-			build: ((input & 0x00FF_FF00) >> 8) as u16,
-			revision: (input & 0xFF) as u16,
-		}
-	}
+    fn from(input: u32) -> Self {
+        Version {
+            major: ((input & 0xF000_0000) >> 28) as u16,
+            minor: ((input & 0x0F00_0000) >> 24) as u16,
+            build: ((input & 0x00FF_FF00) >> 8) as u16,
+            revision: (input & 0xFF) as u16,
+        }
+    }
 }
 
 impl From<Version> for u32 {
-	fn from(v: Version) -> Self {
-		((v.major as u32) << 28) | ((v.minor as u32) << 24) | ((v.build as u32) << 8) | (v.revision as u32)
-	}
+    fn from(v: Version) -> Self {
+        ((v.major as u32) << 28) | ((v.minor as u32) << 24) | ((v.build as u32) << 8) | (v.revision as u32)
+    }
 }
 
 impl std::fmt::Display for ConsoleId {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		for b in &self.0 {
-			write!(f, "{:02x}", b)?;
-		}
-		Ok(())
-	}
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for b in &self.0 {
+            write!(f, "{:02x}", b)?;
+        }
+        Ok(())
+    }
 }
 
 impl std::fmt::Display for ProfileId {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		for b in &self.0 {
-			write!(f, "{:02x}", b)?;
-		}
-		Ok(())
-	}
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for b in &self.0 {
+            write!(f, "{:02x}", b)?;
+        }
+        Ok(())
+    }
 }
 
 impl std::fmt::Display for DeviceId {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		for b in &self.0 {
-			write!(f, "{:02x}", b)?;
-		}
-		Ok(())
-	}
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for b in &self.0 {
+            write!(f, "{:02x}", b)?;
+        }
+        Ok(())
+    }
 }
 
 bitflags! {
-	/// Game region bitmask. Used in both keyvault (u16) and XEX ImageInfo (u32).
-	///
-	/// The console's keyvault stores which regions it supports. XEX executables
-	/// store which regions they're allowed to run in. The kernel ANDs them
-	/// together during load.
-	#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-	pub struct GameRegion: u32 {
-		const NTSC_US = 0x000000FF;
-		const NTSC_JP = 0x0000FF00;
-		const PAL     = 0x00FE0000;
-		const PAL_AU  = 0x01000000;
-		const ALL     = 0x01FEFFFF;
-	}
+    /// Game region bitmask. Used in both keyvault (u16) and XEX ImageInfo (u32).
+    ///
+    /// The console's keyvault stores which regions it supports. XEX executables
+    /// store which regions they're allowed to run in. The kernel ANDs them
+    /// together during load.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct GameRegion: u32 {
+        const NTSC_US = 0x000000FF;
+        const NTSC_JP = 0x0000FF00;
+        const PAL     = 0x00FE0000;
+        const PAL_AU  = 0x01000000;
+        const ALL     = 0x01FEFFFF;
+    }
 }
 
 impl Serialize for GameRegion {
-	fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-		s.serialize_u32(self.bits())
-	}
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u32(self.bits())
+    }
 }
 
 impl<'de> Deserialize<'de> for GameRegion {
-	fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-		Ok(GameRegion::from_bits_retain(u32::deserialize(d)?))
-	}
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(GameRegion::from_bits_retain(u32::deserialize(d)?))
+    }
 }
 
 /// Windows FILETIME: 100-nanosecond intervals since 1601-01-01 00:00:00 UTC.
@@ -332,58 +332,58 @@ pub const FILETIME_UNIX_EPOCH_DELTA: u64 = 116_444_736_000_000_000;
 /// Decode a FILETIME from Xbox 360 on-disk format: two little-endian u32s
 /// stored as (high, low).
 pub fn filetime_from_xe_bytes(bytes: &[u8; 8]) -> u64 {
-	let hi = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-	let lo = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-	((hi as u64) << 32) | lo as u64
+    let hi = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    let lo = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+    ((hi as u64) << 32) | lo as u64
 }
 
 /// Convert a Windows FILETIME to a Unix timestamp in seconds.
 pub fn filetime_to_unix_secs(ft: u64) -> Option<i64> {
-	ft.checked_sub(FILETIME_UNIX_EPOCH_DELTA).map(|v| (v / 10_000_000) as i64)
+    ft.checked_sub(FILETIME_UNIX_EPOCH_DELTA).map(|v| (v / 10_000_000) as i64)
 }
 
 /// Convert a Windows FILETIME to a `jiff::Timestamp`.
 #[cfg(feature = "jiff")]
 pub fn filetime_to_timestamp(ft: u64) -> Option<jiff::Timestamp> {
-	let unix_secs = filetime_to_unix_secs(ft)?;
-	let nanos_remainder = ((ft - FILETIME_UNIX_EPOCH_DELTA) % 10_000_000) * 100;
-	jiff::Timestamp::new(unix_secs, nanos_remainder as i32).ok()
+    let unix_secs = filetime_to_unix_secs(ft)?;
+    let nanos_remainder = ((ft - FILETIME_UNIX_EPOCH_DELTA) % 10_000_000) * 100;
+    jiff::Timestamp::new(unix_secs, nanos_remainder as i32).ok()
 }
 
 /// Convert a `jiff::Timestamp` to a Windows FILETIME (100-ns intervals since
 /// 1601-01-01). Returns `None` for timestamps before the FILETIME epoch.
 #[cfg(feature = "jiff")]
 pub fn timestamp_to_filetime(ts: jiff::Timestamp) -> Option<u64> {
-	let unix_secs = ts.as_second();
-	let subsec_nanos = ts.subsec_nanosecond();
-	if unix_secs < 0 {
-		return None;
-	}
-	let ticks_from_unix = (unix_secs as u64).checked_mul(10_000_000)?;
-	let ticks_subsec = (subsec_nanos as u64) / 100;
-	FILETIME_UNIX_EPOCH_DELTA.checked_add(ticks_from_unix)?.checked_add(ticks_subsec)
+    let unix_secs = ts.as_second();
+    let subsec_nanos = ts.subsec_nanosecond();
+    if unix_secs < 0 {
+        return None;
+    }
+    let ticks_from_unix = (unix_secs as u64).checked_mul(10_000_000)?;
+    let ticks_subsec = (subsec_nanos as u64) / 100;
+    FILETIME_UNIX_EPOCH_DELTA.checked_add(ticks_from_unix)?.checked_add(ticks_subsec)
 }
 
 macro_rules! impl_u32_hex_display {
-	($ty:ty) => {
-		impl std::fmt::Display for $ty {
-			fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-				write!(f, "{:08X}", self.0)
-			}
-		}
+    ($ty:ty) => {
+        impl std::fmt::Display for $ty {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{:08X}", self.0)
+            }
+        }
 
-		impl std::fmt::LowerHex for $ty {
-			fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-				write!(f, "{:08x}", self.0)
-			}
-		}
+        impl std::fmt::LowerHex for $ty {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{:08x}", self.0)
+            }
+        }
 
-		impl std::fmt::UpperHex for $ty {
-			fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-				write!(f, "{:08X}", self.0)
-			}
-		}
-	};
+        impl std::fmt::UpperHex for $ty {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{:08X}", self.0)
+            }
+        }
+    };
 }
 
 impl_u32_hex_display!(TitleId);
@@ -391,13 +391,13 @@ impl_u32_hex_display!(MediaId);
 impl_u32_hex_display!(SavegameId);
 
 impl std::fmt::LowerHex for VirtualAddress {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "{:08x}", self.0)
-	}
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:08x}", self.0)
+    }
 }
 
 impl std::fmt::UpperHex for VirtualAddress {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "{:08X}", self.0)
-	}
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:08X}", self.0)
+    }
 }

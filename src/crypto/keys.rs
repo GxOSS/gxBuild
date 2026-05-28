@@ -1,11 +1,13 @@
 use super::{CryptoError, Result};
-use crate::crypto::{ExCryptBnQw_SwapDwQwLeBe, ExCryptMemDiff};
-use crate::crypto::rsa::{ExCryptRsa, ExCryptRsaPrv1024, ExCryptRsaPub1024, ExCryptBnQwNeRsaPrvCrypt, ExCryptBnQwNeRsaPubCrypt, ExCryptBnDwLePkcs1Format, ExCryptBnDwLePkcs1Verify};
+use crate::crypto::rc4::{ExCryptRc4, ExCryptRc4Ecb, ExCryptRc4Key, ExCryptRc4State};
+use crate::crypto::rsa::{
+    ExCryptBnDwLePkcs1Format, ExCryptBnDwLePkcs1Verify, ExCryptBnQwNeRsaPrvCrypt, ExCryptBnQwNeRsaPubCrypt, ExCryptRsa, ExCryptRsaPrv1024, ExCryptRsaPub1024,
+};
 use crate::crypto::sha::{ExCryptHmacSha, ExCryptSha};
-use crate::crypto::rc4::{ExCryptRc4, ExCryptRc4State, ExCryptRc4Key, ExCryptRc4Ecb};
+use crate::crypto::{ExCryptBnQw_SwapDwQwLeBe, ExCryptMemDiff};
 use std::collections::HashMap;
-use std::sync::{Mutex, LazyLock};
 use std::io::{Read, Seek, SeekFrom};
+use std::sync::{LazyLock, Mutex};
 
 #[repr(u32)]
 #[derive(Debug, Clone, Copy)]
@@ -73,12 +75,8 @@ pub enum XeKey {
 static EX_IMPORTED_KEYS: LazyLock<Mutex<HashMap<u32, Vec<u8>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 static EX_KEY_VAULT: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 
-const K_ROAMABLE_OBFUSCATION_KEY_RETAIL: [u8; 16] = [
-    0xE1, 0xBC, 0x15, 0x9C, 0x73, 0xB1, 0xEA, 0xE9, 0xAB, 0x31, 0x70, 0xF3, 0xAD, 0x47, 0xEB, 0xF3,
-];
-const K_ROAMABLE_OBFUSCATION_KEY_DEVKIT: [u8; 16] = [
-    0xDA, 0xB6, 0x9A, 0xD9, 0x8E, 0x28, 0x76, 0x4F, 0x97, 0x7E, 0xE2, 0x48, 0x7E, 0x4F, 0x3F, 0x68,
-];
+const K_ROAMABLE_OBFUSCATION_KEY_RETAIL: [u8; 16] = [0xE1, 0xBC, 0x15, 0x9C, 0x73, 0xB1, 0xEA, 0xE9, 0xAB, 0x31, 0x70, 0xF3, 0xAD, 0x47, 0xEB, 0xF3];
+const K_ROAMABLE_OBFUSCATION_KEY_DEVKIT: [u8; 16] = [0xDA, 0xB6, 0x9A, 0xD9, 0x8E, 0x28, 0x76, 0x4F, 0x97, 0x7E, 0xE2, 0x48, 0x7E, 0x4F, 0x3F, 0x68];
 
 fn key_properties(key_idx: u32) -> Option<(u32, u32)> {
     match key_idx {
@@ -442,11 +440,7 @@ pub unsafe extern "C" fn ExKeysPkcs1Verify(hash: *const u8, input_sig: *const u8
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub unsafe extern "C" fn ExKeysConsoleSignatureVerification(
-    hash: *const u8,
-    input_signature: *mut u8,
-    compare_result: *mut i32,
-) -> i32 {
+pub unsafe extern "C" fn ExKeysConsoleSignatureVerification(hash: *const u8, input_signature: *mut u8, compare_result: *mut i32) -> i32 {
     let mut our_console_cert = [0u8; 0x1A8];
     let mut master_key = [0u8; 0x110];
     ExKeysGetConsoleCertificate(our_console_cert.as_mut_ptr());
@@ -462,29 +456,13 @@ pub unsafe extern "C" fn ExKeysConsoleSignatureVerification(
         master_key_size = 0;
     }
 
-    if master_key_size == 0x110
-        && u32::from_be_bytes([master_key[0], master_key[1], master_key[2], master_key[3]]) == 0x20
-    {
+    if master_key_size == 0x110 && u32::from_be_bytes([master_key[0], master_key[1], master_key[2], master_key[3]]) == 0x20 {
         let mut cert_checksum = [0u8; 0x14];
         ExCryptSha(input_signature, 0xA8, std::ptr::null(), 0, std::ptr::null(), 0, cert_checksum.as_mut_ptr(), 0x14);
-        if ExKeysPkcs1Verify(cert_checksum.as_ptr(), input_signature.add(0xA8), master_key.as_ptr() as *const ExCryptRsa)
-            != 0
-        {
-            let mut console_public_key = ExCryptRsaPub1024 {
-                rsa: ExCryptRsa {
-                    num_digits: (0x10u32).swap_bytes(),
-                    pub_exponent: 0,
-                    reserved: 0,
-                },
-                modulus: [0u64; 16],
-            };
+        if ExKeysPkcs1Verify(cert_checksum.as_ptr(), input_signature.add(0xA8), master_key.as_ptr() as *const ExCryptRsa) != 0 {
+            let mut console_public_key = ExCryptRsaPub1024 { rsa: ExCryptRsa { num_digits: (0x10u32).swap_bytes(), pub_exponent: 0, reserved: 0 }, modulus: [0u64; 16] };
             let pub_exp_bytes = std::slice::from_raw_parts(input_signature.add(0x24), 4);
-            console_public_key.rsa.pub_exponent = u32::from_le_bytes([
-                pub_exp_bytes[0],
-                pub_exp_bytes[1],
-                pub_exp_bytes[2],
-                pub_exp_bytes[3],
-            ]);
+            console_public_key.rsa.pub_exponent = u32::from_le_bytes([pub_exp_bytes[0], pub_exp_bytes[1], pub_exp_bytes[2], pub_exp_bytes[3]]);
             std::slice::from_raw_parts_mut(console_public_key.modulus.as_mut_ptr() as *mut u8, 128)
                 .copy_from_slice(std::slice::from_raw_parts(input_signature.add(0x28), 128));
             if ExKeysPkcs1Verify(hash, input_signature.add(0x1A8), &console_public_key.rsa) != 0 {
@@ -531,18 +509,7 @@ pub unsafe extern "C" fn ExKeysHmacShaUsingKey(
     let mut key = [0u8; 0x10];
     std::ptr::copy_nonoverlapping(obscured_key, key.as_mut_ptr(), 16);
     xecrypt::symmetric::xe_crypt_aes_ecb_decrypt(key_enc, &mut key);
-    ExCryptHmacSha(
-        key.as_ptr(),
-        0x10,
-        input1,
-        input1_size,
-        input2,
-        input2_size,
-        input3,
-        input3_size,
-        output,
-        output_size,
-    );
+    ExCryptHmacSha(key.as_ptr(), 0x10, input1, input1_size, input2, input2_size, input3, input3_size, output, output_size);
     0
 }
 
@@ -570,13 +537,7 @@ pub unsafe extern "C" fn ExKeysHmacSha(
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub unsafe extern "C" fn ExKeysObfuscate(
-    roaming: i32,
-    input: *const u8,
-    input_size: u32,
-    output: *mut u8,
-    output_size: *mut u32,
-) -> i32 {
+pub unsafe extern "C" fn ExKeysObfuscate(roaming: i32, input: *const u8, input_size: u32, output: *mut u8, output_size: *mut u32) -> i32 {
     let input = std::slice::from_raw_parts(input, input_size as usize);
     let out = std::slice::from_raw_parts_mut(output.add(0x18), input_size as usize);
     out.copy_from_slice(input);
@@ -605,13 +566,7 @@ pub unsafe extern "C" fn ExKeysObfuscate(
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub unsafe extern "C" fn ExKeysUnObfuscate(
-    roaming: i32,
-    input: *const u8,
-    input_size: u32,
-    output: *mut u8,
-    output_size: *mut u32,
-) -> i32 {
+pub unsafe extern "C" fn ExKeysUnObfuscate(roaming: i32, input: *const u8, input_size: u32, output: *mut u8, output_size: *mut u32) -> i32 {
     if input_size < 0x18 {
         return 0;
     }
@@ -619,8 +574,7 @@ pub unsafe extern "C" fn ExKeysUnObfuscate(
     buf1.copy_from_slice(std::slice::from_raw_parts(input, 0x18));
 
     *output_size = input_size - 0x18;
-    std::slice::from_raw_parts_mut(output, *output_size as usize)
-        .copy_from_slice(std::slice::from_raw_parts(input.add(0x18), *output_size as usize));
+    std::slice::from_raw_parts_mut(output, *output_size as usize).copy_from_slice(std::slice::from_raw_parts(input.add(0x18), *output_size as usize));
 
     let key_idx = if roaming != 0 {
         XeKey::RoamableObfuscationKey as u32

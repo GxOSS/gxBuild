@@ -7,82 +7,82 @@
 ///
 /// HV key ID 0x3f. XECRYPT_RSA at HV offset 0x11428. Exponent = 3.
 pub(crate) mod manufacturing {
-	pub const MODULUS: [u64; 32] = [
-		0xF430E3524D531CA1,
-		0x82AB589D831ED8F7,
-		0x189A4E0772CEDF24,
-		0xDC6E0D6F8E527635,
-		0x55905590B58E8EBE,
-		0x60BED0C6C8FD92AB,
-		0xBCA893C0A8E2BC1B,
-		0x5E0124F18FC05B8C,
-		0xB7213621D536EA20,
-		0x3458EC8CDB4BE71E,
-		0xE795D6B912FAD059,
-		0xCB12A7B421D713E1,
-		0x3321ACCCCC90D9C3,
-		0xF414158D5A2A8442,
-		0x669C6684AC16C4AE,
-		0x29FE2804287F7C3B,
-		0x72FA648DC28DEAC4,
-		0x575D51789E3BAA57,
-		0x5C218C92C42C5916,
-		0x3F251A1F98021AA4,
-		0xCA87663374889788,
-		0xE319316A310D355B,
-		0x3E1B3A581A315847,
-		0x1B5DAF9F601A548E,
-		0x8EF17243BD0FBD72,
-		0x5A1D43720FC372E3,
-		0xC46DB6A5458A14F2,
-		0xB5713FD8C40912E9,
-		0x098A14FE10C06C60,
-		0xCCADB66A276CFF81,
-		0x7D6E995FE2BAFA3E,
-		0xBAD0A517AFD97D7C,
-	];
-	pub const EXPONENT: u64 = 3;
+    pub const MODULUS: [u64; 32] = [
+        0xF430E3524D531CA1,
+        0x82AB589D831ED8F7,
+        0x189A4E0772CEDF24,
+        0xDC6E0D6F8E527635,
+        0x55905590B58E8EBE,
+        0x60BED0C6C8FD92AB,
+        0xBCA893C0A8E2BC1B,
+        0x5E0124F18FC05B8C,
+        0xB7213621D536EA20,
+        0x3458EC8CDB4BE71E,
+        0xE795D6B912FAD059,
+        0xCB12A7B421D713E1,
+        0x3321ACCCCC90D9C3,
+        0xF414158D5A2A8442,
+        0x669C6684AC16C4AE,
+        0x29FE2804287F7C3B,
+        0x72FA648DC28DEAC4,
+        0x575D51789E3BAA57,
+        0x5C218C92C42C5916,
+        0x3F251A1F98021AA4,
+        0xCA87663374889788,
+        0xE319316A310D355B,
+        0x3E1B3A581A315847,
+        0x1B5DAF9F601A548E,
+        0x8EF17243BD0FBD72,
+        0x5A1D43720FC372E3,
+        0xC46DB6A5458A14F2,
+        0xB5713FD8C40912E9,
+        0x098A14FE10C06C60,
+        0xCCADB66A276CFF81,
+        0x7D6E995FE2BAFA3E,
+        0xBAD0A517AFD97D7C,
+    ];
+    pub const EXPONENT: u64 = 3;
 }
 
 /// Dashboard/system update verification key. Same key for retail and devkit consoles.
 ///
 /// HV XECRYPT_RSA at HV offset 0x11538. Exponent = 3.
 pub(crate) mod dashboard {
-	pub const MODULUS: [u64; 32] = [
-		0x7E17D746E24738DB,
-		0xC5A0CF1CFE10731F,
-		0x72492EEC0826BE96,
-		0x6B85ECBEECD5E6DD,
-		0x1FA3659865751F98,
-		0xC7C8A13DB4455E24,
-		0x0E8FF1C0302A2CFA,
-		0x7FBD65B6D292F62F,
-		0x0ECA73E066F0AAD2,
-		0x5959E044541C787F,
-		0x9EE465F81F7B89B0,
-		0x1DCCBE96BE569356,
-		0xE1D7BEB993F9CE21,
-		0xCE1CCAC8333831C9,
-		0x842A614561EFEF95,
-		0x5FE321F2CEBEC19E,
-		0xF0D617869EC1387E,
-		0x6A95048F30864F17,
-		0x700933A70DEFDB6D,
-		0xF4279F48FC9F274D,
-		0x287FAF4F123CE3AE,
-		0x7C56D9FD54F8BC27,
-		0xB6F84D0A49F43F79,
-		0xC1FD3FEB04EDDEF5,
-		0xC29DEB3FE7ACD65B,
-		0xD680ACF1D6FEC25B,
-		0x809F18B6700F0970,
-		0x0F05020550AF9FEA,
-		0x6807444E86380138,
-		0xDFCA545493AF2DD8,
-		0x5C7E7EB2D82DC8E2,
-		0xE2F7DA08517ABA51,
-	];
-	pub const EXPONENT: u64 = 3;
+    pub const MODULUS: [u64; 32] = [
+        0x7E17D746E24738DB,
+        0xC5A0CF1CFE10731F,
+        0x72492EEC0826BE96,
+        0x6B85ECBEECD5E6DD,
+        0x1FA3659865751F98,
+        0xC7C8A13DB4455E24,
+        0x0E8FF1C0302A2CFA,
+        0x7FBD65B6D292F62F,
+        0x0ECA73E066F0AAD2,
+        0x5959E044541C787F,
+        0x9EE465F81F7B89B0,
+        0x1DCCBE96BE569356,
+        0xE1D7BEB993F9CE21,
+        0xCE1CCAC8333831C9,
+        0x842A614561EFEF95,
+        0x5FE321F2CEBEC19E,
+        0xF0D617869EC1387E,
+        0x6A95048F30864F17,
+        0x700933A70DEFDB6D,
+        0xF4279F48FC9F274D,
+        0x287FAF4F123CE3AE,
+        0x7C56D9FD54F8BC27,
+        0xB6F84D0A49F43F79,
+        0xC1FD3FEB04EDDEF5,
+        0xC29DEB3FE7ACD65B,
+        0xD680ACF1D6FEC25B,
+        0x809F18B6700F0970,
+        0x0F05020550AF9FEA,
+        0x6807444E86380138,
+        0xDFCA545493AF2DD8,
+        0x5C7E7EB2D82DC8E2,
+        0xE2F7DA08517ABA51,
+    ];
+    pub const EXPONENT: u64 = 3;
 }
 
 /// Xbox Security Method 3 (XSM3) USB device authentication key. 1536-bit.
@@ -93,631 +93,631 @@ pub(crate) mod dashboard {
 /// Functions:
 /// - USB device auth state machine (xboxkrnl) via `UsbdReportAuthenticationComplete`
 pub(crate) mod xsm3 {
-	pub const MODULUS: [u64; 24] = [
-		0x67394007BB3CA709,
-		0x883659AEBD899DB8,
-		0x9E17320CCBFA1000,
-		0xDBFBE8A7CD5FFE9B,
-		0xB51D57A8C46649CA,
-		0xD29FF2ADCFDB2DE1,
-		0xAC3EDD20D96BA854,
-		0xBDD158370911FA4A,
-		0x403D53D3C8E44A98,
-		0xEE332F6AE71C3CAF,
-		0x93C536BF8AC0C490,
-		0x835C979B13E744E1,
-		0xAEC9C3FA1C6AF975,
-		0x3D743935D77F91DE,
-		0xC115B54A24BB8CA2,
-		0x0CD0F4C12ADC6D8C,
-		0x134E80E05B0D42E0,
-		0xAC79F61AA570D71C,
-		0x206C97F0CEB9AB04,
-		0xBAFA9172AC9BA69A,
-		0x79BE1CFAFA9D1A8E,
-		0xCA0FB6F6898B53B2,
-		0xD9A9C18218CE6E66,
-		0x94D0718E9A1AE2CA,
-	];
-	pub const EXPONENT: u64 = 3;
+    pub const MODULUS: [u64; 24] = [
+        0x67394007BB3CA709,
+        0x883659AEBD899DB8,
+        0x9E17320CCBFA1000,
+        0xDBFBE8A7CD5FFE9B,
+        0xB51D57A8C46649CA,
+        0xD29FF2ADCFDB2DE1,
+        0xAC3EDD20D96BA854,
+        0xBDD158370911FA4A,
+        0x403D53D3C8E44A98,
+        0xEE332F6AE71C3CAF,
+        0x93C536BF8AC0C490,
+        0x835C979B13E744E1,
+        0xAEC9C3FA1C6AF975,
+        0x3D743935D77F91DE,
+        0xC115B54A24BB8CA2,
+        0x0CD0F4C12ADC6D8C,
+        0x134E80E05B0D42E0,
+        0xAC79F61AA570D71C,
+        0x206C97F0CEB9AB04,
+        0xBAFA9172AC9BA69A,
+        0x79BE1CFAFA9D1A8E,
+        0xCA0FB6F6898B53B2,
+        0xD9A9C18218CE6E66,
+        0x94D0718E9A1AE2CA,
+    ];
+    pub const EXPONENT: u64 = 3;
 }
 
 /// RSA public keys used by the HV for key wrapping/encryption and factory provisioning.
 pub(crate) mod key_encrypt {
-	/// Factory response verification / default RSA encryption key.
-	///
-	/// Dual-purpose key used for both RSA public-key encryption (key wrapping for
-	/// Microsoft's servers) and RSA signature verification in the factory provisioning
-	/// flow.
-	///
-	/// In the factory flow, this key verifies the factory equipment's response in
-	/// step 2 of the challenge/response protocol (see `retail::factory_challenge`
-	/// for step 1). On successful verification, HV flag 0x4 is set and the key
-	/// state is updated.
-	///
-	/// HV XECRYPT_RSA at HV offset 0x11208. Exponent = 3.
-	///
-	/// Functions:
-	/// - `HvxKeysSetFactoryResponse` (HV) -- RSA signature verification of factory response
-	/// - `XeKeysSetFactoryResponse` (xboxkrnl, syscall 0x35) -- kernel entry point
-	/// - `HvxKeysGetKey` RSA encrypt path (HV) -- default public-key encryption
-	pub mod default {
-		pub const MODULUS: [u64; 32] = [
-			0x81A11726B3708AD9,
-			0x3CADA14BB1723CA8,
-			0xB96521B7BF2C370C,
-			0x0506AEDA077913D9,
-			0x150B86783D3EE81D,
-			0xABA1C84D6B17088A,
-			0x9DEE643A8EF48837,
-			0xBA5E4802FE74693D,
-			0x22CD3CCCAC889930,
-			0xF19F139BD3866749,
-			0xC1E263E08618DC1E,
-			0xEE014F10D98F3E49,
-			0xAB1F0F0F989892E9,
-			0x5CAC87E1148126C5,
-			0x95A8E52B90BB7DD3,
-			0x99AB1B3102B1B1E6,
-			0x9F223F98D4F9FDD9,
-			0xB76614DD955F1F5F,
-			0xC8C7BC2A2F4890BF,
-			0x0AD3712C1C8EE92F,
-			0x291EDC1D86F54ED8,
-			0x269091A06379620C,
-			0x1ED2628C5518FB37,
-			0x8F7DE2CBE67A4F45,
-			0x39EB5F1CBF87D4CD,
-			0xC988A19E84029A15,
-			0xBBE86A804ADEEBD9,
-			0xC61DE690A83B2759,
-			0x8025D28E404EC9F0,
-			0xE5DDE93C2528D0F6,
-			0xC40BF9362656B348,
-			0xE33A0D22AE707462,
-		];
-		pub const EXPONENT: u64 = 3;
-	}
+    /// Factory response verification / default RSA encryption key.
+    ///
+    /// Dual-purpose key used for both RSA public-key encryption (key wrapping for
+    /// Microsoft's servers) and RSA signature verification in the factory provisioning
+    /// flow.
+    ///
+    /// In the factory flow, this key verifies the factory equipment's response in
+    /// step 2 of the challenge/response protocol (see `retail::factory_challenge`
+    /// for step 1). On successful verification, HV flag 0x4 is set and the key
+    /// state is updated.
+    ///
+    /// HV XECRYPT_RSA at HV offset 0x11208. Exponent = 3.
+    ///
+    /// Functions:
+    /// - `HvxKeysSetFactoryResponse` (HV) -- RSA signature verification of factory response
+    /// - `XeKeysSetFactoryResponse` (xboxkrnl, syscall 0x35) -- kernel entry point
+    /// - `HvxKeysGetKey` RSA encrypt path (HV) -- default public-key encryption
+    pub mod default {
+        pub const MODULUS: [u64; 32] = [
+            0x81A11726B3708AD9,
+            0x3CADA14BB1723CA8,
+            0xB96521B7BF2C370C,
+            0x0506AEDA077913D9,
+            0x150B86783D3EE81D,
+            0xABA1C84D6B17088A,
+            0x9DEE643A8EF48837,
+            0xBA5E4802FE74693D,
+            0x22CD3CCCAC889930,
+            0xF19F139BD3866749,
+            0xC1E263E08618DC1E,
+            0xEE014F10D98F3E49,
+            0xAB1F0F0F989892E9,
+            0x5CAC87E1148126C5,
+            0x95A8E52B90BB7DD3,
+            0x99AB1B3102B1B1E6,
+            0x9F223F98D4F9FDD9,
+            0xB76614DD955F1F5F,
+            0xC8C7BC2A2F4890BF,
+            0x0AD3712C1C8EE92F,
+            0x291EDC1D86F54ED8,
+            0x269091A06379620C,
+            0x1ED2628C5518FB37,
+            0x8F7DE2CBE67A4F45,
+            0x39EB5F1CBF87D4CD,
+            0xC988A19E84029A15,
+            0xBBE86A804ADEEBD9,
+            0xC61DE690A83B2759,
+            0x8025D28E404EC9F0,
+            0xE5DDE93C2528D0F6,
+            0xC40BF9362656B348,
+            0xE33A0D22AE707462,
+        ];
+        pub const EXPONENT: u64 = 3;
+    }
 
-	/// RSA encryption key for HV key ID 0x1c operations.
-	///
-	/// HV XECRYPT_RSA at HV offset 0x11648. Exponent = 65537.
-	pub mod key_0x1c {
-		pub const MODULUS: [u64; 32] = [
-			0x473E398884AF0B61,
-			0x7A1B8C5E1B09F4FC,
-			0x0E81970F5BF9AC63,
-			0x1D42B1CDC3A47984,
-			0x33BF37FD7332F3B5,
-			0x0F54B048000DD1B6,
-			0xAFC3B94943782994,
-			0x0919505933D76709,
-			0xD5A3E826A37A91D1,
-			0xBFD6FA4F1DA3FB8F,
-			0xC021E3B0B33969B2,
-			0x36EC678DCC906FD7,
-			0xD896102DE1514831,
-			0x3BAA27A6180871F2,
-			0x958BD47F80FDA0F7,
-			0xCF69AF096D736B17,
-			0x2E58EB7903291581,
-			0x0B1A710C89C7ABE8,
-			0xCC11439611F33256,
-			0x25D152CBA9F9FC41,
-			0x17D32375EC5C5C15,
-			0xEA6FCFAA1C24CEDD,
-			0x541FA5A40DAB0689,
-			0x71B9FBF52F69F1CC,
-			0x4016D0753C9EE838,
-			0x4AA8A6C63C370DEC,
-			0xC78E9C151753ABCD,
-			0xE95D8C3129408A1F,
-			0x814FA75C34BF761D,
-			0xE67A02CF3CF471B4,
-			0xC1C40E4A73E96DCD,
-			0x8800BD426E921D7D,
-		];
-		pub const PUB_EXPONENT: u64 = 0x00010001;
-	}
+    /// RSA encryption key for HV key ID 0x1c operations.
+    ///
+    /// HV XECRYPT_RSA at HV offset 0x11648. Exponent = 65537.
+    pub mod key_0x1c {
+        pub const MODULUS: [u64; 32] = [
+            0x473E398884AF0B61,
+            0x7A1B8C5E1B09F4FC,
+            0x0E81970F5BF9AC63,
+            0x1D42B1CDC3A47984,
+            0x33BF37FD7332F3B5,
+            0x0F54B048000DD1B6,
+            0xAFC3B94943782994,
+            0x0919505933D76709,
+            0xD5A3E826A37A91D1,
+            0xBFD6FA4F1DA3FB8F,
+            0xC021E3B0B33969B2,
+            0x36EC678DCC906FD7,
+            0xD896102DE1514831,
+            0x3BAA27A6180871F2,
+            0x958BD47F80FDA0F7,
+            0xCF69AF096D736B17,
+            0x2E58EB7903291581,
+            0x0B1A710C89C7ABE8,
+            0xCC11439611F33256,
+            0x25D152CBA9F9FC41,
+            0x17D32375EC5C5C15,
+            0xEA6FCFAA1C24CEDD,
+            0x541FA5A40DAB0689,
+            0x71B9FBF52F69F1CC,
+            0x4016D0753C9EE838,
+            0x4AA8A6C63C370DEC,
+            0xC78E9C151753ABCD,
+            0xE95D8C3129408A1F,
+            0x814FA75C34BF761D,
+            0xE67A02CF3CF471B4,
+            0xC1C40E4A73E96DCD,
+            0x8800BD426E921D7D,
+        ];
+        pub const PUB_EXPONENT: u64 = 0x00010001;
+    }
 
-	/// 4096-bit RSA encryption key for HV key ID 0x48 operations (HDCP-related).
-	///
-	/// HV XECRYPT_RSA at HV offset 0x11868. Exponent = 65537.
-	pub mod key_0x48 {
-		pub const MODULUS: [u64; 64] = [
-			0x6DAB605CB34575D1,
-			0x8349EC899CE6DCF5,
-			0xED53417D94F49963,
-			0x8C1D932912F199D8,
-			0x51A06FCD3F0994D5,
-			0x2F7FD3D2EFE7B3BB,
-			0x11BC39D65B2D9986,
-			0xE3F1590465406A0D,
-			0x228DB3DDFD3997A6,
-			0x7AB1720A6FB13CB9,
-			0x888BD280F90AD20A,
-			0x8CD39CA7212F3CCC,
-			0xF54450580BBE86DF,
-			0x2A846160291900FC,
-			0xC84C3635F825CB57,
-			0xAC37B8BAAA00B98F,
-			0xE2899EFAA4429C3F,
-			0x42ABE0AB126BD407,
-			0x36E78310965ACF88,
-			0x9F058457DFF361B1,
-			0x35CDDE8AE0E149C6,
-			0xB2D3BD03CC7E65FA,
-			0xF3A536C1BAEC06EB,
-			0x1C925580491D3341,
-			0x1348904B3B88EE62,
-			0x77A1C680E12FF090,
-			0x35C467D436D79A9F,
-			0xDF7B5914B1494B71,
-			0x0129EA14E4845A8B,
-			0x6D2E6397E91BE4AF,
-			0xA9612E1A3A834826,
-			0x32B63EDF76362FD4,
-			0x806C90B96903DB3D,
-			0x80508C16463381FF,
-			0x73FE79AE73F50891,
-			0xEA5DD60A4E4E8CD0,
-			0x56704ACA28ADC5CF,
-			0xF47ECD3722B2481C,
-			0x311742EDA6B90436,
-			0x14BCD0E69314C9E4,
-			0x1A5D535B4BA210A8,
-			0x355FFF518B0DA40E,
-			0xFBA68A23D5506EAC,
-			0xA2D6B545C0D8F452,
-			0xFDEC1CFACF9ED8CB,
-			0x997A84472454C649,
-			0x17FFA3FEC0A33601,
-			0x8A834B9CCA53AA6E,
-			0x955A7886D862B376,
-			0xB949395742F54AD0,
-			0xD839163AFDEB635E,
-			0x87CF18EFA86131CD,
-			0x3F2F276D85AD41CA,
-			0xD9AAFDAFD23F5303,
-			0xB9D26CCC7C6B16AB,
-			0xDD0AD09CD7C7B0CC,
-			0x7FF69FBA8BCC6E7A,
-			0xE806459FE10161BB,
-			0x707DC9A56CF9E379,
-			0x6BD2E5BA14383283,
-			0x87F64A359F778C95,
-			0xEAB74DC4E9E56C1C,
-			0x0FED6D2349DA07F6,
-			0xE8C48BDE1463E503,
-		];
-		pub const PUB_EXPONENT: u64 = 0x00010001;
-	}
+    /// 4096-bit RSA encryption key for HV key ID 0x48 operations (HDCP-related).
+    ///
+    /// HV XECRYPT_RSA at HV offset 0x11868. Exponent = 65537.
+    pub mod key_0x48 {
+        pub const MODULUS: [u64; 64] = [
+            0x6DAB605CB34575D1,
+            0x8349EC899CE6DCF5,
+            0xED53417D94F49963,
+            0x8C1D932912F199D8,
+            0x51A06FCD3F0994D5,
+            0x2F7FD3D2EFE7B3BB,
+            0x11BC39D65B2D9986,
+            0xE3F1590465406A0D,
+            0x228DB3DDFD3997A6,
+            0x7AB1720A6FB13CB9,
+            0x888BD280F90AD20A,
+            0x8CD39CA7212F3CCC,
+            0xF54450580BBE86DF,
+            0x2A846160291900FC,
+            0xC84C3635F825CB57,
+            0xAC37B8BAAA00B98F,
+            0xE2899EFAA4429C3F,
+            0x42ABE0AB126BD407,
+            0x36E78310965ACF88,
+            0x9F058457DFF361B1,
+            0x35CDDE8AE0E149C6,
+            0xB2D3BD03CC7E65FA,
+            0xF3A536C1BAEC06EB,
+            0x1C925580491D3341,
+            0x1348904B3B88EE62,
+            0x77A1C680E12FF090,
+            0x35C467D436D79A9F,
+            0xDF7B5914B1494B71,
+            0x0129EA14E4845A8B,
+            0x6D2E6397E91BE4AF,
+            0xA9612E1A3A834826,
+            0x32B63EDF76362FD4,
+            0x806C90B96903DB3D,
+            0x80508C16463381FF,
+            0x73FE79AE73F50891,
+            0xEA5DD60A4E4E8CD0,
+            0x56704ACA28ADC5CF,
+            0xF47ECD3722B2481C,
+            0x311742EDA6B90436,
+            0x14BCD0E69314C9E4,
+            0x1A5D535B4BA210A8,
+            0x355FFF518B0DA40E,
+            0xFBA68A23D5506EAC,
+            0xA2D6B545C0D8F452,
+            0xFDEC1CFACF9ED8CB,
+            0x997A84472454C649,
+            0x17FFA3FEC0A33601,
+            0x8A834B9CCA53AA6E,
+            0x955A7886D862B376,
+            0xB949395742F54AD0,
+            0xD839163AFDEB635E,
+            0x87CF18EFA86131CD,
+            0x3F2F276D85AD41CA,
+            0xD9AAFDAFD23F5303,
+            0xB9D26CCC7C6B16AB,
+            0xDD0AD09CD7C7B0CC,
+            0x7FF69FBA8BCC6E7A,
+            0xE806459FE10161BB,
+            0x707DC9A56CF9E379,
+            0x6BD2E5BA14383283,
+            0x87F64A359F778C95,
+            0xEAB74DC4E9E56C1C,
+            0x0FED6D2349DA07F6,
+            0xE8C48BDE1463E503,
+        ];
+        pub const PUB_EXPONENT: u64 = 0x00010001;
+    }
 }
 
 /// Devkit-only RSA keys. Private key components (P, Q) are available for signing.
 pub(crate) mod devkit {
-	/// PIRS/XEX signing key (devkit). Used for the same purposes as retail::pirs but
-	/// on devkit consoles. Private components enable signing.
-	///
-	/// HV key ID 0x39 (devkit variant). Exponent = 3.
-	///
-	/// Functions (devkit path):
-	/// - `XeKeysVerifyPIRSSignature` (xboxkrnl) -- PIRS package and XEX header verification
-	/// - `XeKeysVerifyRSASignature(type=0)` (xboxkrnl) -- general PIRS-type signature check
-	pub mod xex {
-		pub const MODULUS: [u64; 32] = [
-			0xC91C3577C8BFA06B,
-			0x642F4E6C7399ACE5,
-			0x84E7AB2EE4DBAE1E,
-			0x3E0670624AA2AD99,
-			0xE1767061E6BE9327,
-			0x6D5D97FD7330763A,
-			0xB8705CC0BE8F1B3D,
-			0x4C5D8565988C4C6B,
-			0xCCBED0C5A743AA6C,
-			0x56910FF8E8BD904D,
-			0xB8D9A3F13B6E71DB,
-			0xB0E0F51A8E8039C2,
-			0x4E3A8142C56EB949,
-			0x44F48DC58451C81B,
-			0x7DBC4559D0E3F297,
-			0xEFA039EA1CF94866,
-			0x664E8BD022ABDB90,
-			0x1EBCD83D91A7897C,
-			0x7207DA63AAF33EED,
-			0xD587667BF2289CB3,
-			0x4054226544102AD2,
-			0xB0484CF99E6FA476,
-			0x9F18D04DADA56EFC,
-			0x9EC2A4CFB3ECC805,
-			0xED8C08ED2513CCBB,
-			0x16601A8AC74B6893,
-			0x7F95271ACC7BAC29,
-			0xD4B7419B0A996002,
-			0xA6E9A7C278F5C0B8,
-			0xBB9D881671648107,
-			0x2C5B33E51CFA0002,
-			0xD7492F13B1C17FBF,
-		];
-		pub const PUB_EXPONENT: u64 = 3;
+    /// PIRS/XEX signing key (devkit). Used for the same purposes as retail::pirs but
+    /// on devkit consoles. Private components enable signing.
+    ///
+    /// HV key ID 0x39 (devkit variant). Exponent = 3.
+    ///
+    /// Functions (devkit path):
+    /// - `XeKeysVerifyPIRSSignature` (xboxkrnl) -- PIRS package and XEX header verification
+    /// - `XeKeysVerifyRSASignature(type=0)` (xboxkrnl) -- general PIRS-type signature check
+    pub mod xex {
+        pub const MODULUS: [u64; 32] = [
+            0xC91C3577C8BFA06B,
+            0x642F4E6C7399ACE5,
+            0x84E7AB2EE4DBAE1E,
+            0x3E0670624AA2AD99,
+            0xE1767061E6BE9327,
+            0x6D5D97FD7330763A,
+            0xB8705CC0BE8F1B3D,
+            0x4C5D8565988C4C6B,
+            0xCCBED0C5A743AA6C,
+            0x56910FF8E8BD904D,
+            0xB8D9A3F13B6E71DB,
+            0xB0E0F51A8E8039C2,
+            0x4E3A8142C56EB949,
+            0x44F48DC58451C81B,
+            0x7DBC4559D0E3F297,
+            0xEFA039EA1CF94866,
+            0x664E8BD022ABDB90,
+            0x1EBCD83D91A7897C,
+            0x7207DA63AAF33EED,
+            0xD587667BF2289CB3,
+            0x4054226544102AD2,
+            0xB0484CF99E6FA476,
+            0x9F18D04DADA56EFC,
+            0x9EC2A4CFB3ECC805,
+            0xED8C08ED2513CCBB,
+            0x16601A8AC74B6893,
+            0x7F95271ACC7BAC29,
+            0xD4B7419B0A996002,
+            0xA6E9A7C278F5C0B8,
+            0xBB9D881671648107,
+            0x2C5B33E51CFA0002,
+            0xD7492F13B1C17FBF,
+        ];
+        pub const PUB_EXPONENT: u64 = 3;
 
-		pub const P: [u64; 16] = [
-			0x4D4D1627779E3C97,
-			0x2DBE0313CB829E5D,
-			0x9FA81C796E409F29,
-			0x7646A9B4C9FA6FA4,
-			0x5BCD1C497B4ECCB3,
-			0xFFC81F0803342D90,
-			0x7F3941A3476495D1,
-			0x18B77C8D52040FDF,
-			0xB403B02465FA7FF3,
-			0xEA48B3A5CB30E99F,
-			0x7273C43A7AC8AA05,
-			0x481DD173EFFFF3E8,
-			0xFD504EC5E86E7455,
-			0x080BE2E8110A4B01,
-			0xE064CE0D6C4B49A0,
-			0xF75B981062495F19,
-		];
-		pub const Q: [u64; 16] = [
-			0xEF3AAFB95D35B14D,
-			0xDB82E4774DCA8A34,
-			0x4B1DCFCF32CE0D9D,
-			0x503AA06823D88072,
-			0xE3CDB6B6E1D92A26,
-			0xCC3CA7179E05D4AA,
-			0x6ED5616A64685980,
-			0xD21CD08CD8D492BD,
-			0x84ADE75492137A9E,
-			0x928A8C6EF65D29E4,
-			0xB9EB5134B6E50B67,
-			0x41434545B85E2573,
-			0x6DF3111279CBE69F,
-			0x4FA191CA3E9F2DDF,
-			0x342F233286B43E10,
-			0xDECEBBD886850EF0,
-		];
-	}
+        pub const P: [u64; 16] = [
+            0x4D4D1627779E3C97,
+            0x2DBE0313CB829E5D,
+            0x9FA81C796E409F29,
+            0x7646A9B4C9FA6FA4,
+            0x5BCD1C497B4ECCB3,
+            0xFFC81F0803342D90,
+            0x7F3941A3476495D1,
+            0x18B77C8D52040FDF,
+            0xB403B02465FA7FF3,
+            0xEA48B3A5CB30E99F,
+            0x7273C43A7AC8AA05,
+            0x481DD173EFFFF3E8,
+            0xFD504EC5E86E7455,
+            0x080BE2E8110A4B01,
+            0xE064CE0D6C4B49A0,
+            0xF75B981062495F19,
+        ];
+        pub const Q: [u64; 16] = [
+            0xEF3AAFB95D35B14D,
+            0xDB82E4774DCA8A34,
+            0x4B1DCFCF32CE0D9D,
+            0x503AA06823D88072,
+            0xE3CDB6B6E1D92A26,
+            0xCC3CA7179E05D4AA,
+            0x6ED5616A64685980,
+            0xD21CD08CD8D492BD,
+            0x84ADE75492137A9E,
+            0x928A8C6EF65D29E4,
+            0xB9EB5134B6E50B67,
+            0x41434545B85E2573,
+            0x6DF3111279CBE69F,
+            0x4FA191CA3E9F2DDF,
+            0x342F233286B43E10,
+            0xDECEBBD886850EF0,
+        ];
+    }
 
-	/// LIVE content signing key (devkit). Private components enable signing.
-	///
-	/// HV key ID 0x3d (devkit variant). Exponent = 3.
-	///
-	/// Functions (devkit path):
-	/// - `XeKeysVerifyRSASignature(type=1)` (xboxkrnl) -- LIVE-type signature check
-	/// - `XContent::VerifySignature` (xam) -- LIVE content package verification
-	/// - `VerifyXSignerSignatureHelper` (xam) -- XSigner signature verification (primary)
-	pub mod live {
-		pub const PUB_EXPONENT: u64 = 0x00000003;
+    /// LIVE content signing key (devkit). Private components enable signing.
+    ///
+    /// HV key ID 0x3d (devkit variant). Exponent = 3.
+    ///
+    /// Functions (devkit path):
+    /// - `XeKeysVerifyRSASignature(type=1)` (xboxkrnl) -- LIVE-type signature check
+    /// - `XContent::VerifySignature` (xam) -- LIVE content package verification
+    /// - `VerifyXSignerSignatureHelper` (xam) -- XSigner signature verification (primary)
+    pub mod live {
+        pub const PUB_EXPONENT: u64 = 0x00000003;
 
-		pub const P: [u64; 16] = [
-			0x5B0E3FDF191BED7B,
-			0xAE7E049B5A0BBAE2,
-			0x03AC6E20DB8E4FE7,
-			0xBCECDD1823548349,
-			0x47DF1EA77D392F3B,
-			0xA651116A2BBF84CA,
-			0xCD0CF61E2BCAF42D,
-			0x26530E45845CA86C,
-			0x4F2F679BB90185B0,
-			0x7766FFCCEA1E9D83,
-			0x0EFFA81A07229F27,
-			0x9E9181D233063A3D,
-			0x769A1BD30DE00F09,
-			0x4AFC545F7C6C0417,
-			0xA99CBB794E38A19C,
-			0xEAB7176D3520D7D6,
-		];
-		pub const Q: [u64; 16] = [
-			0x8BEB8DED61B34B5F,
-			0x5005C7A5B64FF7CF,
-			0x9EA6EAF0B76D00AD,
-			0xBCFD3F19AEF2A8C5,
-			0xFACF3A188D2FF1A9,
-			0xB4FDABF24704E025,
-			0x4A0D65B0A69B0D9B,
-			0xFD17E6CE29AA2DC0,
-			0xF8C7D7E93887CCDF,
-			0x39ECC88EE6CBBE4B,
-			0x38D906B6B2034CF1,
-			0xC8FE5E51AC0DEE47,
-			0xFB8926CDB0D25EE7,
-			0x169AECFDCBAE23D2,
-			0xF350E17B8EFE044C,
-			0xC68074FBB5C54B8E,
-		];
-	}
+        pub const P: [u64; 16] = [
+            0x5B0E3FDF191BED7B,
+            0xAE7E049B5A0BBAE2,
+            0x03AC6E20DB8E4FE7,
+            0xBCECDD1823548349,
+            0x47DF1EA77D392F3B,
+            0xA651116A2BBF84CA,
+            0xCD0CF61E2BCAF42D,
+            0x26530E45845CA86C,
+            0x4F2F679BB90185B0,
+            0x7766FFCCEA1E9D83,
+            0x0EFFA81A07229F27,
+            0x9E9181D233063A3D,
+            0x769A1BD30DE00F09,
+            0x4AFC545F7C6C0417,
+            0xA99CBB794E38A19C,
+            0xEAB7176D3520D7D6,
+        ];
+        pub const Q: [u64; 16] = [
+            0x8BEB8DED61B34B5F,
+            0x5005C7A5B64FF7CF,
+            0x9EA6EAF0B76D00AD,
+            0xBCFD3F19AEF2A8C5,
+            0xFACF3A188D2FF1A9,
+            0xB4FDABF24704E025,
+            0x4A0D65B0A69B0D9B,
+            0xFD17E6CE29AA2DC0,
+            0xF8C7D7E93887CCDF,
+            0x39ECC88EE6CBBE4B,
+            0x38D906B6B2034CF1,
+            0xC8FE5E51AC0DEE47,
+            0xFB8926CDB0D25EE7,
+            0x169AECFDCBAE23D2,
+            0xF350E17B8EFE044C,
+            0xC68074FBB5C54B8E,
+        ];
+    }
 }
 
 /// Retail-only RSA public keys. Only modulus and exponent are available (no signing).
 /// Extracted from retail HV binary (hv.2.0.17559.0.bin).
 pub(crate) mod retail {
-	/// Console certificate verification key. Verifies the RSA signature embedded in
-	/// each console's certificate (the certificate itself is stored in the keyvault).
-	///
-	/// HV key ID 0x3c (normal consoles) / 0x3a (recovery-generated, zeroed in retail HV).
-	/// XECRYPT_RSA at HV offset 0x11318. Exponent = 3.
-	///
-	/// Functions:
-	/// - `XeKeysConsoleSignatureVerification` (xboxkrnl) -- console cert signature verification
-	/// - `XContent::VerifySignature` (xam) -- CON package verification
-	/// - `XContent::DeviceVerifyFilePartitionConfigData` (xam) -- device partition config (CON-signed)
-	/// - `CContentAndUpdateBase::ReplacePackageHeader` (xam) -- CON content header re-verification
-	pub mod console {
-		pub const MODULUS: [u64; 32] = [
-			0xDD5F496F994D37BB,
-			0xE45B98F25DA6B843,
-			0xBED310FD3CA4D4AC,
-			0xE6923A79DB3B63AF,
-			0x38CDA0E5857201F9,
-			0x0E5F5A5B084BADE2,
-			0xA02A423385345383,
-			0x1EE55B8FBF358E63,
-			0xD8288CFF03DCC435,
-			0x02E40D1AC1369FBB,
-			0x90EDDE4EEC86103F,
-			0xE41FFD96D93A7825,
-			0x38E1D38B1F96BD84,
-			0xF65E2A56BAD0A824,
-			0xE5028F3CA19AEB93,
-			0x59D71B99DAC4DF7B,
-			0xD0C19A12CC3A17BF,
-			0x6E4D7887D42A7F6B,
-			0x9E2FCD8D4EF5CEC2,
-			0xA05AA30F9FADFE12,
-			0x6574206FF25C52E4,
-			0xB0C13C250DAED182,
-			0x7C60D744E5CD8BEA,
-			0x6C80B51B7A0C02CE,
-			0x0C24513D39364A3F,
-			0xD312CF838D815600,
-			0xB4647986EAECB6DE,
-			0x8A357BAB354EBB87,
-			0xEA1D478CE1F39013,
-			0x2797558207F2F3AA,
-			0xF953478F74A38E7B,
-			0xAEB8FC77CBFBAB8A,
-		];
-		pub const EXPONENT: u64 = 3;
-	}
+    /// Console certificate verification key. Verifies the RSA signature embedded in
+    /// each console's certificate (the certificate itself is stored in the keyvault).
+    ///
+    /// HV key ID 0x3c (normal consoles) / 0x3a (recovery-generated, zeroed in retail HV).
+    /// XECRYPT_RSA at HV offset 0x11318. Exponent = 3.
+    ///
+    /// Functions:
+    /// - `XeKeysConsoleSignatureVerification` (xboxkrnl) -- console cert signature verification
+    /// - `XContent::VerifySignature` (xam) -- CON package verification
+    /// - `XContent::DeviceVerifyFilePartitionConfigData` (xam) -- device partition config (CON-signed)
+    /// - `CContentAndUpdateBase::ReplacePackageHeader` (xam) -- CON content header re-verification
+    pub mod console {
+        pub const MODULUS: [u64; 32] = [
+            0xDD5F496F994D37BB,
+            0xE45B98F25DA6B843,
+            0xBED310FD3CA4D4AC,
+            0xE6923A79DB3B63AF,
+            0x38CDA0E5857201F9,
+            0x0E5F5A5B084BADE2,
+            0xA02A423385345383,
+            0x1EE55B8FBF358E63,
+            0xD8288CFF03DCC435,
+            0x02E40D1AC1369FBB,
+            0x90EDDE4EEC86103F,
+            0xE41FFD96D93A7825,
+            0x38E1D38B1F96BD84,
+            0xF65E2A56BAD0A824,
+            0xE5028F3CA19AEB93,
+            0x59D71B99DAC4DF7B,
+            0xD0C19A12CC3A17BF,
+            0x6E4D7887D42A7F6B,
+            0x9E2FCD8D4EF5CEC2,
+            0xA05AA30F9FADFE12,
+            0x6574206FF25C52E4,
+            0xB0C13C250DAED182,
+            0x7C60D744E5CD8BEA,
+            0x6C80B51B7A0C02CE,
+            0x0C24513D39364A3F,
+            0xD312CF838D815600,
+            0xB4647986EAECB6DE,
+            0x8A357BAB354EBB87,
+            0xEA1D478CE1F39013,
+            0x2797558207F2F3AA,
+            0xF953478F74A38E7B,
+            0xAEB8FC77CBFBAB8A,
+        ];
+        pub const EXPONENT: u64 = 3;
+    }
 
-	/// PIRS/XEX signing verification key. Verifies signatures on PIRS content packages,
-	/// XEX executable image headers, and system update manifests.
-	///
-	/// HV key ID 0x39. XECRYPT_RSA at HV offset 0x108b8. Exponent = 3.
-	///
-	/// Functions:
-	/// - `XeKeysVerifyPIRSSignature` (xboxkrnl) -- PIRS package and XEX header verification
-	/// - `XeKeysVerifyRSASignature(type=0)` (xboxkrnl) -- general PIRS-type signature check
-	/// - `XContent::VerifySignature` (xam) -- PIRS content package verification
-	/// - `CXamUpdateManifest::ValidateAndAssignBody` (xam) -- system update manifest verification
-	/// - `CContentAndUpdateBase::ReplacePackageHeader` (xam) -- PIRS content header re-verification
-	pub mod pirs {
-		pub const MODULUS: [u64; 32] = [
-			0xE63B32B28D9E9EE7,
-			0x9DFC5C7241945847,
-			0xDE0D184072D6E346,
-			0x8EBA8EBC1A90AC20,
-			0xBA0385B51A3E25F9,
-			0xA658EBB6A3C4A3EE,
-			0xB2B0AE9769EBFE71,
-			0xFC02AB77BAC8E674,
-			0xE67C630EAF4CF7E7,
-			0x114A802472057A63,
-			0xD0F89102A6E77D77,
-			0xC5A79B08112EA064,
-			0x456046BC36E11771,
-			0xBE66492FAE20A476,
-			0x9C2751CF4B347A35,
-			0xBCA4AA1C474BF497,
-			0x224E1324D3C157DF,
-			0x4D84B9189799AC00,
-			0xB33D032560C87A59,
-			0xFE48FF283D10BB9E,
-			0x09062A61202CF872,
-			0xEB87E6D1FBB366FC,
-			0x4A02AED4D837CFA6,
-			0x322579360EF4ED19,
-			0xA21027962F9FA93D,
-			0xA43730115183BDF7,
-			0xC7E5CEAAECDE48A0,
-			0x84F7B0F64B8EF089,
-			0xBD477C90DD881217,
-			0x40D24EA6C611041B,
-			0x57A868B461F41BC6,
-			0x8BE8D920F205E070,
-		];
-		pub const EXPONENT: u64 = 3;
-	}
+    /// PIRS/XEX signing verification key. Verifies signatures on PIRS content packages,
+    /// XEX executable image headers, and system update manifests.
+    ///
+    /// HV key ID 0x39. XECRYPT_RSA at HV offset 0x108b8. Exponent = 3.
+    ///
+    /// Functions:
+    /// - `XeKeysVerifyPIRSSignature` (xboxkrnl) -- PIRS package and XEX header verification
+    /// - `XeKeysVerifyRSASignature(type=0)` (xboxkrnl) -- general PIRS-type signature check
+    /// - `XContent::VerifySignature` (xam) -- PIRS content package verification
+    /// - `CXamUpdateManifest::ValidateAndAssignBody` (xam) -- system update manifest verification
+    /// - `CContentAndUpdateBase::ReplacePackageHeader` (xam) -- PIRS content header re-verification
+    pub mod pirs {
+        pub const MODULUS: [u64; 32] = [
+            0xE63B32B28D9E9EE7,
+            0x9DFC5C7241945847,
+            0xDE0D184072D6E346,
+            0x8EBA8EBC1A90AC20,
+            0xBA0385B51A3E25F9,
+            0xA658EBB6A3C4A3EE,
+            0xB2B0AE9769EBFE71,
+            0xFC02AB77BAC8E674,
+            0xE67C630EAF4CF7E7,
+            0x114A802472057A63,
+            0xD0F89102A6E77D77,
+            0xC5A79B08112EA064,
+            0x456046BC36E11771,
+            0xBE66492FAE20A476,
+            0x9C2751CF4B347A35,
+            0xBCA4AA1C474BF497,
+            0x224E1324D3C157DF,
+            0x4D84B9189799AC00,
+            0xB33D032560C87A59,
+            0xFE48FF283D10BB9E,
+            0x09062A61202CF872,
+            0xEB87E6D1FBB366FC,
+            0x4A02AED4D837CFA6,
+            0x322579360EF4ED19,
+            0xA21027962F9FA93D,
+            0xA43730115183BDF7,
+            0xC7E5CEAAECDE48A0,
+            0x84F7B0F64B8EF089,
+            0xBD477C90DD881217,
+            0x40D24EA6C611041B,
+            0x57A868B461F41BC6,
+            0x8BE8D920F205E070,
+        ];
+        pub const EXPONENT: u64 = 3;
+    }
 
-	/// LIVE content signing verification key. Verifies signatures on LIVE content
-	/// packages (marketplace downloads, title updates) and XSigner signatures.
-	///
-	/// HV key ID 0x3d. XECRYPT_RSA at HV offset 0x110f8. Exponent = 65537.
-	///
-	/// Functions:
-	/// - `XeKeysVerifyRSASignature(type=1)` (xboxkrnl) -- LIVE-type signature check
-	/// - `XContent::VerifySignature` (xam) -- LIVE content package verification
-	/// - `VerifyXSignerSignatureHelper` (xam) -- XSigner signature verification (primary)
-	/// - `CContentAndUpdateBase::ReplacePackageHeader` (xam) -- LIVE content header re-verification
-	/// - `CXCabCryptHelper::VerifyPKCS1Signature` (xam) -- CAB file signature verification
-	pub mod live {
-		pub const MODULUS: [u64; 32] = [
-			0xF2E53E3F0375C2B3,
-			0x20B6AB4190789DA1,
-			0x044E586DFCFF161C,
-			0x9E011DDA5D167E54,
-			0xCB2AF2A70283E8AD,
-			0xCDA100F89CC4AD2D,
-			0x4CAF2E18019F38B1,
-			0x3DFAC9A6CF2AA84E,
-			0xE07E172361FBFD36,
-			0x2E2217FA7571A074,
-			0xF9F710857EEC5C35,
-			0xF5B0ACABC10B091D,
-			0x9A7ABEB9B791780A,
-			0x5DCACBF9984B6815,
-			0x75771CB0CCFA04A3,
-			0xEC08DD685FEA69AF,
-			0x9D98B9BFF372FCC0,
-			0x1E5B155B49AA6ADC,
-			0x5535393F8CDCC757,
-			0xA775214108BB9B74,
-			0x6CFBF689C4B3EBD0,
-			0x7EAFA7A727254170,
-			0x59AC9618160EE96B,
-			0x11C7EE355272A4C2,
-			0xB31E2005C5C09C5D,
-			0xC7CF5B81BEB2B3AF,
-			0x8385DE736E7A0EAC,
-			0x590D4673FB7B7888,
-			0x29875AE67B2E7D86,
-			0x8255BE1212D987B3,
-			0xBD3D41C8D000F57D,
-			0xC97B518EC735DCEF,
-		];
-		pub const PUB_EXPONENT: u64 = 0x00010001;
-	}
+    /// LIVE content signing verification key. Verifies signatures on LIVE content
+    /// packages (marketplace downloads, title updates) and XSigner signatures.
+    ///
+    /// HV key ID 0x3d. XECRYPT_RSA at HV offset 0x110f8. Exponent = 65537.
+    ///
+    /// Functions:
+    /// - `XeKeysVerifyRSASignature(type=1)` (xboxkrnl) -- LIVE-type signature check
+    /// - `XContent::VerifySignature` (xam) -- LIVE content package verification
+    /// - `VerifyXSignerSignatureHelper` (xam) -- XSigner signature verification (primary)
+    /// - `CContentAndUpdateBase::ReplacePackageHeader` (xam) -- LIVE content header re-verification
+    /// - `CXCabCryptHelper::VerifyPKCS1Signature` (xam) -- CAB file signature verification
+    pub mod live {
+        pub const MODULUS: [u64; 32] = [
+            0xF2E53E3F0375C2B3,
+            0x20B6AB4190789DA1,
+            0x044E586DFCFF161C,
+            0x9E011DDA5D167E54,
+            0xCB2AF2A70283E8AD,
+            0xCDA100F89CC4AD2D,
+            0x4CAF2E18019F38B1,
+            0x3DFAC9A6CF2AA84E,
+            0xE07E172361FBFD36,
+            0x2E2217FA7571A074,
+            0xF9F710857EEC5C35,
+            0xF5B0ACABC10B091D,
+            0x9A7ABEB9B791780A,
+            0x5DCACBF9984B6815,
+            0x75771CB0CCFA04A3,
+            0xEC08DD685FEA69AF,
+            0x9D98B9BFF372FCC0,
+            0x1E5B155B49AA6ADC,
+            0x5535393F8CDCC757,
+            0xA775214108BB9B74,
+            0x6CFBF689C4B3EBD0,
+            0x7EAFA7A727254170,
+            0x59AC9618160EE96B,
+            0x11C7EE355272A4C2,
+            0xB31E2005C5C09C5D,
+            0xC7CF5B81BEB2B3AF,
+            0x8385DE736E7A0EAC,
+            0x590D4673FB7B7888,
+            0x29875AE67B2E7D86,
+            0x8255BE1212D987B3,
+            0xBD3D41C8D000F57D,
+            0xC97B518EC735DCEF,
+        ];
+        pub const PUB_EXPONENT: u64 = 0x00010001;
+    }
 
-	/// DVDX2 disc authoring signature verification key. Verifies the authoring
-	/// signature on Xbox 360 game discs.
-	///
-	/// HV key ID 0x3e. XECRYPT_RSA at HV offset 0x11758. Exponent = 65537.
-	///
-	/// Functions:
-	/// - `SataCdRomVerifyDVDX2AuthoringSignature` (xboxkrnl) -- disc authoring signature check
-	pub mod dvdx2 {
-		pub const MODULUS: [u64; 32] = [
-			0xE6D73D66E54ED7D3,
-			0xD43617F2A1A3D4C2,
-			0x64F51002D2F6522E,
-			0xEEC27FEFFF7B349C,
-			0x8E77B479DE8B05BD,
-			0x73C6AEE399148C5B,
-			0x46585B01FBB57372,
-			0x1BEDDA95D68AFC6D,
-			0xB9F13FE129A22F2E,
-			0xBAF7C0A22E51645B,
-			0x5C9206FF758A3EB3,
-			0xBE475D1079752607,
-			0x0B6AAE0B90526AD1,
-			0x15FB9DF95E934433,
-			0x9471E46FCF1CA4D9,
-			0xBD07CA52A80013BE,
-			0xEDA34F9EA1019827,
-			0xE9F371C473AAA09F,
-			0xBECE39F09C42724E,
-			0x819A14892BFA7603,
-			0x05AA6B3E8C80C116,
-			0x60BD70A5CF5A67EC,
-			0xEA52F4EB9D37E80C,
-			0xDB52CF69E49F604E,
-			0xA19D8F57CB11F568,
-			0x5A6CB41B470C0A38,
-			0x7CAE88F198266E53,
-			0x8D9A47B0BFF6BC96,
-			0xCAB1618598E2B3E4,
-			0x7681832D5198F75F,
-			0x143CD5C2D4BA880C,
-			0xA44B1BBD7EDA72C7,
-		];
-		pub const PUB_EXPONENT: u64 = 0x00010001;
-	}
+    /// DVDX2 disc authoring signature verification key. Verifies the authoring
+    /// signature on Xbox 360 game discs.
+    ///
+    /// HV key ID 0x3e. XECRYPT_RSA at HV offset 0x11758. Exponent = 65537.
+    ///
+    /// Functions:
+    /// - `SataCdRomVerifyDVDX2AuthoringSignature` (xboxkrnl) -- disc authoring signature check
+    pub mod dvdx2 {
+        pub const MODULUS: [u64; 32] = [
+            0xE6D73D66E54ED7D3,
+            0xD43617F2A1A3D4C2,
+            0x64F51002D2F6522E,
+            0xEEC27FEFFF7B349C,
+            0x8E77B479DE8B05BD,
+            0x73C6AEE399148C5B,
+            0x46585B01FBB57372,
+            0x1BEDDA95D68AFC6D,
+            0xB9F13FE129A22F2E,
+            0xBAF7C0A22E51645B,
+            0x5C9206FF758A3EB3,
+            0xBE475D1079752607,
+            0x0B6AAE0B90526AD1,
+            0x15FB9DF95E934433,
+            0x9471E46FCF1CA4D9,
+            0xBD07CA52A80013BE,
+            0xEDA34F9EA1019827,
+            0xE9F371C473AAA09F,
+            0xBECE39F09C42724E,
+            0x819A14892BFA7603,
+            0x05AA6B3E8C80C116,
+            0x60BD70A5CF5A67EC,
+            0xEA52F4EB9D37E80C,
+            0xDB52CF69E49F604E,
+            0xA19D8F57CB11F568,
+            0x5A6CB41B470C0A38,
+            0x7CAE88F198266E53,
+            0x8D9A47B0BFF6BC96,
+            0xCAB1618598E2B3E4,
+            0x7681832D5198F75F,
+            0x143CD5C2D4BA880C,
+            0xA44B1BBD7EDA72C7,
+        ];
+        pub const PUB_EXPONENT: u64 = 0x00010001;
+    }
 
-	/// HV key ID 0x41. XECRYPT_RSA at HV offset 0x10d18. Exponent = 65537.
-	/// No callers found in xboxkrnl or xam. May be used by other system components.
-	pub mod key_0x41 {
-		pub const MODULUS: [u64; 32] = [
-			0x3DA2697C4EE37C9F,
-			0x46A8ED2C5850B711,
-			0xB7016AF49CADD4BC,
-			0x88E221F07E8E9F20,
-			0xE3A752B39F90D74B,
-			0xA519FEF6A3A1C791,
-			0x1F3088224EAE0267,
-			0x0F585FCA219375EA,
-			0xC7CA202AC87E5841,
-			0xEAA57F911F4DFF02,
-			0x24BC1485AB9D6D04,
-			0xA1A891EF6EF6D51C,
-			0xFC3294541BF2DF12,
-			0xDF4813F747A70E40,
-			0xB425C1E5AA52E8E3,
-			0x524EB1C4E1BDE01C,
-			0xC8BF79EAE348568F,
-			0x2FB1C1545F02D88F,
-			0x9A5C6390BFCF8A1D,
-			0xE62D2756B370ED5B,
-			0x4C0211B2F3BC45BB,
-			0xDAE22C3D8506C120,
-			0x27A848A3FC89F6CF,
-			0x9B63D602961FF3CA,
-			0x7F03DCC2743F48AB,
-			0xC34221F577D0F6A6,
-			0xE28E820BDEEE89A9,
-			0x89DBBD15D5B1118E,
-			0xAED81D630AB9A7D1,
-			0x707144F5EB910E4A,
-			0xD919CA063EE5F45E,
-			0x961B5DBD06DC3442,
-		];
-		pub const PUB_EXPONENT: u64 = 0x00010001;
-	}
+    /// HV key ID 0x41. XECRYPT_RSA at HV offset 0x10d18. Exponent = 65537.
+    /// No callers found in xboxkrnl or xam. May be used by other system components.
+    pub mod key_0x41 {
+        pub const MODULUS: [u64; 32] = [
+            0x3DA2697C4EE37C9F,
+            0x46A8ED2C5850B711,
+            0xB7016AF49CADD4BC,
+            0x88E221F07E8E9F20,
+            0xE3A752B39F90D74B,
+            0xA519FEF6A3A1C791,
+            0x1F3088224EAE0267,
+            0x0F585FCA219375EA,
+            0xC7CA202AC87E5841,
+            0xEAA57F911F4DFF02,
+            0x24BC1485AB9D6D04,
+            0xA1A891EF6EF6D51C,
+            0xFC3294541BF2DF12,
+            0xDF4813F747A70E40,
+            0xB425C1E5AA52E8E3,
+            0x524EB1C4E1BDE01C,
+            0xC8BF79EAE348568F,
+            0x2FB1C1545F02D88F,
+            0x9A5C6390BFCF8A1D,
+            0xE62D2756B370ED5B,
+            0x4C0211B2F3BC45BB,
+            0xDAE22C3D8506C120,
+            0x27A848A3FC89F6CF,
+            0x9B63D602961FF3CA,
+            0x7F03DCC2743F48AB,
+            0xC34221F577D0F6A6,
+            0xE28E820BDEEE89A9,
+            0x89DBBD15D5B1118E,
+            0xAED81D630AB9A7D1,
+            0x707144F5EB910E4A,
+            0xD919CA063EE5F45E,
+            0x961B5DBD06DC3442,
+        ];
+        pub const PUB_EXPONENT: u64 = 0x00010001;
+    }
 
-	/// Factory challenge verification key. Step 1 of the factory provisioning
-	/// challenge/response protocol.
-	///
-	/// During manufacturing, a signed challenge blob is submitted via
-	/// `XeKeysSetKey(0x4d, signed_blob, 0x100)`. The HV verifies the PKCS#1
-	/// signature against this key, stores the SHA-1 hash of the verified content
-	/// at HV offset 0x16640, and sets HV flag 0x80000. The factory equipment then
-	/// reads the hash via `XeKeysGetFactoryChallenge` (syscall 0x34) and computes
-	/// a response verified by `key_encrypt::default` (step 2).
-	///
-	/// The devkit PIRS key (at HV offset 0x109c8) serves as a fallback verifier.
-	///
-	/// HV XECRYPT_RSA at HV offset 0x11a78. Exponent = 3.
-	///
-	/// Functions:
-	/// - `HvxKeysSetKey(0x4d)` (HV, sub_3a00) -- RSA signature verification
-	/// - `HvxKeysGetFactoryChallenge` (HV) -- reads the 0x14-byte verified hash
-	/// - `XeKeysGetFactoryChallenge` (xboxkrnl, syscall 0x34) -- kernel entry point
-	/// - `XeKeysGetKey(0x4d)` (xboxkrnl, syscall 0x39) -- alternate read path
-	pub mod factory_challenge {
-		pub const MODULUS: [u64; 32] = [
-			0xE18206A673EFE271,
-			0x93A89BB09E2D8CAE,
-			0xCA742790BDCB3E26,
-			0x782800C99A0331A0,
-			0x6FE17FD9865DCF65,
-			0xB5E20D831B0D72D9,
-			0xCFF10E4AA0A45D2D,
-			0xF56EE61B8C6EE4E5,
-			0x9B85566B25FA0C82,
-			0xDEE77CBDF8F38FA0,
-			0x44C3B791B8FC31FE,
-			0x1BB0BB26B6DB58D4,
-			0x714BC50763BBCFC6,
-			0x43F80E42FF2DE6BE,
-			0x975B1D6746A7FE94,
-			0xA4B8924F97E3B8D8,
-			0xEE2510BF2AFA407B,
-			0xCB11B36A284827AB,
-			0x3884A5F27B3D7DCF,
-			0x9F5EA8954E8EDEFF,
-			0x9CE4A6B3F45E7D67,
-			0xC4970441CCE2553A,
-			0x883EAB2FB0060519,
-			0x78F76B905C80CF59,
-			0xB939D334227A690C,
-			0xD44BEF848F09761F,
-			0xDADCA99F8CD8E417,
-			0x9468082DACA87698,
-			0xBE760E72E5FA9C8D,
-			0xEF3CC197C0BD04E2,
-			0xE41D69D12959CD17,
-			0xDAFD68696DF421A6,
-		];
-		pub const EXPONENT: u64 = 3;
-	}
+    /// Factory challenge verification key. Step 1 of the factory provisioning
+    /// challenge/response protocol.
+    ///
+    /// During manufacturing, a signed challenge blob is submitted via
+    /// `XeKeysSetKey(0x4d, signed_blob, 0x100)`. The HV verifies the PKCS#1
+    /// signature against this key, stores the SHA-1 hash of the verified content
+    /// at HV offset 0x16640, and sets HV flag 0x80000. The factory equipment then
+    /// reads the hash via `XeKeysGetFactoryChallenge` (syscall 0x34) and computes
+    /// a response verified by `key_encrypt::default` (step 2).
+    ///
+    /// The devkit PIRS key (at HV offset 0x109c8) serves as a fallback verifier.
+    ///
+    /// HV XECRYPT_RSA at HV offset 0x11a78. Exponent = 3.
+    ///
+    /// Functions:
+    /// - `HvxKeysSetKey(0x4d)` (HV, sub_3a00) -- RSA signature verification
+    /// - `HvxKeysGetFactoryChallenge` (HV) -- reads the 0x14-byte verified hash
+    /// - `XeKeysGetFactoryChallenge` (xboxkrnl, syscall 0x34) -- kernel entry point
+    /// - `XeKeysGetKey(0x4d)` (xboxkrnl, syscall 0x39) -- alternate read path
+    pub mod factory_challenge {
+        pub const MODULUS: [u64; 32] = [
+            0xE18206A673EFE271,
+            0x93A89BB09E2D8CAE,
+            0xCA742790BDCB3E26,
+            0x782800C99A0331A0,
+            0x6FE17FD9865DCF65,
+            0xB5E20D831B0D72D9,
+            0xCFF10E4AA0A45D2D,
+            0xF56EE61B8C6EE4E5,
+            0x9B85566B25FA0C82,
+            0xDEE77CBDF8F38FA0,
+            0x44C3B791B8FC31FE,
+            0x1BB0BB26B6DB58D4,
+            0x714BC50763BBCFC6,
+            0x43F80E42FF2DE6BE,
+            0x975B1D6746A7FE94,
+            0xA4B8924F97E3B8D8,
+            0xEE2510BF2AFA407B,
+            0xCB11B36A284827AB,
+            0x3884A5F27B3D7DCF,
+            0x9F5EA8954E8EDEFF,
+            0x9CE4A6B3F45E7D67,
+            0xC4970441CCE2553A,
+            0x883EAB2FB0060519,
+            0x78F76B905C80CF59,
+            0xB939D334227A690C,
+            0xD44BEF848F09761F,
+            0xDADCA99F8CD8E417,
+            0x9468082DACA87698,
+            0xBE760E72E5FA9C8D,
+            0xEF3CC197C0BD04E2,
+            0xE41D69D12959CD17,
+            0xDAFD68696DF421A6,
+        ];
+        pub const EXPONENT: u64 = 3;
+    }
 }

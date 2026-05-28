@@ -1782,17 +1782,13 @@ impl Session {
 
                 let ecc_raw = fs::read(&path).map_err(|e| format!("Failed to read ECC file '{}': {}", path.display(), e))?;
 
-                let (ecc_clean, ecc_layout, _ecc_lba) =
-                    crate::core::images::blocks::NandProcessor::preprocess_nand_with_lba_options(&ecc_raw, false)
-                        .map_err(|e| format!("Failed to pre-process ECC image: {}", e))?;
+                let (ecc_clean, ecc_layout, _ecc_lba) = crate::core::images::blocks::NandProcessor::preprocess_nand_with_lba_options(&ecc_raw, false)
+                    .map_err(|e| format!("Failed to pre-process ECC image: {}", e))?;
 
                 let nand_layout = old.layout;
                 if ecc_layout != nand_layout {
                     self.active_nand = Some(old);
-                    return Err(format!(
-                        "ECC layout mismatch: ECC={:?}, NAND={:?}. Provide a matching ECC for this NAND type.",
-                        ecc_layout, nand_layout
-                    ));
+                    return Err(format!("ECC layout mismatch: ECC={:?}, NAND={:?}. Provide a matching ECC for this NAND type.", ecc_layout, nand_layout));
                 }
 
                 let mut image = old.image;

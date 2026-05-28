@@ -936,7 +936,11 @@ pub fn get_page_spare_fmt(image: &[u8], page: usize, layout: &NandLayout, bb_fmt
 }
 
 pub fn get_page_spare(image: &[u8], page: usize, layout: &NandLayout) -> Option<Vec<u8>> {
-    let bb_fmt = if *layout == NandLayout::Bb { detect_bb_physical_format(image) } else { BbPhysicalFormat::PerPage };
+    let bb_fmt = if *layout == NandLayout::Bb {
+        detect_bb_physical_format(image)
+    } else {
+        BbPhysicalFormat::PerPage
+    };
     get_page_spare_fmt(image, page, layout, bb_fmt)
 }
 
@@ -1249,16 +1253,8 @@ mod nand_layout_detection_tests {
             img[off..off + 16].copy_from_slice(&spare);
         };
 
-        set_spare(
-            &mut buf,
-            0,
-            [0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4],
-        );
-        set_spare(
-            &mut buf,
-            256,
-            [0xFF, 0x01, 0x00, 0x00, 0x00, 0xFF, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4],
-        );
+        set_spare(&mut buf, 0, [0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4]);
+        set_spare(&mut buf, 256, [0xFF, 0x01, 0x00, 0x00, 0x00, 0xFF, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4]);
 
         assert_eq!(NandLayout::detect(&buf).unwrap(), NandLayout::Bb);
     }

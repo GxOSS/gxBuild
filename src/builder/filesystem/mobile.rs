@@ -6,7 +6,7 @@
 
 use crate::builder::filesystem::flashfs::FileSystemRoot;
 use crate::builder::filesystem::flashfs::FsSpareData;
-use crate::core::images::blocks::{get_page_spare_fmt, detect_bb_physical_format, BbPhysicalFormat, FsSpareInfo, NandLayout};
+use crate::core::images::blocks::{detect_bb_physical_format, get_page_spare_fmt, BbPhysicalFormat, FsSpareInfo, NandLayout};
 use log::{error, info, warn};
 use std::collections::HashMap;
 use std::path::Path;
@@ -106,7 +106,11 @@ impl MobileStore {
 
         let total_pages = image.len() / layout.physical_page_size().max(1);
         let logical = crate::core::images::blocks::remove_spare(image);
-        let bb_fmt = if *layout == NandLayout::Bb { detect_bb_physical_format(image) } else { BbPhysicalFormat::PerPage };
+        let bb_fmt = if *layout == NandLayout::Bb {
+            detect_bb_physical_format(image)
+        } else {
+            BbPhysicalFormat::PerPage
+        };
 
         let mut page = 0usize;
         while page < total_pages {
@@ -192,7 +196,8 @@ impl MobileStore {
                     break;
                 }
                 let parsed = FsSpareData::parse(&spare, layout);
-                if parsed.block_id != (block as u16) || (parsed.fs_block_type & 0x3F) != data_type || parsed.fs_sequence != sequence || parsed.fs_size as usize != fssize {
+                if parsed.block_id != (block as u16) || (parsed.fs_block_type & 0x3F) != data_type || parsed.fs_sequence != sequence || parsed.fs_size as usize != fssize
+                {
                     ok = false;
                     break;
                 }

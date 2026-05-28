@@ -10,10 +10,10 @@ pub mod xell;
 
 use zerocopy::byteorder::{BigEndian as ZBigEndian, U16, U32};
 
-use crate::builder::chain::smc::{RawSmc, smc_crypt};
+use crate::builder::chain::smc::{smc_crypt, RawSmc};
 
-use crate::crypto::{calculate_smc_hash, hmac_sha, rot_sum_sha, verify_signature, Rc4};
 use crate::crypto::rsa::ExCryptRsa;
+use crate::crypto::{calculate_smc_hash, hmac_sha, rot_sum_sha, verify_signature, Rc4};
 use log::info;
 
 pub const ONEBL_KEY: [u8; 16] = [0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA];

@@ -901,10 +901,7 @@ impl NandSkeleton {
             if fallback_offset > 0 && fallback_offset + config_size <= image.len() {
                 let data = image[fallback_offset..fallback_offset + config_size].to_vec();
                 if data.iter().any(|&b| b != 0xFF) {
-                    info!(
-                        "[builder] Extracting SMC Config (fallback) (Addr: 0x{:X}, Size: 0x{:X})...",
-                        fallback_offset, config_size
-                    );
+                    info!("[builder] Extracting SMC Config (fallback) (Addr: 0x{:X}, Size: 0x{:X})...", fallback_offset, config_size);
                     data
                 } else {
                     Vec::new()
@@ -914,15 +911,8 @@ impl NandSkeleton {
             }
         };
 
-        let mut extra = NandExtra {
-            smc: smc_data,
-            smc_metadata: None,
-            smc_config: config_data,
-            keyvault: kv.data.clone(),
-            fcrt: None,
-            power_on_cause_a: 0,
-            power_on_cause_b: 0,
-        };
+        let mut extra =
+            NandExtra { smc: smc_data, smc_metadata: None, smc_config: config_data, keyvault: kv.data.clone(), fcrt: None, power_on_cause_a: 0, power_on_cause_b: 0 };
 
         info!("[builder] Walking bootloader chain (encrypted) starting at offset 0x{:X}...", header.cb_offset());
         let (bootloaders, update) = Self::parse_bootloader_chain(&image, header.cb_offset() as usize, header.cf_offset.get() as usize, &flashfs)?;
@@ -952,7 +942,11 @@ impl NandSkeleton {
 
         let total_blocks = layout.total_blocks(image.len());
         let lba_map = LbaMap::from_layout(layout, total_blocks);
-        let corona_fs = if layout == NandLayout::Emmc { corona::load_slots(&image) } else { [Default::default(), Default::default()] };
+        let corona_fs = if layout == NandLayout::Emmc {
+            corona::load_slots(&image)
+        } else {
+            [Default::default(), Default::default()]
+        };
 
         Ok(NandSkeleton {
             cpukey: None,
@@ -1037,10 +1031,7 @@ impl NandSkeleton {
             if fallback_offset > 0 && fallback_offset + config_size <= image.len() {
                 let data = image[fallback_offset..fallback_offset + config_size].to_vec();
                 if data.iter().any(|&b| b != 0xFF) {
-                    info!(
-                        "[builder] Extracting SMC Config (fallback) (Addr: 0x{:X}, Size: 0x{:X})...",
-                        fallback_offset, config_size
-                    );
+                    info!("[builder] Extracting SMC Config (fallback) (Addr: 0x{:X}, Size: 0x{:X})...", fallback_offset, config_size);
                     data
                 } else {
                     Vec::new()
@@ -1634,8 +1625,7 @@ impl NandSkeleton {
         }
 
         let chain_profile = if self.bootloaders.cb_b.is_some() { "split" } else { "single" };
-        let (fs_addr_calc, smc_config_offset, phys_fs_block) =
-            LayoutCalculator::calculate(SouthbridgeType::from(self.options.motherboard), chain_profile, *layout);
+        let (fs_addr_calc, smc_config_offset, phys_fs_block) = LayoutCalculator::calculate(SouthbridgeType::from(self.options.motherboard), chain_profile, *layout);
         let mut target_fs_block = phys_fs_block as i32;
         if !self.flashfs.root.entries.is_empty() && matches!(layout, NandLayout::Sb | NandLayout::Xsb | NandLayout::Bb) && target_fs_block >= 0 {
             let page_size = 0x200usize;
@@ -1673,7 +1663,11 @@ impl NandSkeleton {
             let required_total_blocks = required_data_blocks + root_blocks_needed;
 
             if required_total_blocks > available_blocks {
-                let patch_slots = if self.options.dualpatchslots || self.update.cf_1.is_some() { 2usize } else { 1usize };
+                let patch_slots = if self.options.dualpatchslots || self.update.cf_1.is_some() {
+                    2usize
+                } else {
+                    1usize
+                };
                 let patch_slot_size = patch_slots.saturating_mul(0x10000);
                 let sysupdate_end = (target_cf_offset as usize).saturating_add(patch_slot_size);
                 let min_fs_block = ((sysupdate_end + logical_block_size - 1) / logical_block_size) as i32;
@@ -1970,7 +1964,6 @@ impl NandSkeleton {
         let (_fs_root_addr, smc_config_offset, phys_fs_block) = LayoutCalculator::calculate(sb_type, chain_profile, self.layout);
         header.smc_config_offset = U32::new(smc_config_offset);
 
-
         header.smc_boot_offset.set(target_smc_offset as u32);
         header.smc_boot_size.set(smc_len as u32);
         header.cf_offset.set(target_cf_offset as u32);
@@ -2048,8 +2041,7 @@ impl NandSkeleton {
             let max_bmap_per_root_block = (pages_per_block / 2) * bm_count;
             let total_blocks = layout.total_blocks(logical_image.len());
 
-            let root_blocks_needed_for_entries =
-                (non_deleted_count + extra_non_deleted + max_entries_per_root_block - 1) / max_entries_per_root_block.max(1);
+            let root_blocks_needed_for_entries = (non_deleted_count + extra_non_deleted + max_entries_per_root_block - 1) / max_entries_per_root_block.max(1);
             let root_blocks_needed_for_bmap = (total_blocks + max_bmap_per_root_block - 1) / max_bmap_per_root_block.max(1);
             let root_blocks_needed = root_blocks_needed_for_entries.max(root_blocks_needed_for_bmap).max(1);
 
@@ -2060,7 +2052,11 @@ impl NandSkeleton {
             let required_total_blocks = required_data_blocks + extra_data_blocks + root_blocks_needed;
 
             if required_total_blocks > available_blocks {
-                let patch_slots = if self.options.dualpatchslots || self.update.cf_1.is_some() { 2usize } else { 1usize };
+                let patch_slots = if self.options.dualpatchslots || self.update.cf_1.is_some() {
+                    2usize
+                } else {
+                    1usize
+                };
                 let patch_slot_size = patch_slots.saturating_mul(0x10000);
                 let sysupdate_end = (target_cf_offset as usize).saturating_add(patch_slot_size);
                 let min_fs_block = ((sysupdate_end + logical_block_size - 1) / logical_block_size) as i32;
@@ -2111,7 +2107,15 @@ impl NandSkeleton {
                 || build_profile_l == "xdkbuild"
                 || build_profile_l.contains("glitch");
 
-            let desired_patch_slots = if reserve_two_slots { 2 } else { if cf1.is_some() { 2 } else { 1 } };
+            let desired_patch_slots = if reserve_two_slots {
+                2
+            } else {
+                if cf1.is_some() {
+                    2
+                } else {
+                    1
+                }
+            };
 
             if self.options.dualpatchslots {
                 if cf1.is_none() || cg1.is_none() {
