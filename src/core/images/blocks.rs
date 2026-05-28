@@ -113,7 +113,7 @@ impl NandLayout {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum BbPhysicalFormat {
+pub enum BbPhysicalFormat {
     PerPage,
     Chunked,
 }
@@ -176,7 +176,7 @@ fn bb_score_spare(candidate: &[u8]) -> i32 {
     score
 }
 
-fn detect_bb_physical_format(image: &[u8]) -> BbPhysicalFormat {
+pub fn detect_bb_physical_format(image: &[u8]) -> BbPhysicalFormat {
     let mut per_page_hits = 0i32;
     let mut chunked_hits = 0i32;
 
@@ -550,11 +550,13 @@ pub fn add_spare(
                     page_slice[..sz].copy_from_slice(&image[read_offset..read_offset + sz]);
                 }
 
-                let mut spare = [0u8; 16];
-                spare[0] = 0xFF;
+                let mut spare = [0xFFu8; 16];
                 let val = (i / layout.logical_pages_per_block()) + block_number_base;
+                let reserve_start = layout.reserve_start(image.len());
 
-                if let Some(fs) = mobile_meta.and_then(|m| m.get(&i)).or_else(|| fs_meta.and_then(|m| m.get(&val))) {
+                if val >= reserve_start {
+                    // Reserve region: leave spare fully erased (0xFF), no ECC
+                } else if let Some(fs) = mobile_meta.and_then(|m| m.get(&i)).or_else(|| fs_meta.and_then(|m| m.get(&val))) {
                     spare[1] = (val & 0xFF) as u8;
                     spare[2] = ((val >> 8) & 0xFF) as u8;
                     spare[5] = (fs.sequence & 0xFF) as u8;
@@ -564,13 +566,14 @@ pub fn add_spare(
                     spare[8] = ((fs.size >> 8) & 0xFF) as u8;
                     spare[9] = fs.page_count;
                     spare[12] = fs.block_type;
+                    page_slice[page_size..p_page_size].copy_from_slice(&spare);
+                    calculate_ecc(page_slice);
                 } else {
                     spare[1] = (val & 0xFF) as u8;
                     spare[2] = ((val >> 8) & 0xFF) as u8;
+                    page_slice[page_size..p_page_size].copy_from_slice(&spare);
+                    calculate_ecc(page_slice);
                 }
-
-                page_slice[page_size..p_page_size].copy_from_slice(&spare);
-                calculate_ecc(page_slice);
             }
             result
         }
@@ -591,8 +594,9 @@ pub fn add_spare(
                     page_slice[..sz].copy_from_slice(&image[read_offset..read_offset + sz]);
                 }
 
-                let mut spare = [0u8; 16];
+                let mut spare = [0xFFu8; 16];
                 let val = (i / 32) + block_number_base;
+                let reserve_start = layout.reserve_start(image.len());
 
                 // JTAG syscall injection into Page 1 spare (offset 10, Big Endian)
                 if i == 1 {
@@ -603,8 +607,9 @@ pub fn add_spare(
                     }
                 }
 
-                if let Some(fs) = mobile_meta.and_then(|m| m.get(&i)).or_else(|| fs_meta.and_then(|m| m.get(&val))) {
-                    spare[5] = 0xFF;
+                if val >= reserve_start {
+                    // Reserve region: leave spare fully erased (0xFF), no ECC
+                } else if let Some(fs) = mobile_meta.and_then(|m| m.get(&i)).or_else(|| fs_meta.and_then(|m| m.get(&val))) {
                     spare[7] = (fs.size & 0xFF) as u8;
                     spare[8] = ((fs.size >> 8) & 0xFF) as u8;
                     spare[9] = fs.page_count;
@@ -627,8 +632,9 @@ pub fn add_spare(
                         }
                         _ => {}
                     }
+                    page_slice[page_size..p_page_size].copy_from_slice(&spare);
+                    calculate_ecc(page_slice);
                 } else {
-                    spare[5] = 0xFF;
                     match meta_type {
                         SpareMetaType::MetaType0 => {
                             spare[0] = (val & 0xFF) as u8;
@@ -640,10 +646,9 @@ pub fn add_spare(
                         }
                         _ => {}
                     }
+                    page_slice[page_size..p_page_size].copy_from_slice(&spare);
+                    calculate_ecc(page_slice);
                 }
-
-                page_slice[page_size..p_page_size].copy_from_slice(&spare);
-                calculate_ecc(page_slice);
             }
             result
         }
@@ -900,7 +905,7 @@ pub fn remove_spare(image: &[u8]) -> Vec<u8> {
     }
 }
 
-pub fn get_page_spare(image: &[u8], page: usize, layout: &NandLayout) -> Option<Vec<u8>> {
+pub fn get_page_spare_fmt(image: &[u8], page: usize, layout: &NandLayout, bb_fmt: BbPhysicalFormat) -> Option<Vec<u8>> {
     let spare_size = layout.spare_size();
     if spare_size == 0 {
         return None;
@@ -908,8 +913,7 @@ pub fn get_page_spare(image: &[u8], page: usize, layout: &NandLayout) -> Option<
 
     match layout {
         NandLayout::Bb => {
-            let fmt = detect_bb_physical_format(image);
-            let offset = match fmt {
+            let offset = match bb_fmt {
                 BbPhysicalFormat::PerPage => bb_spare_offset_per_page(page),
                 BbPhysicalFormat::Chunked => bb_spare_offset_chunked(page),
             };
@@ -929,6 +933,11 @@ pub fn get_page_spare(image: &[u8], page: usize, layout: &NandLayout) -> Option<
         }
         NandLayout::Emmc => None,
     }
+}
+
+pub fn get_page_spare(image: &[u8], page: usize, layout: &NandLayout) -> Option<Vec<u8>> {
+    let bb_fmt = if *layout == NandLayout::Bb { detect_bb_physical_format(image) } else { BbPhysicalFormat::PerPage };
+    get_page_spare_fmt(image, page, layout, bb_fmt)
 }
 
 pub fn is_bad_block(image: &[u8], block_number: usize, layout: &NandLayout) -> bool {

@@ -206,7 +206,9 @@ impl BootloaderCb {
     pub fn recalculate_per_box_digest(&mut self, cpu_key: &[u8; 16]) {
         if let Some(ref mut meta) = self.metadata {
             let mut data_to_hash = [0u8; 0x10];
-            data_to_hash[0..3].copy_from_slice(&meta.pairing_data);
+            let mut pd_on_disk = meta.pairing_data;
+            pd_on_disk.reverse();
+            data_to_hash[0..3].copy_from_slice(&pd_on_disk);
             data_to_hash[3] = meta.lockdown_value;
             data_to_hash[4..16].copy_from_slice(&meta.reserved_per_box);
 

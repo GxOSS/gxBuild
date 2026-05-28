@@ -335,8 +335,8 @@ pub fn encrypt_chain(
     let mut smc_for_hash = smc.data.clone();
     smc_crypt(&mut smc_for_hash, true);
     let digest = fix_per_box_digest(&smc_for_hash, &cb.header, &cb.data, &cb_key, cpukey)?;
-    if cb.data.len() >= 0x20 {
-        cb.data[0x10..0x20].copy_from_slice(&digest);
+    if cb.data.len() >= 0x30 {
+        cb.data[0x20..0x30].copy_from_slice(&digest);
     }
 
     // Encrypt in reverse order (innermost first).
@@ -421,8 +421,8 @@ pub fn encrypt_rebooter_chain(
     let mut smc_for_hash = smc.data.clone();
     smc_crypt(&mut smc_for_hash, true);
     let digest0 = fix_per_box_digest(&smc_for_hash, &cb0.header, &cb0.data, &cb0_key, cpukey)?;
-    if cb0.data.len() >= 0x20 {
-        cb0.data[0x10..0x20].copy_from_slice(&digest0);
+    if cb0.data.len() >= 0x30 {
+        cb0.data[0x20..0x30].copy_from_slice(&digest0);
     }
 
     cd0.decrypt(&cb0_key, None);
