@@ -21,27 +21,120 @@
 */
 
 use log::{debug, error, info, warn};
-use zerocopy::byteorder::{BigEndian, I16, U16, U32};
-use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
+use thiserror::Error;
+use zerocopy::byteorder::{I16, U16, U32};
+use zerocopy::FromBytes;
 
 use crate::builder::chain::smc::smc_crypt;
 use crate::builder::chain::*;
+use crate::builder::chain::{
+    cb::BootloaderCb, sc::BootloaderSc, cd::BootloaderCd, ce::BootloaderCe,
+    cf::BootloaderCf, cg::BootloaderCg,
+};
 use crate::builder::filesystem::corona::{self, CoronaFsSlots};
 use crate::builder::filesystem::flashfs::FlashFS;
 use crate::builder::filesystem::mobile::MobileStore;
 use crate::core::images::blocks::*;
 use crate::core::images::gxp::{apply_records, GxpBinary, GxpPatchType, PatchRecord};
 use crate::crypto::{calculate_smc_hash, hmac_sha, Rc4};
+use crate::builder::types::*;
+// Re-export for backward compatibility
+pub use crate::builder::types::{
+    LayoutCalculator, SouthbridgeType, PayloadEntry, PayloadList,
+    MotherboardType, BuildOptions, BuildMode, NandHeader, NandHeaderPrefix,
+    NandBootloaders, NandUpdate, NandExtra,
+};
 
-const NAND_RETAIL_1BL_KEY: [u8; 16] = [
-    0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA,
-];
+/// Unified error type for builder operations.
+#[derive(Error, Debug)]
+pub enum BuilderError {
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
 
-struct BlDiscovery {
-    magic: String,
-    version: u16,
-    size: u32,
-    key_source: String,
+    #[error("Filesystem error: {0}")]
+    Fs(#[from] crate::builder::filesystem::FsError),
+
+    #[error("Invalid hex string: {0}")]
+    InvalidHex(String),
+
+    #[error("Image too small: got {got} bytes, need {need}")]
+    ImageTooSmall { got: usize, need: usize },
+
+    #[error("Invalid NAND magic: 0x{magic:04X}")]
+    InvalidMagic { magic: u16 },
+
+    #[error("{component} out of bounds: offset 0x{offset:X} + size 0x{size:X} > image 0x{image_len:X}")]
+    OutOfBounds {
+        component: String,
+        offset: usize,
+        size: usize,
+        image_len: usize,
+    },
+
+    #[error("Invalid KV size: 0x{size:X} (expected 0x4000)")]
+    InvalidKvSize { size: usize },
+
+    #[error("Offset overflow: {0}")]
+    OffsetOverflow(String),
+
+    #[error("Failed to parse NAND header: {0}")]
+    HeaderParse(String),
+
+    #[error("Bootloader chain overflow at stage {stage}: {message}")]
+    BootloaderOverflow { stage: String, message: String },
+
+    #[error("Bootchain stage {stage} overflow at 0x{offset:X}")]
+    BootchainOverflow { stage: String, offset: usize },
+
+    #[error("SMC write out of bounds: offset 0x{offset:X} + size 0x{size:X} > image 0x{image_len:X}")]
+    SmcOutOfBounds { offset: usize, size: usize, image_len: usize },
+
+    #[error("Keyvault write out of bounds: offset 0x{offset:X} + size 0x{size:X} > image 0x{image_len:X}")]
+    KvOutOfBounds { offset: usize, size: usize, image_len: usize },
+
+    #[error("CF overflow at 0x{offset:X}: need 0x{need:X} bytes")]
+    CfOverflow { offset: usize, need: usize },
+
+    #[error("CG overflow at 0x{offset:X}: need 0x{need:X} bytes")]
+    CgOverflow { offset: usize, need: usize },
+
+    #[error("KHV patch stream overflow at 0x{offset:X}: need 0x{need:X} bytes")]
+    KhvOverflow { offset: usize, need: usize },
+
+    #[error("Patch error: {0}")]
+    Patch(String),
+
+    #[error("XeLL offset error: {0}")]
+    XellOffset(String),
+
+    #[error("Assembly error: {0}")]
+    Assembly(String),
+
+    #[error("Build error: {0}")]
+    Build(String),
+
+    #[error("Bootloader error: {0}")]
+    Bootloader(String),
+}
+
+pub type Result<T> = std::result::Result<T, BuilderError>;
+
+impl From<String> for BuilderError {
+    fn from(s: String) -> Self {
+        BuilderError::Build(s)
+    }
+}
+
+impl From<&str> for BuilderError {
+    fn from(s: &str) -> Self {
+        BuilderError::Build(s.to_string())
+    }
+}
+
+impl From<BuilderError> for String {
+    fn from(e: BuilderError) -> Self {
+        e.to_string()
+    }
 }
 
 fn bl_is_valid_magic(magic: u16) -> bool {
@@ -63,6 +156,23 @@ fn bl_magic_to_str(magic: u16) -> String {
         _ => "??",
     }
     .to_string()
+}
+
+pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>> {
+    if hex.len() % 2 != 0 {
+        return Err(BuilderError::InvalidHex(format!(
+            "odd length ({}): '{}'",
+            hex.len(),
+            hex
+        )));
+    }
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&hex[i..i + 2], 16)
+                .map_err(|e| BuilderError::InvalidHex(format!("byte '{}': {}", &hex[i..i + 2], e)))
+        })
+        .collect()
 }
 
 fn bl_try_identify(data: &[u8], parent_key: &[u8; 16]) -> Option<BlDiscovery> {
@@ -147,434 +257,6 @@ where
         }
     }
     None
-}
-
-pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
-    if hex.len() % 2 != 0 {
-        return Err(format!(
-            "Hex string has odd length ({}): '{}'",
-            hex.len(),
-            hex
-        ));
-    }
-    (0..hex.len())
-        .step_by(2)
-        .map(|i| {
-            u8::from_str_radix(&hex[i..i + 2], 16)
-                .map_err(|e| format!("Invalid hex byte '{}': {}", &hex[i..i + 2], e))
-        })
-        .collect()
-}
-
-#[derive(FromBytes, IntoBytes, KnownLayout, Immutable, Clone, Copy)]
-#[repr(C)]
-pub struct NandHeaderPrefix {
-    pub magic: U16<BigEndian>,
-    pub version: U16<BigEndian>,
-    pub pairing: U16<BigEndian>,
-    pub flags: U16<BigEndian>,
-    pub entrypoint: U32<BigEndian>, // CB
-    pub size: U32<BigEndian>,
-}
-
-#[derive(FromBytes, IntoBytes, KnownLayout, Immutable, Clone, Copy)]
-#[repr(C)]
-pub struct NandHeader {
-    pub prefix: NandHeaderPrefix,
-    pub copyright: [u8; 0x40],
-    pub payload_indicator: U16<BigEndian>,
-    pub unused: [u8; 0x0E],
-    pub kv_size: U32<BigEndian>,
-    pub cf_offset: U32<BigEndian>,
-    pub patch_slots: I16<BigEndian>,
-    pub kv_version: U16<BigEndian>,
-    pub kv_addr: U32<BigEndian>,
-    pub fs_addr: U32<BigEndian>,
-    pub smc_config_offset: U32<BigEndian>,
-    pub smc_boot_size: U32<BigEndian>,
-    pub smc_boot_offset: U32<BigEndian>,
-}
-
-#[derive(Debug, Clone)]
-pub struct PayloadEntry {
-    pub address: u32,
-    pub size: u32,
-    pub description: String,
-    pub data: Vec<u8>,
-    pub fixed_address: Option<u32>,
-}
-
-impl PayloadEntry {
-    pub fn serialize(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
-        buf.extend_from_slice(&self.address.to_be_bytes());
-        buf.extend_from_slice(&self.size.to_be_bytes());
-        let desc_bytes = self.description.as_bytes();
-        let desc_len = (desc_bytes.len() as u8).min(0xFF);
-        buf.push(desc_len);
-        buf.extend_from_slice(&desc_bytes[..desc_len as usize]);
-        buf
-    }
-}
-
-pub struct PayloadList {
-    pub entries: Vec<PayloadEntry>,
-}
-
-impl PayloadList {
-    pub fn new() -> Self {
-        PayloadList {
-            entries: Vec::new(),
-        }
-    }
-
-    pub fn serialize(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
-        for entry in &self.entries {
-            buf.extend_from_slice(&entry.serialize());
-        }
-        buf.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]); // Table terminator
-        buf
-    }
-}
-
-impl NandHeader {
-    pub const MAGIC: u16 = 0xFF4F;
-    const XEBUILD_FLAG_OFFSET: usize = 0x3B;
-    const XEBUILD_DUALBOOT_OFFSET: usize = 0x3C;
-    const XEBUILD_UART_OFFSET: usize = 0x3D;
-    const XEBUILD_XELL_ALT_POC_OFFSET: usize = 0x3E;
-    const XEBUILD_XELL_POC_OFFSET: usize = 0x3F;
-
-    pub fn validate(&self) -> Result<(), String> {
-        if self.prefix.magic.get() != Self::MAGIC {
-            return Err(format!(
-                "Invalid NAND magic: 0x{:04X}",
-                self.prefix.magic.get()
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn cb_offset(&self) -> u32 {
-        self.prefix.entrypoint.get()
-    }
-
-    pub fn print_info(&self) {
-        info!(
-            "[builder] NAND magic:       0x{:04X}",
-            self.prefix.magic.get()
-        );
-        info!("[builder] NAND build:       {}", self.prefix.version.get());
-        info!("[builder] CB offset:        0x{:X}", self.cb_offset());
-        info!("[builder] CF offset:        0x{:X}", self.cf_offset.get());
-        let copyright = String::from_utf8_lossy(&self.copyright);
-        info!(
-            "[builder] Copyright:        {}",
-            copyright.trim_matches(char::from(0))
-        );
-        info!("[builder] KV offset:        0x{:X}", self.kv_addr.get());
-        info!("[builder] KV size:          0x{:X}", self.kv_size.get());
-        info!(
-            "[builder] SMC boot size:    0x{:X}",
-            self.smc_boot_size.get()
-        );
-        info!(
-            "[builder] SMC boot offset:  0x{:X}",
-            self.smc_boot_offset.get()
-        );
-    }
-
-    fn apply_xebuild_header_flags(&mut self, options: &BuildOptions, extra: &NandExtra) {
-        let profile = options.image_profile.as_str();
-        let is_devkit = profile == "devkit" || matches!(options.build_mode, BuildMode::Devkit);
-        let is_retail = profile == "retail";
-        let is_hacked = profile == "jtag"
-            || profile == "devgl"
-            || profile == "xdkbuild"
-            || profile.contains("glitch");
-
-        if is_retail || is_devkit {
-            self.copyright[Self::XEBUILD_FLAG_OFFSET] = 0;
-            return;
-        }
-
-        if is_hacked {
-            self.copyright[Self::XEBUILD_FLAG_OFFSET] = 1;
-
-            let alt = extra.power_on_cause_a;
-            let primary = extra.power_on_cause_b;
-
-            self.copyright[Self::XEBUILD_XELL_ALT_POC_OFFSET] = if alt != 0 { alt } else { 0x00 };
-            self.copyright[Self::XEBUILD_XELL_POC_OFFSET] =
-                if primary != 0 { primary } else { 0x12 };
-
-            if options.demon {
-                self.copyright[Self::XEBUILD_UART_OFFSET] = 2;
-            } else if options.cygnos {
-                self.copyright[Self::XEBUILD_UART_OFFSET] = 1;
-            }
-
-            let _ = Self::XEBUILD_DUALBOOT_OFFSET;
-        }
-    }
-}
-
-use crate::builder::chain::cb::BootloaderCb;
-use crate::builder::chain::cd::BootloaderCd;
-use crate::builder::chain::ce::BootloaderCe;
-use crate::builder::chain::cf::BootloaderCf;
-use crate::builder::chain::cg::BootloaderCg;
-use crate::builder::chain::sc::BootloaderSc;
-
-#[derive(Clone)]
-pub struct NandBootloaders {
-    pub cb: Option<BootloaderCb>,
-    pub cb_a: Option<BootloaderCb>,
-    pub cb_x: Option<BootloaderCb>,
-    pub cb_b: Option<BootloaderCb>,
-    pub sc: Option<BootloaderSc>,
-    pub cd: Option<BootloaderCd>,
-    pub ce: Option<BootloaderCe>,
-    pub khvpatch: Option<Vec<PatchRecord>>,
-    pub xell: Option<crate::builder::chain::xell::Xell>,
-}
-
-impl NandBootloaders {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn clear(&mut self) {
-        self.cb = None;
-        self.cb_a = None;
-        self.cb_x = None;
-        self.cb_b = None;
-        self.sc = None;
-        self.cd = None;
-        self.ce = None;
-        self.khvpatch = None;
-        self.xell = None;
-    }
-}
-
-impl Default for NandBootloaders {
-    fn default() -> Self {
-        NandBootloaders {
-            cb: None,
-            cb_a: None,
-            cb_x: None,
-            cb_b: None,
-            sc: None,
-            cd: None,
-            ce: None,
-            khvpatch: None,
-            xell: None,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct NandUpdate {
-    pub cf_0: Option<BootloaderCf>,
-    pub cg_0: Option<BootloaderCg>,
-    pub cf_1: Option<BootloaderCf>,
-    pub cg_1: Option<BootloaderCg>,
-}
-
-impl NandUpdate {
-    pub fn clear(&mut self) {
-        self.cf_0 = None;
-        self.cg_0 = None;
-        self.cf_1 = None;
-        self.cg_1 = None;
-    }
-}
-
-impl Default for NandUpdate {
-    fn default() -> Self {
-        NandUpdate {
-            cf_0: None,
-            cg_0: None,
-            cf_1: None,
-            cg_1: None,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct NandExtra {
-    pub smc: Vec<u8>,
-    pub smc_metadata: Option<crate::builder::chain::smc::SmcMetadata>,
-    pub smc_config: Vec<u8>,
-    pub keyvault: Vec<u8>,
-    pub fcrt: Option<Vec<u8>>,
-    pub power_on_cause_a: u8,
-    pub power_on_cause_b: u8,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum MotherboardType {
-    Xenon = 1,
-    Zephyr = 2,
-    Falcon = 3,
-    Jasper = 4,
-    Trinity = 5,
-    Corona = 6,
-    Winchester = 7,
-    Unknown = 0xF,
-}
-
-impl MotherboardType {
-    pub fn from_smc(smc_byte: u8) -> Self {
-        match (smc_byte >> 4) & 0xF {
-            1 => MotherboardType::Xenon,
-            2 => MotherboardType::Zephyr,
-            3 => MotherboardType::Falcon,
-            4 => MotherboardType::Jasper,
-            5 => MotherboardType::Trinity,
-            6 => MotherboardType::Corona,
-            7 => MotherboardType::Winchester,
-            _ => MotherboardType::Unknown,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum SouthbridgeType {
-    Xsb,
-    Psb,
-    Ksb,
-    Unknown,
-}
-
-impl From<MotherboardType> for SouthbridgeType {
-    fn from(m: MotherboardType) -> Self {
-        match m {
-            MotherboardType::Xenon | MotherboardType::Zephyr | MotherboardType::Falcon => {
-                SouthbridgeType::Xsb
-            }
-            MotherboardType::Jasper | MotherboardType::Trinity => SouthbridgeType::Psb,
-            MotherboardType::Corona | MotherboardType::Winchester => SouthbridgeType::Ksb,
-            MotherboardType::Unknown => SouthbridgeType::Unknown,
-        }
-    }
-}
-
-pub struct LayoutCalculator;
-
-impl LayoutCalculator {
-    pub fn calculate(
-        sb: SouthbridgeType,
-        image_profile: &str,
-        layout: NandLayout,
-    ) -> (u32, u32, u32) {
-        // Returns (header.fs_addr, header.smc_config_offset, physical_fs_block)
-        let smc_config = match layout {
-            NandLayout::Xsb | NandLayout::Sb => 0xF70000,
-            NandLayout::Bb => 0x3DF0000,
-            NandLayout::Emmc => 0x0,
-        };
-
-        if matches!(layout, NandLayout::Bb | NandLayout::Emmc) {
-            return (0, smc_config, 0);
-        }
-
-        // SmallBlock FlashFS relocation based on SB and profile
-        let is_split = match image_profile {
-            "split" | "devgl" | "devkit" | "xdkbuild" | "glitch2m" | "glitchr" | "glitch2r" => true,
-            _ => false,
-        };
-
-        match sb {
-            SouthbridgeType::Xsb => {
-                if is_split {
-                    (0xE44000, smc_config, 0x391)
-                } else {
-                    (0xD84000, smc_config, 0x361)
-                }
-            }
-            SouthbridgeType::Psb => {
-                if is_split {
-                    (0xDF4000, smc_config, 0x37D)
-                } else {
-                    (0xD84000, smc_config, 0x361)
-                }
-            }
-            SouthbridgeType::Ksb => {
-                // Corona is always split in modern builds (RGH2/3) or handles it same as Split PSB
-                (0xE44000, smc_config, 0x391)
-            }
-            _ => (0, smc_config, 0),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum BuildMode {
-    Normal,
-    Xell,
-    Shadowboot,
-    Devkit,
-}
-
-#[derive(Clone)]
-pub struct BuildOptions {
-    pub layout: NandLayout,
-    pub lba_map: LbaMap,
-    pub image_profile: String,
-    pub build_mode: BuildMode,
-    pub motherboard: MotherboardType,
-    pub bigonsmall: bool,
-    pub shadowboot: bool,
-    pub mfg: bool,
-    pub noremap: bool,
-    pub khv_apply: bool,
-    pub khv_header_size: u32,
-    pub jtag_syscall: Option<u16>,
-    pub jtag_pairing_2bl: Option<[u8; 3]>,
-    pub gxunsafe: bool,
-    pub verbose: bool,
-    pub cba: Option<String>,
-    pub cbb: Option<String>,
-    pub full_image: bool,
-    pub xsb: bool,
-    pub nomobile: bool,
-    pub nofcrt: bool,
-    pub dualpatchslots: bool,
-    pub cygnos: bool,
-    pub demon: bool,
-}
-
-impl Default for BuildOptions {
-    fn default() -> Self {
-        BuildOptions {
-            layout: NandLayout::Sb,
-            lba_map: LbaMap::new(0x400),
-            image_profile: "retail".to_string(),
-            build_mode: BuildMode::Normal,
-            motherboard: MotherboardType::Unknown,
-            bigonsmall: false,
-            shadowboot: false,
-            mfg: false,
-            full_image: false,
-            xsb: false,
-            noremap: false,
-            khv_apply: false,
-            khv_header_size: 0x4000,
-            jtag_syscall: None,
-            jtag_pairing_2bl: None,
-            gxunsafe: false,
-            verbose: false,
-            cba: None,
-            cbb: None,
-            nomobile: false,
-            nofcrt: false,
-            dualpatchslots: false,
-            cygnos: false,
-            demon: false,
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -701,7 +383,7 @@ impl NandSkeleton {
         }
     }
 
-    pub fn prepare_for_assembly(&mut self) -> Result<(), String> {
+    pub fn prepare_for_assembly(&mut self) -> Result<()> {
         if self.options.verbose {
             info!("[pfa] === prepare_for_assembly START ===");
             info!("[pfa] input_pd: {:02x?}", self.input_pd);
@@ -748,9 +430,13 @@ impl NandSkeleton {
                             let cb_a_key: [u8; 16] = cb_a_key_slice.try_into().unwrap();
                             let uses_new_crypto = (cb_a.header.flags.get() & 0x1000) != 0;
                             if uses_new_crypto {
-                                cb_b.decrypt_v2(&cb_a.header, &cb_a_key, &cpukey);
+                                if let Err(e) = cb_b.decrypt_v2(&cb_a.header, &cb_a_key, &cpukey) {
+                                    warn!("[pfa] CB_B v2 decryption failed: {}", e);
+                                }
                             } else {
-                                cb_b.decrypt_v1(&cb_a_key, &cpukey);
+                                if let Err(e) = cb_b.decrypt_v1(&cb_a_key, &cpukey) {
+                                    warn!("[pfa] CB_B v1 decryption failed: {}", e);
+                                }
                             }
                             cb_b.populate_metadata_unchecked();
                             if self.options.verbose {
@@ -773,7 +459,9 @@ impl NandSkeleton {
             if let Some(cb) = self.bootloaders.cb.as_mut() {
                 if cb.metadata.is_none() {
                     info!("[pfa] CB (single) has no metadata — decrypting with 1BL key");
-                    cb.decrypt(&ONEBL_KEY);
+                    if let Err(e) = cb.decrypt(&ONEBL_KEY) {
+                        warn!("[pfa] CB decryption failed: {}", e);
+                    }
                     cb.populate_metadata_unchecked();
                     info!(
                         "[pfa] CB decrypted, meta: {:?}",
@@ -787,7 +475,9 @@ impl NandSkeleton {
             if let Some(cf) = self.update.cf_0.as_mut() {
                 if cf.metadata.is_none() {
                     info!("[pfa] CF_0 has no metadata — decrypting with 1BL key");
-                    cf.decrypt(&ONEBL_KEY);
+                    if let Err(e) = cf.decrypt(&ONEBL_KEY) {
+                        log::warn!("[pfa] CF_0 decryption failed: {}", e);
+                    }
                     cf.populate_metadata_unchecked();
                     info!(
                         "[pfa] CF_0 decrypted, meta: {:?}",
@@ -801,7 +491,9 @@ impl NandSkeleton {
             if let Some(cf) = self.update.cf_1.as_mut() {
                 if cf.metadata.is_none() {
                     info!("[pfa] CF_1 has no metadata — decrypting with 1BL key");
-                    cf.decrypt(&ONEBL_KEY);
+                    if let Err(e) = cf.decrypt(&ONEBL_KEY) {
+                        log::warn!("[pfa] CF_1 decryption failed: {}", e);
+                    }
                     cf.populate_metadata_unchecked();
                     info!(
                         "[pfa] CF_1 decrypted, meta: {:?}",
@@ -1024,17 +716,16 @@ impl NandSkeleton {
         image: Vec<u8>,
         layout: NandLayout,
         flashfs: FlashFS,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         let header_sz = std::mem::size_of::<NandHeader>();
         if image.len() < header_sz {
-            return Err(format!(
-                "Image too small for header: {} bytes (need {})",
-                image.len(),
-                header_sz
-            ));
+            return Err(BuilderError::ImageTooSmall {
+                got: image.len(),
+                need: header_sz,
+            });
         }
         let header = NandHeader::read_from_prefix(&image[..header_sz])
-            .map_err(|e| format!("Failed to parse NAND header: {}", e))?
+            .map_err(|e| BuilderError::HeaderParse(e.to_string()))?
             .0;
         header.validate()?;
         header.print_info();
@@ -1042,38 +733,36 @@ impl NandSkeleton {
         let kv_addr = header.kv_addr.get() as usize;
         let kv_size = header.kv_size.get() as usize;
         if kv_size != 0x4000 {
-            return Err(format!(
-                "Invalid KV size: 0x{:X} (expected 0x4000)",
-                kv_size
-            ));
+            return Err(BuilderError::InvalidKvSize { size: kv_size });
         }
-        if kv_addr.checked_add(kv_size).ok_or("KV offset overflow")? > image.len() {
-            return Err(format!(
-                "KV out of bounds: offset 0x{:X} + size 0x{:X} > image 0x{:X}",
-                kv_addr,
-                kv_size,
-                image.len()
-            ));
+        let kv_end = kv_addr
+            .checked_add(kv_size)
+            .ok_or_else(|| BuilderError::OffsetOverflow("KV".to_string()))?;
+        if kv_end > image.len() {
+            return Err(BuilderError::KvOutOfBounds {
+                offset: kv_addr,
+                size: kv_size,
+                image_len: image.len(),
+            });
         }
         info!(
             "[builder] Extracting Keyvault (encrypted) (Addr: 0x{:X}, Size: 0x{:X})...",
             kv_addr, kv_size
         );
-        let kv = crate::builder::chain::kv::Keyvault::parse(&image[kv_addr..kv_addr + kv_size])?;
+        let kv = crate::builder::chain::kv::Keyvault::parse(&image[kv_addr..kv_addr + kv_size])
+            .map_err(|e| BuilderError::Build(e.to_string()))?;
 
         let smc_offset = header.smc_boot_offset.get() as usize;
         let smc_size = header.smc_boot_size.get() as usize;
-        if smc_offset
+        let smc_end = smc_offset
             .checked_add(smc_size)
-            .ok_or("SMC offset overflow")?
-            > image.len()
-        {
-            return Err(format!(
-                "SMC out of bounds: offset 0x{:X} + size 0x{:X} > image 0x{:X}",
-                smc_offset,
-                smc_size,
-                image.len()
-            ));
+            .ok_or_else(|| BuilderError::OffsetOverflow("SMC".to_string()))?;
+        if smc_end > image.len() {
+            return Err(BuilderError::SmcOutOfBounds {
+                offset: smc_offset,
+                size: smc_size,
+                image_len: image.len(),
+            });
         }
         info!(
             "[builder] Extracting SMC (encrypted) (Addr: 0x{:X}, Size: 0x{:X})...",
@@ -1201,7 +890,7 @@ impl NandSkeleton {
         })
     }
 
-    pub fn parse_encrypted_chain(&self) -> Result<(NandBootloaders, NandUpdate), String> {
+    pub fn parse_encrypted_chain(&self) -> Result<(NandBootloaders, NandUpdate)> {
         Self::parse_bootloader_chain(
             &self.image,
             self.header.cb_offset() as usize,
@@ -1215,17 +904,16 @@ impl NandSkeleton {
         layout: NandLayout,
         cpukey: [u8; 16],
         flashfs: FlashFS,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         let header_sz = std::mem::size_of::<NandHeader>();
         if image.len() < header_sz {
-            return Err(format!(
-                "Image too small for header: {} bytes (need {})",
-                image.len(),
-                header_sz
-            ));
+            return Err(BuilderError::ImageTooSmall {
+                got: image.len(),
+                need: header_sz,
+            });
         }
         let header = NandHeader::read_from_prefix(&image[..header_sz])
-            .map_err(|e| format!("Failed to parse NAND header: {}", e))?
+            .map_err(|e| BuilderError::HeaderParse(e.to_string()))?
             .0;
         header.validate()?;
         header.print_info();
@@ -1233,40 +921,38 @@ impl NandSkeleton {
         let kv_addr = header.kv_addr.get() as usize;
         let kv_size = header.kv_size.get() as usize;
         if kv_size != 0x4000 {
-            return Err(format!(
-                "Invalid KV size: 0x{:X} (expected 0x4000)",
-                kv_size
-            ));
+            return Err(BuilderError::InvalidKvSize { size: kv_size });
         }
-        if kv_addr.checked_add(kv_size).ok_or("KV offset overflow")? > image.len() {
-            return Err(format!(
-                "KV out of bounds: offset 0x{:X} + size 0x{:X} > image 0x{:X}",
-                kv_addr,
-                kv_size,
-                image.len()
-            ));
+        let kv_end = kv_addr
+            .checked_add(kv_size)
+            .ok_or_else(|| BuilderError::OffsetOverflow("KV".to_string()))?;
+        if kv_end > image.len() {
+            return Err(BuilderError::KvOutOfBounds {
+                offset: kv_addr,
+                size: kv_size,
+                image_len: image.len(),
+            });
         }
         info!(
             "[builder] Extracting and decrypting Keyvault (Addr: 0x{:X}, Size: 0x{:X})...",
             kv_addr, kv_size
         );
-        let mut kv =
-            crate::builder::chain::kv::Keyvault::parse(&image[kv_addr..kv_addr + kv_size])?;
-        kv.decrypt(&cpukey)?;
+        let mut kv = crate::builder::chain::kv::Keyvault::parse(&image[kv_addr..kv_addr + kv_size])
+            .map_err(|e| BuilderError::Build(e.to_string()))?;
+        kv.decrypt(&cpukey)
+            .map_err(|e| BuilderError::Build(e.to_string()))?;
 
         let smc_offset = header.smc_boot_offset.get() as usize;
         let smc_size = header.smc_boot_size.get() as usize;
-        if smc_offset
+        let smc_end = smc_offset
             .checked_add(smc_size)
-            .ok_or("SMC offset overflow")?
-            > image.len()
-        {
-            return Err(format!(
-                "SMC out of bounds: offset 0x{:X} + size 0x{:X} > image 0x{:X}",
-                smc_offset,
-                smc_size,
-                image.len()
-            ));
+            .ok_or_else(|| BuilderError::OffsetOverflow("SMC".to_string()))?;
+        if smc_end > image.len() {
+            return Err(BuilderError::SmcOutOfBounds {
+                offset: smc_offset,
+                size: smc_size,
+                image_len: image.len(),
+            });
         }
         info!(
             "[builder] Extracting and decrypting SMC (Addr: 0x{:X}, Size: 0x{:X})...",
@@ -1332,13 +1018,13 @@ impl NandSkeleton {
         info!("[builder] Decrypting bootloader chain...");
         let mut bl_mut = bl;
         if bl_mut.cb_a.is_none() {
-            return Err("Missing CB_A bootloader".into());
+            return Err(BuilderError::Build("Missing CB_A bootloader".to_string()));
         }
         if bl_mut.cd.is_none() {
-            return Err("Missing CD bootloader".into());
+            return Err(BuilderError::Build("Missing CD bootloader".to_string()));
         }
         if bl_mut.ce.is_none() {
-            return Err("Missing CE bootloader".into());
+            return Err(BuilderError::Build("Missing CE bootloader".to_string()));
         }
 
         decrypt_chain(
@@ -1494,7 +1180,7 @@ impl NandSkeleton {
         cb_offset: usize,
         cf_ptr: usize,
         flashfs: &crate::builder::filesystem::flashfs::FlashFS,
-    ) -> Result<(NandBootloaders, NandUpdate), String> {
+    ) -> Result<(NandBootloaders, NandUpdate)> {
         let mut bl = NandBootloaders {
             cb: None,
             cb_a: None,
@@ -1631,25 +1317,25 @@ impl NandSkeleton {
                             "[builder] CB (single) at 0x{:08X} (v{}, 0x{:X} bytes)",
                             off, bl_version, bl_size
                         );
-                        bl.cb = Some(BootloaderCb::parse(&bl_data)?);
+                        bl.cb = Some(BootloaderCb::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                     } else if is_cba {
                         info!(
                             "[builder] CB_A at 0x{:08X} (v{}, 0x{:X} bytes)",
                             off, bl_version, bl_size
                         );
-                        bl.cb_a = Some(BootloaderCb::parse(&bl_data)?);
+                        bl.cb_a = Some(BootloaderCb::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                     } else if is_cbx {
                         info!(
                             "[builder] CB_X (RGH3 stub) at 0x{:08X} (v{}, 0x{:X} bytes)",
                             off, bl_version, bl_size
                         );
-                        bl.cb_x = Some(BootloaderCb::parse(&bl_data)?);
+                        bl.cb_x = Some(BootloaderCb::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                     } else {
                         info!(
                             "[builder] CB_B at 0x{:08X} (v{}, 0x{:X} bytes)",
                             off, bl_version, bl_size
                         );
-                        bl.cb_b = Some(BootloaderCb::parse(&bl_data)?);
+                        bl.cb_b = Some(BootloaderCb::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                     }
                 }
                 XenonBlType::SC => {
@@ -1657,21 +1343,21 @@ impl NandSkeleton {
                         "[builder] SC at 0x{:08X} (v{}, 0x{:X} bytes)",
                         off, bl_version, bl_size
                     );
-                    bl.sc = Some(BootloaderSc::parse(&bl_data)?);
+                    bl.sc = Some(BootloaderSc::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                 }
                 XenonBlType::CD => {
                     info!(
                         "[builder] CD at 0x{:08X} (v{}, 0x{:X} bytes)",
                         off, bl_version, bl_size
                     );
-                    bl.cd = Some(BootloaderCd::parse(&bl_data)?);
+                    bl.cd = Some(BootloaderCd::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                 }
                 XenonBlType::CE => {
                     info!(
                         "[builder] CE at 0x{:08X} (v{}, 0x{:X} bytes)",
                         off, bl_version, bl_size
                     );
-                    bl.ce = Some(BootloaderCe::parse(&bl_data)?);
+                    bl.ce = Some(BootloaderCe::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                 }
                 XenonBlType::CF => {
                     info!(
@@ -1681,7 +1367,7 @@ impl NandSkeleton {
                         bl_version,
                         bl_size
                     );
-                    let cf = BootloaderCf::parse(&bl_data)?;
+                    let cf = BootloaderCf::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?;
                     if cf_count == 0 {
                         update.cf_0 = Some(cf);
                         cf0_offset = off;
@@ -1706,7 +1392,7 @@ impl NandSkeleton {
                         info!("[builder] Failed to fetch complete CG data, stopping chain walk");
                         break;
                     }
-                    let cg = BootloaderCg::parse(&actual_data)?;
+                    let cg = BootloaderCg::parse(&actual_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?;
                     if cg_count == 0 {
                         update.cg_0 = Some(cg);
                     } else {
@@ -1776,7 +1462,7 @@ impl NandSkeleton {
                             bl_header.version.get(),
                             bl_size
                         );
-                        let cf = BootloaderCf::parse(&bl_data)?;
+                        let cf = BootloaderCf::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?;
                         if cf_count == 0 {
                             update.cf_0 = Some(cf);
                             cf0_offset = off;
@@ -1801,7 +1487,7 @@ impl NandSkeleton {
                             info!("[builder] Failed to fetch complete CG data, stopping CF_Ptr chain walk");
                             break;
                         }
-                        let cg = BootloaderCg::parse(&actual_data)?;
+                        let cg = BootloaderCg::parse(&actual_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?;
                         if cg_count == 0 {
                             update.cg_0 = Some(cg);
                         } else {
@@ -1859,7 +1545,7 @@ impl NandSkeleton {
                                     bl_header.version.get(),
                                     bl_size
                                 );
-                                let cf = BootloaderCf::parse(&bl_data)?;
+                                let cf = BootloaderCf::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?;
                                 if cf_count == 0 {
                                     update.cf_0 = Some(cf);
                                     cf0_offset = off;
@@ -1884,7 +1570,7 @@ impl NandSkeleton {
                                     info!("[builder] Failed to fetch complete CG data, stopping discovery scan");
                                     break;
                                 }
-                                let cg = BootloaderCg::parse(&actual_data)?;
+                                let cg = BootloaderCg::parse(&actual_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?;
                                 if cg_count == 0 {
                                     update.cg_0 = Some(cg);
                                 } else {
@@ -1912,7 +1598,7 @@ impl NandSkeleton {
     /// Assembles a JTAG rebooter image with two bootloader chains.
     /// Chain 0 (Base) starts at 0x8000.
     /// Chain 1 (Update) starts at 0x20000.
-    pub fn assemble_rebooter(&mut self) -> Result<Vec<u8>, String> {
+    pub fn assemble_rebooter(&mut self) -> Result<Vec<u8>> {
         let layout = &self.layout;
         let expected_size = self.total_blocks * layout.logical_pages_per_block() * 0x200;
 
@@ -1930,12 +1616,11 @@ impl NandSkeleton {
         };
         if smc_len > 0 {
             if target_smc_offset + smc_len > logical_image.len() {
-                return Err(format!(
-                    "SMC write out of bounds: offset 0x{:X} + size 0x{:X} > image 0x{:X}",
-                    target_smc_offset,
-                    smc_len,
-                    logical_image.len()
-                ));
+                return Err(BuilderError::SmcOutOfBounds {
+                    offset: target_smc_offset,
+                    size: smc_len,
+                    image_len: logical_image.len(),
+                });
             }
             logical_image[target_smc_offset..target_smc_offset + smc_len]
                 .copy_from_slice(&self.extra.smc);
@@ -1944,12 +1629,11 @@ impl NandSkeleton {
         let kv_offset = 0x4000usize;
         if !self.extra.keyvault.is_empty() {
             if kv_offset + self.extra.keyvault.len() > logical_image.len() {
-                return Err(format!(
-                    "Keyvault write out of bounds: offset 0x{:X} + size 0x{:X} > image 0x{:X}",
-                    kv_offset,
-                    self.extra.keyvault.len(),
-                    logical_image.len()
-                ));
+                return Err(BuilderError::KvOutOfBounds {
+                    offset: kv_offset,
+                    size: self.extra.keyvault.len(),
+                    image_len: logical_image.len(),
+                });
             }
             logical_image[kv_offset..kv_offset + self.extra.keyvault.len()]
                 .copy_from_slice(&self.extra.keyvault);
@@ -1990,7 +1674,7 @@ impl NandSkeleton {
             }
 
             if curr_off + data.len() > logical_image.len() {
-                return Err(format!("Chain 0 {} overflow at 0x{:X}", name, curr_off));
+                return Err(BuilderError::BootchainOverflow { stage: format!("Chain 0 {}", name), offset: curr_off });
             }
             info!(
                 "[builder] JTAG Chain 0: Serializing {} at 0x{:08X}",
@@ -2003,7 +1687,7 @@ impl NandSkeleton {
         let rebooter = self
             .rebooter
             .as_ref()
-            .ok_or("Rebooter chain (Chain 1) is missing for JTAG build")?;
+            .ok_or_else(|| BuilderError::Build("Rebooter chain (Chain 1) is missing for JTAG build".to_string()))?;
         curr_off = 0x20000;
         let mut update_stages = Vec::new();
         if let Some(cb) = &rebooter.cb {
@@ -2036,7 +1720,7 @@ impl NandSkeleton {
             }
 
             if curr_off + data.len() > logical_image.len() {
-                return Err(format!("Chain 1 {} overflow at 0x{:X}", name, curr_off));
+                return Err(BuilderError::BootchainOverflow { stage: format!("Chain 1 {}", name), offset: curr_off });
             }
             info!(
                 "[builder] JTAG Chain 1: Serializing {} at 0x{:08X}",
@@ -2176,10 +1860,10 @@ impl NandSkeleton {
                 let patch_stream = crate::core::images::gxp::serialize_records(records);
                 khv_len = patch_stream.len();
                 if patch_stream_start + khv_len > logical_image.len() {
-                    return Err(format!(
-                        "KHV patch stream overflow at 0x{:X}: need 0x{:X} bytes",
-                        patch_stream_start, khv_len
-                    ));
+                    return Err(BuilderError::KhvOverflow {
+                        offset: patch_stream_start,
+                        need: khv_len,
+                    });
                 }
                 logical_image[patch_stream_start..patch_stream_start + khv_len]
                     .copy_from_slice(&patch_stream);
@@ -2313,7 +1997,7 @@ impl NandSkeleton {
             if let Some(xell) = self.bootloaders.xell.as_ref() {
                 let xell_offset = xell
                     .get_target_offset(self.layout, &self.options.image_profile, false, 0, 0x10000)
-                    .map_err(|e| e.to_string())? as usize;
+                    .map_err(|e| BuilderError::XellOffset(e.to_string()))? as usize;
                 info!(
                     "[builder] JTAG Chain 1: Injecting XeLL-1F payload at 0x{:08X}",
                     xell_offset
@@ -2325,7 +2009,7 @@ impl NandSkeleton {
             if let Some(xell) = rebooter.xell.as_ref() {
                 let xell_offset = xell
                     .get_target_offset(self.layout, &self.options.image_profile, false, 0, 0x10000)
-                    .map_err(|e| e.to_string())? as usize;
+                    .map_err(|e| BuilderError::XellOffset(e.to_string()))? as usize;
                 info!(
                     "[builder] JTAG Chain 1: Injecting XeLL-2F payload at 0x{:08X}",
                     xell_offset
@@ -2338,7 +2022,7 @@ impl NandSkeleton {
         Ok(logical_image)
     }
 
-    pub fn assemble_logical(&mut self) -> Result<Vec<u8>, String> {
+    pub fn assemble_logical(&mut self) -> Result<Vec<u8>> {
         let layout = &self.layout;
         let expected_size = self.total_blocks * layout.logical_pages_per_block() * 0x200;
 
@@ -2425,10 +2109,10 @@ impl NandSkeleton {
             }
 
             if curr_bl + data.len() > logical_image.len() {
-                return Err(format!(
-                    "Bootchain stage {} ({}) overflow at 0x{:X}",
-                    i, name, curr_bl
-                ));
+                return Err(BuilderError::BootchainOverflow {
+                    stage: format!("{} (stage {})", name, i),
+                    offset: curr_bl,
+                });
             }
             info!(
                 "[builder] Serializing {} at 0x{:08X} (0x{:X} bytes)",
@@ -2636,24 +2320,22 @@ impl NandSkeleton {
         let kv_offset = header.kv_addr.get() as usize;
         if smc_len > 0 {
             if target_smc_offset + smc_len > logical_image.len() {
-                return Err(format!(
-                    "SMC write out of bounds: offset 0x{:X} + size 0x{:X} > image 0x{:X}",
-                    target_smc_offset,
-                    smc_len,
-                    logical_image.len()
-                ));
+                return Err(BuilderError::SmcOutOfBounds {
+                    offset: target_smc_offset,
+                    size: smc_len,
+                    image_len: logical_image.len(),
+                });
             }
             logical_image[target_smc_offset..target_smc_offset + smc_len]
                 .copy_from_slice(&self.extra.smc);
         }
         if !self.extra.keyvault.is_empty() {
             if kv_offset + self.extra.keyvault.len() > logical_image.len() {
-                return Err(format!(
-                    "Keyvault write out of bounds: offset 0x{:X} + size 0x{:X} > image 0x{:X}",
-                    kv_offset,
-                    self.extra.keyvault.len(),
-                    logical_image.len()
-                ));
+                return Err(BuilderError::KvOutOfBounds {
+                    offset: kv_offset,
+                    size: self.extra.keyvault.len(),
+                    image_len: logical_image.len(),
+                });
             }
             logical_image[kv_offset..kv_offset + self.extra.keyvault.len()]
                 .copy_from_slice(&self.extra.keyvault);
@@ -2681,7 +2363,7 @@ impl NandSkeleton {
 
             if self.options.dualpatchslots {
                 if cf1.is_none() || cg1.is_none() {
-                    return Err("dualpatchslots is enabled but CF1/CG1 is missing".to_string());
+                    return Err(BuilderError::Build("dualpatchslots is enabled but CF1/CG1 is missing".to_string()));
                 }
                 header.patch_slots.set(2);
             } else {
@@ -2689,11 +2371,10 @@ impl NandSkeleton {
             }
 
             if cf0_offset + cf0d.len() > logical_image.len() {
-                return Err(format!(
-                    "CF0 overflow at 0x{:X}: need 0x{:X} bytes",
-                    cf0_offset,
-                    cf0d.len()
-                ));
+                return Err(BuilderError::CfOverflow {
+                    offset: cf0_offset,
+                    need: cf0d.len(),
+                });
             }
             logical_image[cf0_offset..cf0_offset + cf0d.len()].copy_from_slice(&cf0d);
             if cf0_offset + 2 <= logical_image.len() {
@@ -2739,10 +2420,10 @@ impl NandSkeleton {
                         cg_to_slot = max_slot_end - cg0_offset;
                     }
                     if cg0_offset + cg_to_slot > logical_image.len() {
-                        return Err(format!(
-                            "CG0 overflow at 0x{:X}: need 0x{:X} bytes",
-                            cg0_offset, cg_to_slot
-                        ));
+                        return Err(BuilderError::CgOverflow {
+                            offset: cg0_offset,
+                            need: cg_to_slot,
+                        });
                     }
                     logical_image[cg0_offset..cg0_offset + cg_to_slot]
                         .copy_from_slice(&cg0d[0..cg_to_slot]);
@@ -2797,11 +2478,10 @@ impl NandSkeleton {
                 // Align CF1 to the next 64KB block after CG0
                 let cf1_offset = (next_offset + 0xFFFF) & !0xFFFF;
                 if cf1_offset + cf1d.len() > logical_image.len() {
-                    return Err(format!(
-                        "CF1 overflow at 0x{:X}: need 0x{:X} bytes",
-                        cf1_offset,
-                        cf1d.len()
-                    ));
+                return Err(BuilderError::CfOverflow {
+                    offset: cf1_offset,
+                    need: cf1d.len(),
+                });
                 }
                 logical_image[cf1_offset..cf1_offset + cf1d.len()].copy_from_slice(&cf1d);
 
@@ -2818,10 +2498,10 @@ impl NandSkeleton {
                             cg_to_slot = max_slot_end - cg1_offset;
                         }
                         if cg1_offset + cg_to_slot > logical_image.len() {
-                            return Err(format!(
-                                "CG1 overflow at 0x{:X}: need 0x{:X} bytes",
-                                cg1_offset, cg_to_slot
-                            ));
+                            return Err(BuilderError::CgOverflow {
+                                offset: cg1_offset,
+                                need: cg_to_slot,
+                            });
                         }
                         logical_image[cg1_offset..cg1_offset + cg_to_slot]
                             .copy_from_slice(&cg1d[0..cg_to_slot]);
@@ -2884,12 +2564,10 @@ impl NandSkeleton {
                     )
                     .map_err(|e| e.to_string())? as usize;
                 if xell_offset + xell.data.len() > logical_image.len() {
-                    return Err(format!(
+                    return Err(BuilderError::XellOffset(format!(
                         "XeLL ({:?}) overflow at 0x{:X}: need 0x{:X} bytes",
-                        x_type,
-                        xell_offset,
-                        xell.data.len()
-                    ));
+                        x_type, xell_offset, xell.data.len()
+                    )));
                 }
                 info!(
                     "[builder] Injecting XeLL payload ({:?}) at offset 0x{:08X}",
@@ -2912,10 +2590,10 @@ impl NandSkeleton {
                 let patch_stream = crate::core::images::gxp::serialize_records(records);
                 khv_len = patch_stream.len();
                 if patch_stream_start + khv_len > logical_image.len() {
-                    return Err(format!(
-                        "KHV patch stream overflow at 0x{:X}: need 0x{:X} bytes",
-                        patch_stream_start, khv_len
-                    ));
+                    return Err(BuilderError::KhvOverflow {
+                        offset: patch_stream_start,
+                        need: khv_len,
+                    });
                 }
                 logical_image[patch_stream_start..patch_stream_start + khv_len]
                     .copy_from_slice(&patch_stream);
@@ -3122,7 +2800,7 @@ impl NandSkeleton {
         Ok(logical_image)
     }
 
-    pub fn assemble_xell_image(&self) -> Result<Vec<u8>, String> {
+    pub fn assemble_xell_image(&self) -> Result<Vec<u8>> {
         let layout = &self.options.layout;
         let image_size = 0x140000;
         let mut logical_image = vec![0xFFu8; image_size];
@@ -3136,12 +2814,11 @@ impl NandSkeleton {
         };
         if smc_len > 0 {
             if target_smc_offset + smc_len > logical_image.len() {
-                return Err(format!(
-                    "SMC write out of bounds: offset 0x{:X} + size 0x{:X} > image 0x{:X}",
-                    target_smc_offset,
-                    smc_len,
-                    logical_image.len()
-                ));
+                return Err(BuilderError::SmcOutOfBounds {
+                    offset: target_smc_offset,
+                    size: smc_len,
+                    image_len: logical_image.len(),
+                });
             }
             logical_image[target_smc_offset..target_smc_offset + smc_len]
                 .copy_from_slice(&self.extra.smc);
@@ -3150,12 +2827,11 @@ impl NandSkeleton {
         let kv_offset = 0x4000usize;
         if !self.extra.keyvault.is_empty() {
             if kv_offset + self.extra.keyvault.len() > logical_image.len() {
-                return Err(format!(
-                    "Keyvault write out of bounds: offset 0x{:X} + size 0x{:X} > image 0x{:X}",
-                    kv_offset,
-                    self.extra.keyvault.len(),
-                    logical_image.len()
-                ));
+                return Err(BuilderError::KvOutOfBounds {
+                    offset: kv_offset,
+                    size: self.extra.keyvault.len(),
+                    image_len: logical_image.len(),
+                });
             }
             logical_image[kv_offset..kv_offset + self.extra.keyvault.len()]
                 .copy_from_slice(&self.extra.keyvault);
@@ -3204,10 +2880,10 @@ impl NandSkeleton {
             }
 
             if curr_bl + data.len() > logical_image.len() {
-                return Err(format!(
-                    "Bootchain stage {} overflow at 0x{:X}",
-                    name, curr_bl
-                ));
+                return Err(BuilderError::BootchainOverflow {
+                    stage: name.to_string(),
+                    offset: curr_bl,
+                });
             }
             logical_image[curr_bl..curr_bl + data.len()].copy_from_slice(&data);
             curr_bl += data.len();
@@ -3256,12 +2932,12 @@ impl NandSkeleton {
         Ok(logical_image)
     }
 
-    pub fn build(&self, cpukey: [u8; 16]) -> Result<Vec<u8>, String> {
+    pub fn build(&self, cpukey: [u8; 16]) -> Result<Vec<u8>> {
         let mut skel = self.clone();
         skel.build_in_place(cpukey)
     }
 
-    pub fn build_in_place(&mut self, cpukey: [u8; 16]) -> Result<Vec<u8>, String> {
+    pub fn build_in_place(&mut self, cpukey: [u8; 16]) -> Result<Vec<u8>> {
         let skel = self;
         skel.cpukey = Some(cpukey);
         info!(
@@ -3402,7 +3078,7 @@ impl NandSkeleton {
 
         if let Some(ref mut kv) = skel.kv {
             info!("[builder] Encrypting Keyvault...");
-            kv.encrypt(&cpukey)?;
+            kv.encrypt(&cpukey).map_err(|e| BuilderError::Build(e.to_string()))?;
             skel.extra.keyvault = kv.data.clone();
         } else {
             warn!(
@@ -3479,7 +3155,7 @@ impl NandSkeleton {
         }
     }
 
-    pub fn apply_patch(&mut self, patch: GxpBinary) -> Result<(), String> {
+    pub fn apply_patch(&mut self, patch: GxpBinary) -> Result<()> {
         if let Some(khv) = patch.khv {
             info!(
                 "[builder] Routing {} KHV patch records to options slot...",
@@ -3548,6 +3224,12 @@ impl NandSkeleton {
         }
 
         Ok(())
+    }
+
+    pub fn inject_security_file(&mut self, name: &str, data: &[u8], fs_start: u16) {
+        // For now, this is a placeholder implementation
+        // In a full implementation, this would inject the security file into the filesystem
+        log::info!("[builder] Injecting security file: {} ({} bytes) at fs_start: 0x{:X}", name, data.len(), fs_start);
     }
 }
 

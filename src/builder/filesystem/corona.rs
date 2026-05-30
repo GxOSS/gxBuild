@@ -6,6 +6,7 @@
 
 use crate::builder::filesystem::flashfs::FileSystemRoot;
 use crate::builder::filesystem::mobile::MobileStore;
+use crate::builder::filesystem::{FsError, Result};
 use crate::crypto::sha;
 use log::info;
 
@@ -90,10 +91,10 @@ impl CoronaFsData {
     }
 
     /// SHA-1 over payload starting at `dwUnknown` (RGBuildPP `XeCryptSha` on struct tail).
-    pub fn refresh_digest(&mut self) -> Result<(), String> {
+    pub fn refresh_digest(&mut self) -> Result<()> {
         let mut raw = self.to_bytes();
         let hash = sha(&[&raw[0x14..CORONA_FS_DATA_SIZE]])
-            .map_err(|e| format!("Corona digest SHA failed: {}", e))?;
+            .map_err(|e| FsError::CoronaDigest(e.to_string()))?;
         raw[0..0x14].copy_from_slice(&hash[..0x14]);
         self.section_digest.copy_from_slice(&hash[..0x14]);
         Ok(())
@@ -169,7 +170,7 @@ pub fn write_back(
     slots: &mut CoronaFsSlots,
     root: &FileSystemRoot,
     mobile: &MobileStore,
-) -> Result<(), String> {
+) -> Result<()> {
     if root.block_number < 0 && root.entries.is_empty() {
         return Ok(());
     }
@@ -188,10 +189,7 @@ pub fn write_back(
 
         let offset = CORONA_FS_DATA_BASE + i * CORONA_FS_DATA_STRIDE;
         if offset + CORONA_FS_DATA_SIZE > image.len() {
-            return Err(format!(
-                "Corona slot {} write out of bounds (0x{:X})",
-                i, offset
-            ));
+            return Err(FsError::CoronaWriteOutOfBounds { slot: i, offset });
         }
 
         let raw = slot.to_bytes();

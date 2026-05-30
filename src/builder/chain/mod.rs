@@ -199,7 +199,9 @@ pub fn decrypt_chain(
 
     info!("[builder] Decrypting CB with 1BL Key...");
     if !cb.is_decrypted() {
-        cb.decrypt(&ONEBL_KEY);
+        if let Err(e) = cb.decrypt(&ONEBL_KEY) {
+            log::warn!("[builder] CB decryption failed: {}", e);
+        }
     }
     if cb.verify_decrypted() {
         info!("[builder] CB decryption verified successfully (zero-region check passed).");
@@ -215,7 +217,9 @@ pub fn decrypt_chain(
     cb_key.copy_from_slice(&derived[..16]);
 
     if let Some(cb_x_bl) = cb_x {
-        cb_x_bl.decrypt_v1(&cb_key, &[0u8; 16]);
+        if let Err(e) = cb_x_bl.decrypt_v1(&cb_key, &[0u8; 16]) {
+            log::warn!("[builder] CB_X decryption failed: {}", e);
+        }
     }
 
     let cb_a_uses_new_crypto = (cb.header.flags.get() & 0x1000) != 0;
@@ -223,10 +227,14 @@ pub fn decrypt_chain(
     let cd_key: [u8; 16] = if let Some(cb_b_bl) = cb_b {
         if cb_a_uses_new_crypto {
             info!("[builder] CB_A new crypto (flags & 0x1000): using decrypt_v2 for CB_B");
-            cb_b_bl.decrypt_v2(&cb.header, &cb_key, _cpukey);
+            if let Err(e) = cb_b_bl.decrypt_v2(&cb.header, &cb_key, _cpukey) {
+                log::warn!("[builder] CB_B v2 decryption failed: {}", e);
+            }
         } else {
             info!("[builder] Using decrypt_v1 for CB_B");
-            cb_b_bl.decrypt_v1(&cb_key, _cpukey);
+            if let Err(e) = cb_b_bl.decrypt_v1(&cb_key, _cpukey) {
+                log::warn!("[builder] CB_B v1 decryption failed: {}", e);
+            }
         }
         // Debug: Print first 0x30 bytes of decrypted CB_B to find LDV
         if cb_b_bl.data.len() >= 0x30 {
@@ -282,15 +290,21 @@ pub fn decrypt_chain(
 
     info!("[builder] Decrypting CD and CE...");
     if !cd.is_decrypted() {
-        cd.decrypt(&cd_key, None);
+        if let Err(e) = cd.decrypt(&cd_key, None) {
+            log::warn!("[builder] CD decryption failed: {}", e);
+        }
     }
     if !ce.is_decrypted() {
-        ce.decrypt(&cd_key);
+        if let Err(e) = ce.decrypt(&cd_key) {
+            log::warn!("[builder] CE decryption failed: {}", e);
+        }
     }
 
     if let (Some(cf), Some(cg)) = (cf_0, cg_0) {
         if !cf.is_decrypted() {
-            cf.decrypt(&ONEBL_KEY);
+            if let Err(e) = cf.decrypt(&ONEBL_KEY) {
+                log::warn!("[builder] CF slot 0 decryption failed: {}", e);
+            }
         }
         cf.populate_metadata_unchecked();
         if cf.verify_decrypted() {
@@ -302,7 +316,9 @@ pub fn decrypt_chain(
             let mut cg_hmac = [0u8; 16];
             cg_hmac.copy_from_slice(&cf.data[0x320..0x330]);
             if !cg.is_decrypted() {
-                cg.decrypt(&cg_hmac);
+                if let Err(e) = cg.decrypt(&cg_hmac) {
+                    log::warn!("[builder] CG slot 0 decryption failed: {}", e);
+                }
             }
         }
         info!("[builder] Slot 0 Updates decrypted.");
@@ -310,7 +326,9 @@ pub fn decrypt_chain(
 
     if let (Some(cf), Some(cg)) = (cf_1, cg_1) {
         if !cf.is_decrypted() {
-            cf.decrypt(&ONEBL_KEY);
+            if let Err(e) = cf.decrypt(&ONEBL_KEY) {
+                log::warn!("[builder] CF slot 1 decryption failed: {}", e);
+            }
         }
         cf.populate_metadata_unchecked();
         if cf.verify_decrypted() {
@@ -322,7 +340,9 @@ pub fn decrypt_chain(
             let mut cg_hmac = [0u8; 16];
             cg_hmac.copy_from_slice(&cf.data[0x320..0x330]);
             if !cg.is_decrypted() {
-                cg.decrypt(&cg_hmac);
+                if let Err(e) = cg.decrypt(&cg_hmac) {
+                    log::warn!("[builder] CG slot 1 decryption failed: {}", e);
+                }
             }
         }
         info!("[builder] Slot 1 Updates decrypted.");
@@ -397,8 +417,12 @@ pub fn encrypt_chain(
         if cf.data.len() >= 0x330 {
             cg_hmac.copy_from_slice(&cf.data[0x320..0x330]);
         }
-        cg.decrypt(&cg_hmac);
-        cf.decrypt(&ONEBL_KEY);
+        if let Err(e) = cg.decrypt(&cg_hmac) {
+            log::warn!("[builder] CG slot 1 re-encryption failed: {}", e);
+        }
+        if let Err(e) = cf.decrypt(&ONEBL_KEY) {
+            log::warn!("[builder] CF slot 1 re-encryption failed: {}", e);
+        }
         info!("[builder] CF/CG slot 1 re-encrypted.");
     }
 
@@ -408,8 +432,12 @@ pub fn encrypt_chain(
         if cf.data.len() >= 0x330 {
             cg_hmac.copy_from_slice(&cf.data[0x320..0x330]);
         }
-        cg.decrypt(&cg_hmac);
-        cf.decrypt(&ONEBL_KEY);
+        if let Err(e) = cg.decrypt(&cg_hmac) {
+            log::warn!("[builder] CG slot 0 re-encryption failed: {}", e);
+        }
+        if let Err(e) = cf.decrypt(&ONEBL_KEY) {
+            log::warn!("[builder] CF slot 0 re-encryption failed: {}", e);
+        }
         info!("[builder] CF/CG slot 0 re-encrypted.");
     }
 
@@ -423,25 +451,35 @@ pub fn encrypt_chain(
     };
 
     if ce.is_decrypted() {
-        ce.decrypt(&cd_key);
+        if let Err(e) = ce.decrypt(&cd_key) {
+            log::warn!("[builder] CE re-encryption failed: {}", e);
+        }
     }
     if let Some(cb_x_bl) = cb_x {
-        cb_x_bl.decrypt_v1(&cb_key, &[0u8; 16]);
+        if let Err(e) = cb_x_bl.decrypt_v1(&cb_key, &[0u8; 16]) {
+            log::warn!("[builder] CB_X re-encryption failed: {}", e);
+        }
     }
     let cb_a_uses_new_crypto = (cb.header.flags.get() & 0x1000) != 0;
     if let Some(cb_b_bl) = cb_b {
         if cb_a_uses_new_crypto {
             info!("[builder] CB_A new crypto (flags & 0x1000): using encrypt_v2 for CB_B");
-            cb_b_bl.decrypt_v2(&cb.header, &cb_key, cpukey);
+            if let Err(e) = cb_b_bl.decrypt_v2(&cb.header, &cb_key, cpukey) {
+                log::warn!("[builder] CB_B v2 re-encryption failed: {}", e);
+            }
         } else {
-            cb_b_bl.decrypt_v1(&cb_key, cpukey);
+            if let Err(e) = cb_b_bl.decrypt_v1(&cb_key, cpukey) {
+                log::warn!("[builder] CB_B v1 re-encryption failed: {}", e);
+            }
         }
         info!("[builder] CB_B re-encrypted.");
     }
     if keep_cd_plaintext {
         info!("[builder] CD left plaintext.");
     } else {
-        cd.decrypt(&cd_key, None);
+        if let Err(e) = cd.decrypt(&cd_key, None) {
+            log::warn!("[builder] CD re-encryption failed: {}", e);
+        }
         info!("[builder] CD re-encrypted.");
     }
     let mut cb_rotsum = [0u8; 0x14];
@@ -450,7 +488,9 @@ pub fn encrypt_chain(
         "[builder] CB_A rotsum hash (pre-encrypt): {:02x?}",
         cb_rotsum
     );
-    cb.decrypt(&ONEBL_KEY);
+    if let Err(e) = cb.decrypt(&ONEBL_KEY) {
+        log::warn!("[builder] CB_A re-encryption failed: {}", e);
+    }
     info!("[builder] CB re-encrypted.");
 
     Ok(())
@@ -492,8 +532,12 @@ pub fn encrypt_rebooter_chain(
         cb0.data[0x20..0x30].copy_from_slice(&digest0);
     }
 
-    cd0.decrypt(&cb0_key, None);
-    cb0.decrypt(&ONEBL_KEY);
+    if let Err(e) = cd0.decrypt(&cb0_key, None) {
+        log::warn!("[builder] CD0 re-encryption failed: {}", e);
+    }
+    if let Err(e) = cb0.decrypt(&ONEBL_KEY) {
+        log::warn!("[builder] CB0 re-encryption failed: {}", e);
+    }
     info!("[builder] JTAG Chain 0 (Base) re-encrypted.");
 
     cb1.sync_metadata();
@@ -526,21 +570,35 @@ pub fn encrypt_rebooter_chain(
         if cf.data.len() >= 0x330 {
             cg_hmac.copy_from_slice(&cf.data[0x320..0x330]);
         }
-        cg.decrypt(&cg_hmac);
-        cf.decrypt(&ONEBL_KEY);
+        if let Err(e) = cg.decrypt(&cg_hmac) {
+            log::warn!("[builder] CG slot 1 (update) re-encryption failed: {}", e);
+        }
+        if let Err(e) = cf.decrypt(&ONEBL_KEY) {
+            log::warn!("[builder] CF slot 1 (update) re-encryption failed: {}", e);
+        }
     }
     if let (Some(cf), Some(cg)) = (update.0.as_mut(), update.1.as_mut()) {
         let mut cg_hmac = [0u8; 16];
         if cf.data.len() >= 0x330 {
             cg_hmac.copy_from_slice(&cf.data[0x320..0x330]);
         }
-        cg.decrypt(&cg_hmac);
-        cf.decrypt(&ONEBL_KEY);
+        if let Err(e) = cg.decrypt(&cg_hmac) {
+            log::warn!("[builder] CG slot 0 (update) re-encryption failed: {}", e);
+        }
+        if let Err(e) = cf.decrypt(&ONEBL_KEY) {
+            log::warn!("[builder] CF slot 0 (update) re-encryption failed: {}", e);
+        }
     }
 
-    ce1.decrypt(&cb1_key);
-    cd1.decrypt(&cb1_key, None);
-    cb1.decrypt(&ONEBL_KEY);
+    if let Err(e) = ce1.decrypt(&cb1_key) {
+        log::warn!("[builder] CE1 re-encryption failed: {}", e);
+    }
+    if let Err(e) = cd1.decrypt(&cb1_key, None) {
+        log::warn!("[builder] CD1 re-encryption failed: {}", e);
+    }
+    if let Err(e) = cb1.decrypt(&ONEBL_KEY) {
+        log::warn!("[builder] CB1 re-encryption failed: {}", e);
+    }
     info!("[builder] JTAG Chain 1 (Rebooter) re-encrypted.");
 
     Ok(())

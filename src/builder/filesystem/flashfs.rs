@@ -4,6 +4,7 @@
     Ported from emoose's RGBuildPP
 */
 
+use crate::builder::filesystem::{FsError, Result};
 use crate::core::images::blocks::*;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use log::{error, info};
@@ -479,18 +480,18 @@ impl FileSystemRoot {
         folder_path: &std::path::Path,
         fs_start_block: u16,
         partition_type: u8,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         let mut root = FileSystemRoot::new(fs_start_block as i32, 3, partition_type);
         root.create_defaults(image.len(), layout, fs_start_block);
-        for entry in std::fs::read_dir(folder_path).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
+        for entry in std::fs::read_dir(folder_path)? {
+            let entry = entry?;
             let path = entry.path();
             if path.is_file() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if name.starts_with("Mobile") {
                     continue;
                 }
-                let content = std::fs::read(&path).map_err(|e| e.to_string())?;
+                let content = std::fs::read(&path)?;
                 let mut new_entry = FileSystemEntry::new(0);
                 new_entry.file_name = name;
                 root.set_entry_data(image, layout, &mut new_entry, &content)?;
@@ -506,7 +507,7 @@ impl FileSystemRoot {
         files: &HashMap<String, Vec<u8>>,
         fs_start_block: u16,
         partition_type: u8,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         let mut root = FileSystemRoot::new(fs_start_block as i32, 3, partition_type);
         root.create_defaults(image.len(), layout, fs_start_block);
         info!(
@@ -628,6 +629,19 @@ impl FileSystemRoot {
         let logical_block_size = pages_per_block * page_size;
         let total_blocks = layout.total_blocks(image.len());
 
+        // Initialize block_map if it's empty
+        if self.block_map.is_empty() {
+            self.block_map = vec![0x1FFE; total_blocks];
+            // Mark first few blocks as reserved
+            for i in 0..std::cmp::min(4, total_blocks) {
+                self.block_map[i] = 0x1FFB;
+            }
+            // Mark this block as root if it's a valid block number
+            if self.block_number > 0 && (self.block_number as usize) < total_blocks {
+                self.block_map[self.block_number as usize] = 0x1FFF;
+            }
+        }
+
         let start_search = std::cmp::max(4, minimum_block as usize);
 
         let init_block = |image: &mut [u8],
@@ -714,7 +728,7 @@ impl FileSystemRoot {
         layout: &NandLayout,
         start_block: u16,
         data: &[u8],
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let placeholder;
         let data: &[u8] = if data.is_empty() {
             placeholder = [0u8; 1];
@@ -750,7 +764,10 @@ impl FileSystemRoot {
                 };
                 let next = self.allocate_new_block(image, layout, 1, min_alloc);
                 if next == 0 {
-                    return Err(format!("FlashFS allocation failure extending chain starting at {} (need {} blocks, have {})", start_block, needed, chain.len()));
+                    return Err(FsError::AllocationFailed(format!(
+                        "extending chain starting at {} (need {} blocks, have {})",
+                        start_block, needed, chain.len()
+                    )));
                 }
                 info!("[flashfs]   + Expanding chain: {} -> {}", curr, next);
                 self.block_map[curr as usize] = next;
@@ -771,7 +788,7 @@ impl FileSystemRoot {
         layout: &NandLayout,
         entry: &mut FileSystemEntry,
         data: &[u8],
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let min_alloc = if self.block_number >= 0 {
             self.block_number as u16
         } else {
@@ -780,10 +797,10 @@ impl FileSystemRoot {
         if entry.block_number == 0 {
             entry.block_number = self.allocate_new_block(image, layout, 1, min_alloc);
             if entry.block_number == 0 {
-                return Err(format!(
-                    "FlashFS allocation failure allocating starting block for '{}'",
+                return Err(FsError::AllocationFailed(format!(
+                    "allocating starting block for '{}'",
                     entry.file_name
-                ));
+                )));
             }
         }
         self.set_chain_data(image, layout, entry.block_number, data)?;
@@ -798,12 +815,12 @@ impl FileSystemRoot {
         layout: &NandLayout,
         name: &str,
         data: &[u8],
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let entry_idx = self
             .entries
             .iter()
             .position(|e| e.file_name == name && !e.deleted)
-            .ok_or_else(|| format!("File not found or already deleted: {}", name))?;
+            .ok_or_else(|| FsError::FileNotFound(name.to_string()))?;
 
         // Use a temporary entry reference to update data
         let mut entry = self.entries[entry_idx].clone();
@@ -824,16 +841,13 @@ impl FileSystemRoot {
         layout: &NandLayout,
         name: &str,
         data: &[u8],
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         if self
             .entries
             .iter()
             .any(|e| e.file_name == name && !e.deleted)
         {
-            return Err(format!(
-                "File already exists: {}. Use replace instead.",
-                name
-            ));
+            return Err(FsError::FileExists(name.to_string()));
         }
 
         let mut new_entry = FileSystemEntry::new(0);
@@ -850,12 +864,12 @@ impl FileSystemRoot {
     }
 
     /// Forensically deletes a file by marking it with the 0x05 prefix and freeing its chain.
-    pub fn delete_file(&mut self, name: &str) -> Result<(), String> {
+    pub fn delete_file(&mut self, name: &str) -> Result<()> {
         let entry_idx = self
             .entries
             .iter()
             .position(|e| e.file_name == name && !e.deleted)
-            .ok_or_else(|| format!("File not found: {}", name))?;
+            .ok_or_else(|| FsError::FileNotFound(name.to_string()))?;
 
         let start_block = self.entries[entry_idx].block_number;
         if start_block != 0 {
@@ -875,7 +889,7 @@ impl FileSystemRoot {
             .map(|e| e.data.clone())
     }
 
-    pub fn write_logical(&mut self, image: &mut [u8], layout: &NandLayout) -> Result<(), String> {
+    pub fn write_logical(&mut self, image: &mut [u8], layout: &NandLayout) -> Result<()> {
         let page_size = layout.page_size();
         let pages_per_block = layout.logical_pages_per_block();
         let logical_block_size = pages_per_block * page_size;
@@ -898,10 +912,10 @@ impl FileSystemRoot {
             if self.entries[i].block_number == 0 {
                 let blk = self.allocate_new_block(image, layout, 1, min_alloc);
                 if blk == 0 {
-                    return Err(format!(
-                        "FlashFS allocation failure allocating data blocks for '{}'",
+                    return Err(FsError::AllocationFailed(format!(
+                        "allocating data blocks for '{}'",
                         self.entries[i].file_name
-                    ));
+                    )));
                 }
                 self.entries[i].block_number = blk;
             }
@@ -956,10 +970,10 @@ impl FileSystemRoot {
                 {
                     self.free_block_chain(b);
                 }
-                return Err(format!(
-                    "FlashFS allocation failure allocating root chain (need {} blocks)",
+                return Err(FsError::AllocationFailed(format!(
+                    "allocating root chain (need {} blocks)",
                     root_blocks_needed
-                ));
+                )));
             }
             new_root_chain.push(blk);
         }

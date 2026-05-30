@@ -21,14 +21,80 @@
 */
 
 use crate::builder::builder::NandSkeleton;
-use crate::builder::builder::{LayoutCalculator, SouthbridgeType};
 use crate::core::data::filesearch::IniSearch;
-use crate::core::images::gxp::parse_patch_binary;
 use log::{error, info, warn};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum SessionError {
+    #[error("[session] IO error: {0}")]
+    Io(String),
+
+    #[error("[session] Failed to parse options INI: {0}")]
+    OptionsIniParse(String),
+
+    #[error("[session] Failed to parse INI: {0}")]
+    IniParse(String),
+
+    #[error("[session] INI discovery failed: {0}")]
+    IniDiscovery(String),
+
+    #[error("[session] Failed to apply INI data: {0}")]
+    IniApply(String),
+
+    #[error("[session] prepare_build: build_type not set")]
+    BuildTypeNotSet,
+
+    #[error("[session] prepare_build: console_type not set")]
+    ConsoleTypeNotSet,
+
+    #[error("[session] prepare_build: cannot read INI at {path:?}")]
+    IniRead { path: PathBuf },
+
+    #[error("[session] SMC autopatching failed ({error}): {path:?}")]
+    SmcAutopatch { error: String, path: PathBuf },
+
+    #[error("[session] SMC config error: {0}")]
+    SmcConfig(String),
+
+    #[error("[session] Keyvault error: {0}")]
+    Keyvault(String),
+
+    #[error("[session] Invalid hex u8 '{value}': {error}")]
+    InvalidHexU8 { value: String, error: String },
+
+    #[error("[session] Invalid decimal u8 '{value}': {error}")]
+    InvalidDecimalU8 { value: String, error: String },
+
+    #[error("[session] Invalid hex u16 '{value}': {error}")]
+    InvalidHexU16 { value: String, error: String },
+
+    #[error("[session] Invalid decimal u16 '{value}': {error}")]
+    InvalidDecimalU16 { value: String, error: String },
+
+    #[error("[session] No active NAND loaded to patch")]
+    NoActiveNand,
+
+    #[error("[session] {0}")]
+    Other(String),
+}
+
+impl From<String> for SessionError {
+    fn from(s: String) -> Self {
+        SessionError::Other(s)
+    }
+}
+
+impl From<io::Error> for SessionError {
+    fn from(e: io::Error) -> Self {
+        SessionError::Io(e.to_string())
+    }
+}
 
 #[derive(Debug)]
 pub enum InternalCommand {
@@ -263,7 +329,7 @@ mod tests {
 }
 
 impl InternalCommand {
-    fn priority_score(&self) -> u8 {
+    pub(crate) fn priority_score(&self) -> u8 {
         match self {
             Self::ParseKey { .. } => 160,
             Self::ParseKeybin { .. } => 160,
@@ -299,8 +365,8 @@ impl InternalCommand {
 
 #[derive(Debug)]
 pub struct QueuedCommand {
-    sequence_id: usize,
-    command: InternalCommand,
+    pub(crate) sequence_id: usize,
+    pub(crate) command: InternalCommand,
 }
 
 impl Ord for QueuedCommand {
@@ -333,7 +399,7 @@ impl PartialEq for QueuedCommand {
 impl Eq for QueuedCommand {}
 
 pub struct Session {
-    queue: BinaryHeap<QueuedCommand>,
+    pub(crate) queue: BinaryHeap<QueuedCommand>,
     next_seq_id: usize,
     // Legacy single-asset pool used by the Update command
     pub pending_assets: HashMap<String, Vec<u8>>,
@@ -392,7 +458,7 @@ impl Session {
     fn resolve_cb_ldv(
         _options: &crate::core::data::optini::OptionsIni,
         nand: &NandSkeleton,
-    ) -> Result<u8, String> {
+    ) -> Result<u8, SessionError> {
         let from_nand = nand
             .bootloaders
             .cb_a
@@ -407,7 +473,7 @@ impl Session {
     fn resolve_cf_ldv(
         options: &crate::core::data::optini::OptionsIni,
         nand: &NandSkeleton,
-    ) -> Result<u8, String> {
+    ) -> Result<u8, SessionError> {
         if let Some(cfldv_option) = &options.cfldv {
             return Self::parse_u8_hex_or_dec(cfldv_option);
         }
@@ -724,18 +790,18 @@ impl Session {
         self.options.merge(o);
     }
 
-    pub fn load_options_ini(&mut self, content: &str) -> Result<(), String> {
+    pub fn load_options_ini(&mut self, content: &str) -> Result<(), SessionError> {
         match crate::core::data::optini::parse_options_ini(content) {
             Ok(new_opts) => {
                 self.options.merge(new_opts);
                 info!("[session] Merged options from INI content string.");
                 Ok(())
             }
-            Err(e) => Err(format!("Failed to parse options INI: {}", e)),
+            Err(e) => Err(SessionError::OptionsIniParse(e.to_string())),
         }
     }
 
-    pub fn load_ini(&mut self, content: &str, target: &str) -> Result<(), String> {
+    pub fn load_ini(&mut self, content: &str, target: &str) -> Result<(), SessionError> {
         let is_verbose = self.options.verbose.unwrap_or(false);
         let _ = crate::core::logger::init_logger("build", is_verbose);
 
@@ -815,20 +881,19 @@ impl Session {
                             self.build_ini_loaded = true;
                             info!("[session] INI assets applied to NAND skeleton");
                         }
-                        Err(e) => return Err(format!("Failed to apply INI data: {}", e)),
+                        Err(e) => return Err(SessionError::IniApply(e.to_string())),
                     }
                     Ok(())
                 }
-                Err(e) => Err(format!("INI discovery failed: {}", e)),
+                Err(e) => Err(SessionError::IniDiscovery(e.to_string())),
             },
-            Err(e) => Err(format!("Failed to parse INI string: {}", e)),
+            Err(e) => Err(SessionError::IniParse(e.to_string())),
         }
     }
 
     /// Loads an options.ini file from the specified path and merges it into the session options.
-    pub fn load_options_ini_file(&mut self, path: impl AsRef<Path>) -> Result<(), String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read options INI file: {}", e))?;
+    pub fn load_options_ini_file(&mut self, path: impl AsRef<Path>) -> Result<(), SessionError> {
+        let content = fs::read_to_string(path)?;
         self.load_options_ini(&content)
     }
 
@@ -847,7 +912,7 @@ impl Session {
     }
 
     /// Resolves build configuration and enqueues assets.
-    pub fn prepare_build(&mut self) -> Result<(), String> {
+    pub fn prepare_build(&mut self) -> Result<(), SessionError> {
         use std::collections::HashSet;
 
         let ini_dir = self.ini_dir.clone().unwrap_or_else(|| PathBuf::from("."));
@@ -896,11 +961,11 @@ impl Session {
         let build_type = self
             .build_type
             .clone()
-            .ok_or("prepare_build: build_type not set")?;
+            .ok_or(SessionError::BuildTypeNotSet)?;
         let console = self
             .console_type
             .clone()
-            .ok_or("prepare_build: console_type not set")?;
+            .ok_or(SessionError::ConsoleTypeNotSet)?;
 
         // Resolve INI filename: _<type>[_<ext>].ini
         let ini_suffix = self
@@ -932,7 +997,7 @@ impl Session {
                         target_filenames.insert(e.filename.to_lowercase());
                     }
                 }
-                Err(_) => return Err(format!("prepare_build: cannot read INI at {:?}", ini_path)),
+                Err(_) => return Err(SessionError::IniRead { path: ini_path }),
             }
         }
 
@@ -1177,7 +1242,7 @@ impl Session {
 
     /// Pushes the final merged session options back into the NAND skeleton's
     /// Keyvault and SMC buffers before a build.
-    pub fn sync_options_to_nand(&mut self) -> Result<(), String> {
+    pub fn sync_options_to_nand(&mut self) -> Result<(), SessionError> {
         if let Some(nand) = &mut self.active_nand {
             info!("[session] Syncing merged options to NAND components...");
 
@@ -1274,7 +1339,7 @@ impl Session {
                     }
 
                     // Re-encrypt and store Keyvault
-                    kv.encrypt(&cpukey)?;
+                    kv.encrypt(&cpukey).map_err(|e| SessionError::Keyvault(e.to_string()))?;
                     nand.extra.keyvault = kv.data.clone();
                 }
             }
@@ -1284,7 +1349,8 @@ impl Session {
                 info!("[session] No SMC Config found in skeleton, initializing clean defaults.");
                 crate::builder::chain::smc::SmcConfig::new_empty()
             } else {
-                crate::builder::chain::smc::SmcConfig::parse(&nand.extra.smc_config)?
+                crate::builder::chain::smc::SmcConfig::parse(&nand.extra.smc_config)
+                    .map_err(|e| SessionError::SmcConfig(e.to_string()))?
             };
 
             // MAC Address
@@ -1388,8 +1454,9 @@ impl Session {
                             &mut smc.data,
                             &json,
                         )
-                        .map_err(|e| {
-                            format!("SMC autopatching failed ({}): {:?}", e, patch_path)
+                        .map_err(|e| SessionError::SmcAutopatch {
+                            error: e.to_string(),
+                            path: patch_path.clone(),
                         })?;
                         if count == 0 {
                             let mut retry =
@@ -1400,8 +1467,9 @@ impl Session {
                                     &mut retry.data,
                                     &json,
                                 )
-                                .map_err(|e| {
-                                    format!("SMC autopatching failed ({}): {:?}", e, patch_path)
+                                .map_err(|e| SessionError::SmcAutopatch {
+                                    error: e.to_string(),
+                                    path: patch_path.clone(),
                                 })?;
                             if retry_count > 0 {
                                 smc.data = retry.data;
@@ -1433,7 +1501,7 @@ impl Session {
 
     /// Applies a batch of signature patches (JSON format) to the active NAND's decrypted SMC.
     /// Returns the total number of patches applied.
-    pub fn apply_smc_signature_batch(&mut self, json_str: &str) -> Result<usize, String> {
+    pub fn apply_smc_signature_batch(&mut self, json_str: &str) -> Result<usize, SessionError> {
         if let Some(nand) = &mut self.active_nand {
             info!("[session] Applying signature batch to SMC...");
             let mut smc = crate::builder::chain::smc::RawSmc::new(nand.extra.smc.clone());
@@ -1449,32 +1517,42 @@ impl Session {
             );
             Ok(count)
         } else {
-            Err("No active NAND loaded to patch.".to_string())
+            Err(SessionError::NoActiveNand)
         }
     }
 
-    fn parse_u16_hex_or_dec(s: &str) -> Result<u16, String> {
+    fn parse_u16_hex_or_dec(s: &str) -> Result<u16, SessionError> {
         if s.starts_with("0x") {
-            u16::from_str_radix(&s[2..], 16).map_err(|e| format!("Invalid hex u16 '{}': {}", s, e))
+            u16::from_str_radix(&s[2..], 16).map_err(|e| SessionError::InvalidHexU16 {
+                value: s.to_string(),
+                error: e.to_string(),
+            })
         } else {
-            s.parse::<u16>()
-                .map_err(|e| format!("Invalid decimal u16 '{}': {}", s, e))
+            s.parse::<u16>().map_err(|e| SessionError::InvalidDecimalU16 {
+                value: s.to_string(),
+                error: e.to_string(),
+            })
         }
     }
 
-    fn parse_u8_hex_or_dec(s: &str) -> Result<u8, String> {
+    fn parse_u8_hex_or_dec(s: &str) -> Result<u8, SessionError> {
         if s.starts_with("0x") {
-            u8::from_str_radix(&s[2..], 16).map_err(|e| format!("Invalid hex u8 '{}': {}", s, e))
+            u8::from_str_radix(&s[2..], 16).map_err(|e| SessionError::InvalidHexU8 {
+                value: s.to_string(),
+                error: e.to_string(),
+            })
         } else {
-            s.parse::<u8>()
-                .map_err(|e| format!("Invalid decimal u8 '{}': {}", s, e))
+            s.parse::<u8>().map_err(|e| SessionError::InvalidDecimalU8 {
+                value: s.to_string(),
+                error: e.to_string(),
+            })
         }
     }
 
     /// Execute a command by ID and remove it.
-    pub fn session_run_once(&mut self, id: usize) -> Result<bool, String> {
+    pub fn session_run_once(&mut self, id: usize) -> Result<bool, SessionError> {
         let mut remaining = Vec::new();
-        let mut result: Result<bool, String> = Ok(false);
+        let mut result: Result<bool, SessionError> = Ok(false);
         while let Some(q) = self.queue.pop() {
             if q.sequence_id == id {
                 result = self.execute_command(q.command).map(|_| true);
@@ -1521,7 +1599,7 @@ impl Session {
         self.enqueue(InternalCommand::FinalizeFlashfs);
     }
 
-    pub fn run(&mut self) -> Result<(), String> {
+    pub fn run(&mut self) -> Result<(), SessionError> {
         info!("[session] Running {} queued commands...", self.queue.len());
 
         while let Some(queued_cmd) = self.queue.pop() {
@@ -1553,7 +1631,7 @@ impl Session {
         });
     }
 
-    pub fn run_once(&mut self, command: InternalCommand) -> Result<(), String> {
+    pub fn run_once(&mut self, command: InternalCommand) -> Result<(), SessionError> {
         info!(
             "[session] Executing command directly (queue bypassed): {:?}",
             command
@@ -1561,369 +1639,16 @@ impl Session {
         self.execute_command(command)
     }
 
-    pub fn execute_command(&mut self, command: InternalCommand) -> Result<(), String> {
+    pub fn execute_command(&mut self, command: InternalCommand) -> Result<(), SessionError> {
+        use crate::core::commands;
         match command {
             InternalCommand::ExtractAll {
                 output_dir,
                 all,
                 include_decrypted,
-            } => {
-                let Some(nand) = &self.active_nand else {
-                    error!("[session] No active NAND loaded. Cannot extract.");
-                    return Ok(());
-                };
-
-                let encrypted_dir = output_dir.join("encrypted");
-                let decrypted_dir = output_dir.join("decrypted");
-                let _ = fs::create_dir_all(&encrypted_dir);
-                if include_decrypted {
-                    let _ = fs::create_dir_all(&decrypted_dir);
-                }
-
-                let mut ids: Vec<&str> = vec!["kv", "fcrt"];
-                if all {
-                    ids = vec![
-                        "smc", "smcc", "kv", "fcrt", "cb", "cba", "cbx", "cbb", "sc", "cd", "ce",
-                        "cf0", "cg0", "cf1", "cg1", "header",
-                    ];
-                }
-
-                let encrypted_chain = if all {
-                    match nand.parse_encrypted_chain() {
-                        Ok(v) => Some(v),
-                        Err(e) => {
-                            error!(
-                                "[session] Failed to parse encrypted bootloader chain: {}",
-                                e
-                            );
-                            None
-                        }
-                    }
-                } else {
-                    None
-                };
-
-                let write_bytes = |dir: &PathBuf, filename: &str, bytes: Vec<u8>| {
-                    let full_path = dir.join(filename);
-                    if let Some(parent) = full_path.parent() {
-                        let _ = fs::create_dir_all(parent);
-                    }
-                    if let Err(e) = fs::write(&full_path, bytes) {
-                        error!("[session] Failed to write {}: {}", full_path.display(), e);
-                    } else {
-                        info!("[session] Wrote {}", full_path.display());
-                    }
-                };
-
-                let extract_encrypted = |id: &str| -> Option<(&'static str, Vec<u8>)> {
-                    match id {
-                        "smc" => {
-                            let off = nand.header.smc_boot_offset.get() as usize;
-                            let sz = nand.header.smc_boot_size.get() as usize;
-                            if off.checked_add(sz)? <= nand.image.len() {
-                                Some(("SMC.bin", nand.image[off..off + sz].to_vec()))
-                            } else {
-                                None
-                            }
-                        }
-                        "smcc" => {
-                            let off = nand.header.smc_config_offset.get() as usize;
-                            if off > 0 && off.checked_add(0x10000)? <= nand.image.len() {
-                                Some(("SMC_Config.bin", nand.image[off..off + 0x10000].to_vec()))
-                            } else if !nand.extra.smc_config.is_empty() {
-                                Some(("SMC_Config.bin", nand.extra.smc_config.clone()))
-                            } else {
-                                None
-                            }
-                        }
-                        "kv" => {
-                            let off = nand.header.kv_addr.get() as usize;
-                            let sz = nand.header.kv_size.get() as usize;
-                            if off.checked_add(sz)? <= nand.image.len() {
-                                Some(("KV.bin", nand.image[off..off + sz].to_vec()))
-                            } else {
-                                None
-                            }
-                        }
-                        "fcrt" => nand.extra.fcrt.clone().map(|b| ("FCRT.bin", b)),
-                        "header" => Some((
-                            "NandHeader.bin",
-                            zerocopy::IntoBytes::as_bytes(&nand.header).to_vec(),
-                        )),
-                        "cb" => encrypted_chain
-                            .as_ref()
-                            .and_then(|(bl, _)| bl.cb.as_ref().map(|b| ("CB.bin", b.serialize()))),
-                        "cba" => encrypted_chain.as_ref().and_then(|(bl, _)| {
-                            bl.cb_a.as_ref().map(|b| ("CBA.bin", b.serialize()))
-                        }),
-                        "cbx" => encrypted_chain.as_ref().and_then(|(bl, _)| {
-                            bl.cb_x.as_ref().map(|b| ("CBX.bin", b.serialize()))
-                        }),
-                        "cbb" => encrypted_chain.as_ref().and_then(|(bl, _)| {
-                            bl.cb_b.as_ref().map(|b| ("CBB.bin", b.serialize()))
-                        }),
-                        "sc" => encrypted_chain
-                            .as_ref()
-                            .and_then(|(bl, _)| bl.sc.as_ref().map(|b| ("SC.bin", b.serialize()))),
-                        "cd" => encrypted_chain
-                            .as_ref()
-                            .and_then(|(bl, _)| bl.cd.as_ref().map(|b| ("CD.bin", b.serialize()))),
-                        "ce" => encrypted_chain
-                            .as_ref()
-                            .and_then(|(bl, _)| bl.ce.as_ref().map(|b| ("CE.bin", b.serialize()))),
-                        "cf0" => encrypted_chain.as_ref().and_then(|(_, up)| {
-                            up.cf_0.as_ref().map(|b| ("CF_0.bin", b.serialize()))
-                        }),
-                        "cg0" => encrypted_chain.as_ref().and_then(|(_, up)| {
-                            up.cg_0.as_ref().map(|b| ("CG_0.bin", b.serialize()))
-                        }),
-                        "cf1" => encrypted_chain.as_ref().and_then(|(_, up)| {
-                            up.cf_1.as_ref().map(|b| ("CF_1.bin", b.serialize()))
-                        }),
-                        "cg1" => encrypted_chain.as_ref().and_then(|(_, up)| {
-                            up.cg_1.as_ref().map(|b| ("CG_1.bin", b.serialize()))
-                        }),
-                        _ => None,
-                    }
-                };
-
-                let extract_decrypted = |id: &str| -> Option<(&'static str, Vec<u8>)> {
-                    match id {
-                        "smc" => Some(("SMC.bin", nand.extra.smc.clone())),
-                        "smcc" => Some(("SMC_Config.bin", nand.extra.smc_config.clone())),
-                        "kv" => Some(("KV.bin", nand.extra.keyvault.clone())),
-                        "fcrt" => nand.extra.fcrt.clone().map(|b| ("FCRT.bin", b)),
-                        "header" => Some((
-                            "NandHeader.bin",
-                            zerocopy::IntoBytes::as_bytes(&nand.header).to_vec(),
-                        )),
-                        "cb" => nand
-                            .bootloaders
-                            .cb
-                            .as_ref()
-                            .map(|b| ("CB.bin", b.serialize())),
-                        "cba" => nand
-                            .bootloaders
-                            .cb_a
-                            .as_ref()
-                            .map(|b| ("CBA.bin", b.serialize())),
-                        "cbx" => nand
-                            .bootloaders
-                            .cb_x
-                            .as_ref()
-                            .map(|b| ("CBX.bin", b.serialize())),
-                        "cbb" => nand
-                            .bootloaders
-                            .cb_b
-                            .as_ref()
-                            .map(|b| ("CBB.bin", b.serialize())),
-                        "sc" => nand
-                            .bootloaders
-                            .sc
-                            .as_ref()
-                            .map(|b| ("SC.bin", b.serialize())),
-                        "cd" => nand
-                            .bootloaders
-                            .cd
-                            .as_ref()
-                            .map(|b| ("CD.bin", b.serialize())),
-                        "ce" => nand
-                            .bootloaders
-                            .ce
-                            .as_ref()
-                            .map(|b| ("CE.bin", b.serialize())),
-                        "cf0" => nand
-                            .update
-                            .cf_0
-                            .as_ref()
-                            .map(|b| ("CF_0.bin", b.serialize())),
-                        "cg0" => nand
-                            .update
-                            .cg_0
-                            .as_ref()
-                            .map(|b| ("CG_0.bin", b.serialize())),
-                        "cf1" => nand
-                            .update
-                            .cf_1
-                            .as_ref()
-                            .map(|b| ("CF_1.bin", b.serialize())),
-                        "cg1" => nand
-                            .update
-                            .cg_1
-                            .as_ref()
-                            .map(|b| ("CG_1.bin", b.serialize())),
-                        _ => None,
-                    }
-                };
-
-                info!(
-                    "[session] Extracting {} set to '{}' (encrypted{}, decrypted={})...",
-                    if all { "full" } else { "minimal" },
-                    output_dir.display(),
-                    if include_decrypted { "" } else { " only" },
-                    include_decrypted
-                );
-
-                for id in ids {
-                    if let Some((name, bytes)) = extract_encrypted(id) {
-                        write_bytes(&encrypted_dir, name, bytes);
-                    }
-                    if include_decrypted {
-                        if let Some((name, bytes)) = extract_decrypted(id) {
-                            write_bytes(&decrypted_dir, name, bytes);
-                        }
-                    }
-                }
-
-                info!("[session] Extraction complete.");
-            }
-            InternalCommand::Build {
-                output,
-                target: _target,
-            } => {
-                info!("[session] Building NAND image to '{}'...", output.display());
-                // Sync options before build
-                self.sync_options_to_nand()?;
-
-                if let Some(nand) = &self.active_nand {
-                    let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
-                    let layout = nand.layout;
-
-                    let sb_type = SouthbridgeType::from(nand.options.motherboard);
-                    let chain_profile = if nand.bootloaders.cb_b.is_some() {
-                        "split"
-                    } else {
-                        "single"
-                    };
-                    let _ = LayoutCalculator::calculate(sb_type, chain_profile, layout);
-
-                    let meta_type = match nand.options.motherboard {
-                        crate::builder::builder::MotherboardType::Xenon
-                        | crate::builder::builder::MotherboardType::Zephyr
-                        | crate::builder::builder::MotherboardType::Falcon => {
-                            crate::core::images::blocks::SpareMetaType::MetaType0
-                        }
-                        _ => crate::core::images::blocks::SpareMetaType::MetaType1,
-                    };
-
-                    if let Some(parent) = output.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-
-                    let mut built_nand = nand.clone();
-                    match built_nand.build_in_place(cpukey) {
-                        Ok(clean_bytes) => {
-                            if self.options.noecc.unwrap_or(false) {
-                                if let Err(e) = std::fs::write(&output, &clean_bytes) {
-                                    error!(
-                                        "[session] Failed to write build output to '{}': {}",
-                                        output.display(),
-                                        e
-                                    );
-                                    return Err(format!("Failed to write output: {}", e));
-                                }
-                                info!("[session] Build complete: wrote logical image (noecc) to '{}' (Size: 0x{:X})", output.display(), clean_bytes.len());
-                                return Ok(());
-                            }
-
-                            let mut fs_meta = std::collections::HashMap::new();
-                            let page_count_encoded =
-                                if layout == crate::core::images::blocks::NandLayout::Bb {
-                                    match nand.layout {
-                                        crate::core::images::blocks::NandLayout::Bb => 0x00,
-                                        _ => 0x01,
-                                    }
-                                } else {
-                                    0x01
-                                };
-
-                            let mut all_partitions = std::collections::HashMap::new();
-                            if !built_nand.flashfs.root.entries.is_empty() {
-                                all_partitions.insert(
-                                    built_nand.flashfs.root.partition_type,
-                                    built_nand.flashfs.root.clone(),
-                                );
-                            }
-
-                            for (btype, root) in all_partitions {
-                                if root.block_number < 0 {
-                                    continue;
-                                }
-
-                                // Branding strategy: Every block in the FlashFS partition must have
-                                // the correct partition type (e.g. 0x30) and version sequence in its spare area.
-                                let fs_start = root.block_number as usize;
-                                let reserve_start = layout.reserve_start(clean_bytes.len());
-                                for (val, &block) in root.block_map.iter().enumerate() {
-                                    if val < fs_start || val >= reserve_start {
-                                        continue;
-                                    }
-                                    // 0x1FFE is the only marker for a truly 'free' block in the block map.
-                                    // All other values (including 0 and 0x1FFF) represent occupied space.
-                                    let is_free = (block & 0x7FFF) == 0x1FFE;
-
-                                    if !is_free {
-                                        let absolute_block = val;
-                                        let is_root =
-                                            absolute_block == (root.block_number as usize);
-
-                                        // Branding: Root block gets the partition type (0x30, 0x31, etc.)
-                                        // Data blocks technically can also carry the partition type for better discovery.
-                                        // RGBuild and others advanced by partition type scanning.
-                                        let block_type = if is_root { btype } else { 0x01 };
-
-                                        fs_meta.insert(
-                                            absolute_block,
-                                            crate::core::images::blocks::FsSpareInfo {
-                                                sequence: root.version as u32,
-                                                size: 0x4000, // Standard 16KB block size (physical)
-                                                page_count: page_count_encoded,
-                                                block_type,
-                                            },
-                                        );
-                                    }
-                                }
-                            }
-
-                            let jtag_syscall = self
-                                .active_nand
-                                .as_ref()
-                                .and_then(|n| n.options.jtag_syscall);
-                            let mobile_meta = if nand.options.nomobile {
-                                std::collections::HashMap::new()
-                            } else {
-                                nand.mobile.collect_spare_meta(&layout)
-                            };
-                            let finalized_bytes =
-                                crate::core::images::blocks::NandProcessor::finalize_nand(
-                                    &clean_bytes,
-                                    layout,
-                                    meta_type,
-                                    Some(&fs_meta),
-                                    if mobile_meta.is_empty() {
-                                        None
-                                    } else {
-                                        Some(&mobile_meta)
-                                    },
-                                    jtag_syscall,
-                                );
-                            let final_size = finalized_bytes.len();
-                            if let Err(e) = std::fs::write(&output, finalized_bytes) {
-                                error!(
-                                    "[session] Failed to write build output to '{}': {}",
-                                    output.display(),
-                                    e
-                                );
-                                return Err(format!("Failed to write output: {}", e));
-                            } else {
-                                info!("[session] Build complete: '{}' written ({} bytes, layout {:?})", output.display(), final_size, layout);
-                            }
-                        }
-                        Err(e) => return Err(format!("Build failed: {}", e)),
-                    }
-                } else {
-                    error!("[session] No active NAND loaded to build!");
-                }
+            } => commands::handle_extract_all(self, output_dir, all, include_decrypted),
+            InternalCommand::Build { output, target } => {
+                commands::handle_build(self, output, target)
             }
             InternalCommand::ParseIni {
                 path,
@@ -1933,720 +1658,153 @@ impl Session {
                 data,
                 payloads,
                 smc,
-            } => {
-                info!("[session] Parsing INI for target {}...", target);
-                let mut nand_ref = self.active_nand.take();
-                if nand_ref.is_none() {
-                    return Err("No active NAND skeleton active to apply INI map onto!".to_string());
-                }
-                match crate::core::data::xeini::parse_xe_ini(&path, &target) {
-                    Ok(ini) => {
-                        let mut allow: std::collections::HashSet<String> =
-                            std::collections::HashSet::new();
-                        for fs_entry in &ini.flashfs {
-                            let basename = crate::core::data::xeini::strip_flashfs_path_indicator(
-                                &fs_entry.filename,
-                            );
-                            allow.insert(basename.to_lowercase());
-                        }
-                        for name in &[
-                            "fcrt.bin",
-                            "crl.bin",
-                            "dae.bin",
-                            "extended.bin",
-                            "secdata.bin",
-                            "odd.bin",
-                        ] {
-                            allow.insert((*name).to_string());
-                        }
-                        self.flashfs_allowlist = if allow.is_empty() { None } else { Some(allow) };
-
-                        match IniSearch::new(
-                            ini.clone(),
-                            &ini_base,
-                            &common,
-                            &data,
-                            &payloads,
-                            &smc,
-                            &nand_ref,
-                            self.options.gxunsafe,
-                            self.options.nofcrt,
-                            self.options.nosecurity,
-                            self.options.nosusecurity,
-                            self.options.nochainpatch,
-                        ) {
-                            Ok(search) => {
-                                // Route each pool to its typed session pool
-                                self.bootloader_assets
-                                    .extend(search.result.bootloader_assets);
-                                self.security_assets.extend(search.result.security_assets);
-                                self.flashfs_assets.extend(search.result.flashfs_assets);
-
-                                // Security files that live in the FlashFS (not at fixed offsets).
-                                // Promote them into flashfs_assets so FinalizeFlashfs/build_from_memory
-                                // packs them in after a valid block_map exists.
-                                for name in &[
-                                    "fcrt.bin",
-                                    "crl.bin",
-                                    "dae.bin",
-                                    "extended.bin",
-                                    "secdata.bin",
-                                    "odd.bin",
-                                ] {
-                                    if let Some(data) = self.security_assets.get(*name).cloned() {
-                                        self.flashfs_assets.entry(name.to_string()).or_insert(data);
-                                    }
-                                }
-
-                                // Apply bootloaders using the improved apply_xe_ini
-                                let nand = nand_ref.take().unwrap();
-                                let pending = crate::core::data::xeini::PendingAssets {
-                                    bootloaders: &self.bootloader_assets,
-                                    security: &self.security_assets,
-                                };
-                                match crate::core::data::xeini::apply_xe_ini(nand, ini, pending) {
-                                    Ok(updated_nand) => {
-                                        self.active_nand = Some(updated_nand);
-                                        info!("[session] INI bootloaders and assets applied to NAND skeleton.");
-                                    }
-                                    Err(e) => {
-                                        error!("[session] Failed to apply INI data: {}", e);
-                                        return Err(format!("Applied INI data failed: {}", e));
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                self.active_nand = nand_ref;
-                                error!("[session] Configuration discovery failed: {}", e);
-                                return Err(format!("Discovery failed: {}", e));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        self.active_nand = nand_ref;
-                        return Err(format!("Failed parsing INI descriptors: {}", e));
-                    }
-                }
-            }
+            } => commands::handle_parse_ini(self, path, target, ini_base, common, data, payloads, smc),
             InternalCommand::ParseImage { path, key } => {
-                info!("[session] Parsing image {:?}...", path);
-                match fs::read(&path) {
-                    Ok(raw_data) => {
-                        // Use preprocess_nand_with_lba to track bad block remapping
-                        let remap_bad_blocks = !self.options.noremap.unwrap_or(false);
-                        match crate::core::images::blocks::NandProcessor::preprocess_nand_with_lba_options(&raw_data, remap_bad_blocks) {
-                            Ok((clean_data, layout, lba_map)) => {
-                                info!("[session] Detected {} bad block(s) during preprocessing", lba_map.bad_blocks.len());
-                                let active_key = key.or(self.pending_key);
-
-                                // Scan FlashFS with LBA map for accurate block mapping
-                                let flashfs = crate::builder::filesystem::flashfs::FlashFS::scan_physical_with_lba(&raw_data, &layout, &lba_map);
-                                let mobile = if self.options.nomobile.unwrap_or(false) {
-                                    crate::builder::filesystem::mobile::MobileStore::new()
-                                } else {
-                                    crate::builder::filesystem::mobile::MobileStore::scan_physical(&raw_data, &layout)
-                                };
-                                let parse_result = match active_key {
-                                    Some(k) => NandSkeleton::parse_clean(clean_data, layout, k, flashfs),
-                                    None => NandSkeleton::parse_clean_encrypted(clean_data, layout, flashfs),
-                                };
-                                match parse_result {
-                                    Ok(mut nand) => {
-                                        nand.mobile = mobile;
-                                        // Verify bootloader decryption using zero-region checks
-                                        if let Some(cb) = &nand.bootloaders.cb_a {
-                                            if cb.verify_decrypted() {
-                                                info!("[session] CB_A decryption verified (zero-region check passed).");
-                                            } else {
-                                                log::warn!("[session] CB_A decryption verification failed - data may be corrupted.");
-                                            }
-                                        }
-                                        for (i, cf_opt) in [&nand.update.cf_0, &nand.update.cf_1].iter().enumerate() {
-                                            if let Some(cf) = cf_opt {
-                                                if cf.verify_decrypted() {
-                                                    info!("[session] CF_{} decryption verified.", i);
-                                                } else {
-                                                    log::warn!("[session] CF_{} decryption verification failed.", i);
-                                                }
-                                            }
-                                        }
-                                        info!("[session] LBA Map: {} total blocks, {} bad blocks remapped", lba_map.logical_to_physical.len(), lba_map.bad_blocks.len());
-                                        nand.lba_map = Some(lba_map);
-                                        self.active_nand = Some(nand);
-                                        self.extract_options_from_nand();
-                                        info!("[session] Successfully parsed NAND from {:?} (Layout: {:?})", path, layout);
-                                    }
-                                    Err(e) => return Err(format!("Failed to interpret clean NAND: {}", e)),
-                                }
-                            }
-                            Err(e) => return Err(format!("Failed to pre-process NAND image: {}", e)),
-                        }
-                    }
-                    Err(e) => {
-                        return Err(format!(
-                            "Failed to read image file '{}': {}",
-                            path.display(),
-                            e
-                        ))
-                    }
-                }
+                commands::handle_parse_image(self, path, key)
             }
             InternalCommand::ApplyEcc { path } => {
-                let Some(old) = self.active_nand.take() else {
-                    error!("[session] No active NAND loaded. Cannot apply ECC.");
-                    return Ok(());
-                };
-
-                let ecc_raw = fs::read(&path)
-                    .map_err(|e| format!("Failed to read ECC file '{}': {}", path.display(), e))?;
-
-                let (ecc_clean, ecc_layout, _ecc_lba) =
-                    crate::core::images::blocks::NandProcessor::preprocess_nand_with_lba_options(
-                        &ecc_raw, false,
-                    )
-                    .map_err(|e| format!("Failed to pre-process ECC image: {}", e))?;
-
-                let nand_layout = old.layout;
-                if ecc_layout != nand_layout {
-                    self.active_nand = Some(old);
-                    return Err(format!("ECC layout mismatch: ECC={:?}, NAND={:?}. Provide a matching ECC for this NAND type.", ecc_layout, nand_layout));
-                }
-
-                let mut image = old.image;
-                let write_len = std::cmp::min(image.len(), ecc_clean.len());
-                image[..write_len].copy_from_slice(&ecc_clean[..write_len]);
-
-                let flashfs = old.flashfs.clone();
-                let layout = old.layout;
-                let cpukey = old.cpukey;
-                let lba_map = old.lba_map;
-                let options = old.options;
-                let mobile = old.mobile;
-                let corona_fs = old.corona_fs;
-
-                let parse_result = match cpukey {
-                    Some(k) => NandSkeleton::parse_clean(image, layout, k, flashfs),
-                    None => NandSkeleton::parse_clean_encrypted(image, layout, flashfs),
-                };
-
-                match parse_result {
-                    Ok(mut nand) => {
-                        nand.cpukey = cpukey;
-                        nand.lba_map = lba_map;
-                        nand.options = options;
-                        nand.mobile = mobile;
-                        nand.corona_fs = corona_fs;
-                        self.active_nand = Some(nand);
-                        info!(
-                            "[session] Applied ECC from '{}' over {} bytes.",
-                            path.display(),
-                            write_len
-                        );
-                    }
-                    Err(e) => {
-                        return Err(format!("Applied ECC but failed to re-parse NAND: {}", e));
-                    }
-                }
+                commands::handle_apply_ecc(self, path)
             }
             InternalCommand::ParseKey { key } => {
-                self.pending_key = Some(key);
-                if let Some(nand) = &mut self.active_nand {
-                    nand.cpukey = Some(key);
-                    info!("[session] CPU Key assigned to active NAND.");
-                } else {
-                    info!("[session] CPU Key buffered (awaiting NAND image).");
-                }
+                commands::handle_parse_key(self, key);
+                Ok(())
             }
             InternalCommand::ParseKeybin { key } => {
-                if let Some(k) = key {
-                    self.pending_key = Some(k);
-                    if let Some(nand) = &mut self.active_nand {
-                        nand.cpukey = Some(k);
-                        info!("[session] CPU Keybin assigned to active NAND.");
-                    } else {
-                        info!("[session] CPU Keybin buffered (awaiting NAND image).");
-                    }
-                } else {
-                    error!("[session] No key provided in keybin.");
-                }
+                commands::handle_parse_keybin(self, key);
+                Ok(())
             }
             InternalCommand::ParseFlashfs { path } => {
-                info!(
-                    "[session] Preparing to build flashfs from folder {:?}...",
-                    path
-                );
-                if let Some(nand) = &mut self.active_nand {
-                    let fs_start: u16 = match nand.layout {
-                        crate::core::images::blocks::NandLayout::Bb => 0x1E0,
-                        crate::core::images::blocks::NandLayout::Emmc => {
-                            crate::builder::filesystem::corona::default_emmc_fs_block(
-                                nand.header.fs_addr.get(),
-                                &nand.corona_fs,
-                            )
-                        }
-                        _ => {
-                            let sb: crate::builder::builder::SouthbridgeType =
-                                nand.options.motherboard.into();
-                            let chain_profile = if nand.bootloaders.cb_b.is_some() {
-                                "split"
-                            } else {
-                                "single"
-                            };
-                            let (_, _, phys_fs_block) =
-                                crate::builder::builder::LayoutCalculator::calculate(
-                                    sb,
-                                    chain_profile,
-                                    nand.layout,
-                                );
-                            if phys_fs_block != 0 {
-                                phys_fs_block as u16
-                            } else {
-                                0x4E
-                            }
-                        }
-                    };
-                    match crate::builder::filesystem::flashfs::FileSystemRoot::build_from_folder(
-                        &mut nand.image,
-                        &nand.layout,
-                        &path,
-                        fs_start,
-                        0x30,
-                    ) {
-                        Ok(new_root) => {
-                            nand.flashfs.root = new_root;
-                            if matches!(nand.layout, crate::core::images::blocks::NandLayout::Emmc)
-                            {
-                                if let Err(e) = crate::builder::filesystem::corona::write_back(
-                                    &mut nand.image,
-                                    &mut nand.corona_fs,
-                                    &nand.flashfs.root,
-                                    &nand.mobile,
-                                ) {
-                                    return Err(format!("Corona metadata write failed: {}", e));
-                                }
-                                if nand.flashfs.root.block_number >= 0 {
-                                    nand.header
-                                        .fs_addr
-                                        .set((nand.flashfs.root.block_number as u32) * 0x200);
-                                }
-                            }
-                            info!("[session] FlashFS constructed and injected successfully.");
-                        }
-                        Err(e) => error!("[session] Failed to build FlashFS from folder: {}", e),
-                    }
-                } else {
-                    error!("[session] No active NAND loaded to parse FlashFS into.");
-                }
+                commands::handle_parse_flashfs(self, path)
             }
             InternalCommand::ParsePatch { path } => {
-                info!("[session] Parsing patch binary from {:?}...", path);
-                match parse_patch_binary(path) {
-                    Ok(patch) => {
-                        info!(
-                            "[session] Successfully parsed patch: Type {:?}, Legacy: {}",
-                            patch.header.patch_type, patch.is_legacy
-                        );
-                    }
-                    Err(e) => return Err(format!("Failed to parse patch binary: {}", e)),
-                }
+                commands::handle_parse_patch(self, path)
             }
-            InternalCommand::ApplyPatch { path, .. } => {
-                info!("[session] Applying patch {:?} (GXP Logic)...", path);
-                if let Some(nand) = &mut self.active_nand {
-                    match parse_patch_binary(path) {
-                        Ok(patch) => {
-                            if let Err(e) = nand.apply_patch(patch) {
-                                return Err(format!("Failed to apply patch: {}", e));
-                            } else {
-                                info!(
-                                    "[session] Successfully applied patch and routed components."
-                                );
-                            }
-                        }
-                        Err(e) => error!("[session] Failed to parse patch binary: {}", e),
-                    }
-                } else {
-                    error!("[session] No active NAND loaded to patch.");
-                }
+            InternalCommand::ApplyPatch { path, ptype, target } => {
+                commands::handle_apply_patch(self, path, ptype, target)
             }
             InternalCommand::ApplySmcSignature { json } => {
-                if let Err(e) = self.apply_smc_signature_batch(&json) {
-                    return Err(format!("Failed to apply SMC signature patch: {}", e));
-                }
+                commands::handle_apply_smc_signature(self, json).map(|_| ())
             }
             InternalCommand::SwapBootloader {
                 bl_type,
                 path,
                 is_rebooter,
-            } => {
-                info!(
-                    "[session] Swapping bootloader {} with {:?} (Rebooter: {})...",
-                    bl_type, path, is_rebooter
-                );
-                if let Some(nand) = &mut self.active_nand {
-                    let target = if is_rebooter {
-                        if nand.rebooter.is_none() {
-                            nand.rebooter = Some(crate::builder::builder::NandBootloaders::new());
-                        }
-                        nand.rebooter.as_mut().unwrap()
-                    } else {
-                        &mut nand.bootloaders
-                    };
-
-                    let data = fs::read(&path)
-                        .map_err(|e| format!("Failed to read swap bootloader: {}", e))?;
-                    match bl_type.to_lowercase().as_str() {
-                        "cb" | "cba" | "cbb" | "cbx" => {
-                            let bl = crate::builder::chain::cb::BootloaderCb::parse(&data)?;
-                            match bl_type.to_lowercase().as_str() {
-                                "cb" => target.cb = Some(bl),
-                                "cba" => target.cb_a = Some(bl),
-                                "cbb" => target.cb_b = Some(bl),
-                                "cbx" => target.cb_x = Some(bl),
-                                _ => unreachable!(),
-                            }
-                        }
-                        "cd" => {
-                            let bl = crate::builder::chain::cd::BootloaderCd::parse(&data)?;
-                            target.cd = Some(bl);
-                        }
-                        "ce" => {
-                            let bl = crate::builder::chain::ce::BootloaderCe::parse(&data)?;
-                            target.ce = Some(bl);
-                        }
-                        "cf" => {
-                            let bl = crate::builder::chain::cf::BootloaderCf::parse(&data)?;
-                            if is_rebooter {
-                                if nand.rebooter_update.is_none() {
-                                    nand.rebooter_update = Some(Default::default());
-                                }
-                                nand.rebooter_update.as_mut().unwrap().cf_0 = Some(bl);
-                            } else {
-                                nand.update.cf_0 = Some(bl);
-                            }
-                        }
-                        "cg" => {
-                            let bl = crate::builder::chain::cg::BootloaderCg::parse(&data)?;
-                            if is_rebooter {
-                                if nand.rebooter_update.is_none() {
-                                    nand.rebooter_update = Some(Default::default());
-                                }
-                                nand.rebooter_update.as_mut().unwrap().cg_0 = Some(bl);
-                            } else {
-                                nand.update.cg_0 = Some(bl);
-                            }
-                        }
-                        "smc" => {
-                            nand.extra.smc = data;
-                        }
-                        _ => return Err(format!("Unknown bootloader type: {}", bl_type)),
-                    }
-                    info!("[session] Bootloader {} swapped successfully.", bl_type);
-                } else {
-                    return Err("No active NAND loaded. Cannot swap bootloader.".to_string());
-                }
-            }
+            } => commands::handle_swap_bootloader(self, bl_type, path, is_rebooter),
             InternalCommand::Replace { id, path } => {
-                println!(" -> Replacing element {} with {:?}...", id, path);
-                if let Some(nand) = &mut self.active_nand {
-                    if let Ok(data) = fs::read(&path) {
-                        match id {
-                            1 => nand.extra.smc = data,
-                            2 => nand.extra.keyvault = data,
-                            _ => eprintln!(" -> Unhandled Replace ID {}", id),
-                        }
-                    } else {
-                        eprintln!(" -> Failed to read replace payload.");
-                    }
-                }
+                commands::handle_replace(self, id, path);
+                Ok(())
             }
             InternalCommand::List => {
-                if let Some(nand) = &self.active_nand {
-                    nand.header.print_info();
-                    info!(
-                        "[session] Bootloaders Present: CB: {} | CD: {} | CE: {}",
-                        nand.bootloaders.cb.is_some(),
-                        nand.bootloaders.cd.is_some(),
-                        nand.bootloaders.ce.is_some()
-                    );
-                } else {
-                    info!("[session] Active NAND is empty.");
-                }
+                commands::handle_list(self);
+                Ok(())
             }
             InternalCommand::Delete { id } => {
-                info!("[session] Deleting element {}...", id);
-                if let Some(nand) = &mut self.active_nand {
-                    match id {
-                        1 => nand.extra.smc = Vec::new(),
-                        3 => nand.bootloaders.cb = None,
-                        _ => error!("[session] Unhandled Delete ID {}", id),
-                    }
-                }
+                commands::handle_delete(self, id);
+                Ok(())
             }
             InternalCommand::Clear => {
-                self.active_nand = None;
-                self.pending_assets.clear();
-                self.bootloader_assets.clear();
-                self.security_assets.clear();
-                self.flashfs_assets.clear();
-                info!("[session] Active NAND and all asset pools cleared.");
+                commands::handle_clear(self);
+                Ok(())
             }
             InternalCommand::Compress => {
-                info!("[session] Compress logic hooks to mspack / xenia (Not Yet Invoked)");
+                commands::handle_compress();
+                Ok(())
             }
-            /*
-            InternalCommand::Decompress => {
-                info!("[session] Decompressing CE Base Kernel payload...");
-                if let Some(nand) = &mut self.active_nand {
-                    if let Some(ce) = &mut nand.bootloaders.ce {
-                        match ce.decompress() {
-                            Ok(kernel_payload) => {
-                                ce.data_kernel = Some(kernel_payload.clone());
-                                // Optionally dump to verification file locally
-                                let _ = std::fs::write("Kernel-Decompressed.bin", &kernel_payload);
-                                info!("[session] CE Base Kernel successfully decompressed! (0x{:X} bytes)", kernel_payload.len());
-                            }
-                            Err(e) => error!("[session] CE decompression failed: {}", e),
-                        }
-                    } else {
-                        error!(
-                            "[session] Active NAND does not contain a CE bootloader to decompress."
-                        );
-                    }
-                } else {
-                    error!("[session] No active NAND loaded. Cannot run Decompress.");
-                }
-            }
-            */
             InternalCommand::ApplyOptions => {
-                info!("[session] Applying session options to active NAND...");
-                self.sync_options_to_nand()?;
+                commands::handle_apply_options(self)
             }
             InternalCommand::SessionInit { base, common } => {
-                info!(
-                    "[session] Initializing session with base {:?} and common {:?}",
-                    base, common
-                );
+                commands::handle_session_init(base, common);
+                Ok(())
             }
             InternalCommand::SessionList => {
-                info!("[session] Queue:");
-                for q in self.queue.iter() {
-                    info!(
-                        "[session]   [Priority {}] Seq {}: {:?}",
-                        q.command.priority_score(),
-                        q.sequence_id,
-                        q.command
-                    );
-                }
+                commands::handle_session_list(self);
+                Ok(())
             }
             InternalCommand::SessionDelete { id } => {
-                let mut temp = Vec::new();
-                let mut found = false;
-                while let Some(q) = self.queue.pop() {
-                    if q.sequence_id != id as usize {
-                        temp.push(q);
-                    } else {
-                        found = true;
-                        info!("[session] Deleted sequence {}.", id);
-                    }
-                }
-                if !found {
-                    error!("[session] Sequence {} not found in queue.", id);
-                }
-                for q in temp {
-                    self.queue.push(q);
-                }
+                commands::handle_session_delete(self, id);
+                Ok(())
             }
             InternalCommand::SessionRun => {
-                // Execute all queued commands in priority order, clearing the queue.
-                // Swap out the queue so the while-let loop in run() is naturally empty
-                // after we return, preventing re-entry issues.
-                let commands: Vec<QueuedCommand> = self.queue.drain().collect();
-                info!(
-                    "[session] SessionRun: executing {} queued commands in priority order.",
-                    commands.len()
-                );
-                for queued_cmd in commands {
-                    let priority = queued_cmd.command.priority_score();
-                    match &queued_cmd.command {
-                        InternalCommand::ParseIni { path, target, .. } => {
-                            info!(
-                                "[session] SessionRun Executing (PriorityScore: {}, Seq: {}): ParseIni {{ path: {:?}, target: {:?} }}",
-                                priority, queued_cmd.sequence_id, path, target
-                            );
-                        }
-                        cmd => {
-                            info!(
-                                "[session] SessionRun Executing (PriorityScore: {}, Seq: {}): {:?}",
-                                priority, queued_cmd.sequence_id, cmd
-                            );
-                        }
-                    }
-                    self.execute_command(queued_cmd.command)?;
-                }
-                info!("[session] SessionRun: queue cleared.");
+                commands::handle_session_run(self)
             }
             InternalCommand::CreateImage { layout } => {
-                let blank = NandSkeleton::new_blank(layout);
-                info!(
-                    "[session] Created blank NAND skeleton: layout {:?}, {} blocks ({} MB)",
-                    layout,
-                    blank.total_blocks,
-                    blank.image.len() / (1024 * 1024)
-                );
-                self.active_nand = Some(blank);
+                commands::handle_create_image(self, layout);
+                Ok(())
             }
             InternalCommand::Update { path } => {
-                info!("[session] Loading asset discovery from {:?}...", path);
-                match fs::read(&path) {
-                    Ok(data) => {
-                        let name = path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_lowercase();
-                        self.pending_assets.insert(name.clone(), data);
-                        info!(
-                            "[session] Discovered asset '{}' added to session pool.",
-                            name
-                        );
-                    }
-                    Err(e) => return Err(format!("Failed to read asset at {:?}: {}", path, e)),
-                }
+                commands::handle_update(self, path)
             }
             InternalCommand::FinalizeMobile => {
-                if self.options.nomobile.unwrap_or(false) {
-                    return Ok(());
-                }
-                let data_dir = self
-                    .data_dir
-                    .clone()
-                    .unwrap_or_else(|| PathBuf::from("mydata"));
-                if let Some(nand) = &mut self.active_nand {
-                    nand.mobile.apply_data_folder_tier(&data_dir);
-                }
+                commands::handle_finalize_mobile(self);
+                Ok(())
             }
             InternalCommand::FinalizeFlashfs => {
-                if let Some(nand) = &mut self.active_nand {
-                    let fs_start: u16 = match nand.layout {
-                        crate::core::images::blocks::NandLayout::Bb => {
-                            let image_len = nand.image.len();
-                            let reserve_start = nand.layout.reserve_start(image_len);
-                            let scanned = nand.flashfs.root.block_number;
-                            if scanned > 0 && (scanned as usize) < reserve_start {
-                                scanned as u16
-                            } else {
-                                let fallback = reserve_start.saturating_sub(0x80);
-                                std::cmp::max(4u16, fallback as u16)
-                            }
-                        }
-                        crate::core::images::blocks::NandLayout::Emmc => {
-                            crate::builder::filesystem::corona::default_emmc_fs_block(
-                                nand.header.fs_addr.get(),
-                                &nand.corona_fs,
-                            )
-                        }
-                        _ => {
-                            let sb: crate::builder::builder::SouthbridgeType =
-                                nand.options.motherboard.into();
-                            let chain_profile = if nand.bootloaders.cb_b.is_some() {
-                                "split"
-                            } else {
-                                "single"
-                            };
-                            let (_, _, phys_fs_block) =
-                                crate::builder::builder::LayoutCalculator::calculate(
-                                    sb,
-                                    chain_profile,
-                                    nand.layout,
-                                );
-                            if phys_fs_block != 0 {
-                                phys_fs_block as u16
-                            } else {
-                                0x4E
-                            }
-                        }
-                    };
-
-                    info!(
-                        "[session] FlashFS start block: 0x{:X} ({})",
-                        fs_start, fs_start
-                    );
-
-                    let mut merged_flashfs_assets: HashMap<String, Vec<u8>> = HashMap::new();
-                    let mut dropped_assets: Vec<String> = Vec::new();
-                    let mut dropped_count: usize = 0;
-                    for (k, v) in &self.flashfs_assets {
-                        let key = k.to_lowercase();
-                        if let Some(allow) = &self.flashfs_allowlist {
-                            if !allow.contains(&key) {
-                                dropped_count += 1;
-                                if dropped_assets.len() < 6 {
-                                    dropped_assets.push(key);
-                                }
-                                continue;
-                            }
-                        }
-                        merged_flashfs_assets.insert(key, v.clone());
-                    }
-
-                    if !merged_flashfs_assets.is_empty() {
-                        if dropped_count > 0 {
-                            warn!("[session] Dropped {} FlashFS asset(s) not present in INI FlashFS allowlist (e.g. {:?})", dropped_count, dropped_assets);
-                        }
-                        info!(
-                            "[session] Prepared FlashFS with {} INI-discovered assets...",
-                            merged_flashfs_assets.len()
-                        );
-                        let mut root = crate::builder::filesystem::flashfs::FileSystemRoot::new(
-                            fs_start as i32,
-                            3,
-                            0x30,
-                        );
-                        root.create_defaults(nand.image.len(), &nand.layout, fs_start);
-                        for (name, content) in merged_flashfs_assets {
-                            let mut entry =
-                                crate::builder::filesystem::flashfs::FileSystemEntry::new(0);
-                            entry.file_name = name;
-                            entry.data = content;
-                            entry.size = entry.data.len() as u32;
-                            root.entries.push(entry);
-                        }
-                        nand.flashfs.root = root;
-                    } else {
-                        let mut root = crate::builder::filesystem::flashfs::FileSystemRoot::new(
-                            fs_start as i32,
-                            3,
-                            0x30,
-                        );
-                        root.create_defaults(nand.image.len(), &nand.layout, fs_start);
-                        nand.flashfs.root = root;
-                        info!(
-                            "[session] Initialized empty FlashFS map for generated build assets."
-                        );
-                    }
-                }
+                commands::handle_finalize_flashfs(self);
+                Ok(())
             }
             InternalCommand::ExtractStfs { path, target_dir } => {
-                info!(
-                    "[session] Extracting STFS container from {:?} to {:?}...",
-                    path, target_dir
+                commands::handle_extract_stfs(self, path, target_dir)?;
+                Ok(())
+            }
+        }
+    }
+
+    // Internal helper methods used by commands
+    pub(crate) fn finalize_flashfs_internal(&mut self) {
+        if let Some(nand) = &mut self.active_nand {
+            let fs_start: u16 = match nand.layout {
+                crate::core::images::blocks::NandLayout::Bb => {
+                    let image_len = nand.image.len();
+                    let reserve_start = nand.layout.reserve_start(image_len);
+                    let scanned = nand.flashfs.root.block_number;
+                    if scanned > 0 && (scanned as usize) < reserve_start {
+                        scanned as u16
+                    } else {
+                        let fallback = reserve_start.saturating_sub(0x80);
+                        std::cmp::max(4u16, fallback as u16)
+                    }
+                }
+                crate::core::images::blocks::NandLayout::Emmc => {
+                    crate::builder::filesystem::corona::default_emmc_fs_block(
+                        nand.header.fs_addr.get(),
+                        &nand.corona_fs,
+                    )
+                }
+                _ => {
+                    let sb: crate::builder::types::SouthbridgeType = nand.options.motherboard.into();
+                    let chain_profile = if nand.bootloaders.cb_b.is_some() { "split" } else { "single" };
+                    let (_, _, phys_fs_block) = crate::builder::types::LayoutCalculator::calculate(
+                        sb, chain_profile, nand.layout,
+                    );
+                    if phys_fs_block != 0 { phys_fs_block as u16 } else { 0x4E }
+                }
+            };
+
+            if nand.flashfs.root.block_number > 0 {
+                let new_fs = crate::builder::filesystem::flashfs::FlashFS::scan_physical(
+                    &nand.image,
+                    &nand.layout,
                 );
-                match fs::read(&path) {
-                    Ok(data) => match crate::core::images::stfs::StfsContainer::new(&data) {
-                        Ok(container) => {
-                            if let Err(e) = container.extract_all(&target_dir) {
-                                return Err(format!("STFS Extraction Error: {}", e));
-                            }
-                            println!(" -> STFS extraction complete.");
-                        }
-                        Err(e) => return Err(format!("STFS Format Error: {}", e)),
-                    },
-                    Err(e) => return Err(format!("Failed to read STFS file: {}", e)),
+                nand.flashfs.root = new_fs.root;
+            }
+
+            let sec_files = ["fcrt.bin", "crl.bin", "dae.bin", "extended.bin", "secdata.bin", "odd.bin"];
+            for name in &sec_files {
+                if let Some(data) = self.security_assets.get(*name).cloned() {
+                    nand.inject_security_file(name, &data, fs_start);
                 }
             }
         }
+    }
 
-        Ok(())
+    pub(crate) fn finalize_mobile_internal(&mut self) {
+        if self.options.nomobile.unwrap_or(false) {
+            return;
+        }
+        let data_dir = self.data_dir.clone().unwrap_or_else(|| PathBuf::from("mydata"));
+        if let Some(nand) = &mut self.active_nand {
+            nand.mobile.apply_data_folder_tier(&data_dir);
+        }
     }
 }
