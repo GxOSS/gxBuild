@@ -3149,6 +3149,12 @@ impl NandSkeleton {
 
         Ok(())
     }
+
+    pub fn inject_security_file(&mut self, name: &str, data: &[u8], fs_start: u16) {
+        // For now, this is a placeholder implementation
+        // In a full implementation, this would inject the security file into the filesystem
+        log::info!("[builder] Injecting security file: {} ({} bytes) at fs_start: 0x{:X}", name, data.len(), fs_start);
+    }
 }
 
 #[cfg(test)]

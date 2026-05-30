@@ -628,6 +628,19 @@ impl FileSystemRoot {
         let logical_block_size = pages_per_block * page_size;
         let total_blocks = layout.total_blocks(image.len());
 
+        // Initialize block_map if it's empty
+        if self.block_map.is_empty() {
+            self.block_map = vec![0x1FFE; total_blocks];
+            // Mark first few blocks as reserved
+            for i in 0..std::cmp::min(4, total_blocks) {
+                self.block_map[i] = 0x1FFB;
+            }
+            // Mark this block as root if it's a valid block number
+            if self.block_number > 0 && (self.block_number as usize) < total_blocks {
+                self.block_map[self.block_number as usize] = 0x1FFF;
+            }
+        }
+
         let start_search = std::cmp::max(4, minimum_block as usize);
 
         let init_block = |image: &mut [u8],
