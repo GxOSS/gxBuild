@@ -26,6 +26,37 @@
 use crate::core::interface::gxscript::GxScriptEngine;
 use crate::builder::ecc::handle_extract_ecc;
 use crate::core::logger;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum CliError {
+    #[error("Missing required build type argument: --type (-t)")]
+    MissingBuildType,
+
+    #[error("Missing required console argument: --console (-c)")]
+    MissingConsole,
+
+    #[error("Could not find or read INI at {path:?}")]
+    IniRead { path: PathBuf },
+
+    #[error("No CPU Key provided. A CPU key is strictly required to build.")]
+    MissingCpuKey,
+
+    #[error("Provide either -l/--image (NAND) or --ecc (ECC image), not both.")]
+    InvalidExtractSource,
+
+    #[error("No NAND/ECC image found. Provide one via -l/--image or --ecc, or place it in the data dir (-f/--data).")]
+    ExtractSourceNotFound,
+
+    #[error("Session error: {0}")]
+    Session(#[from] crate::core::session::SessionError),
+
+    #[error("Builder error: {0}")]
+    Builder(#[from] crate::builder::builder::BuilderError),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+}
 use crate::core::session::{InternalCommand, Session};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use log::{error, info, warn};
@@ -330,15 +361,15 @@ pub fn ggx_cli() {
     }
 }
 
-fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
+fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
     let build_type = args
         .build_type
         .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Missing required argument: --type (-t)"))?;
+        .ok_or(CliError::MissingBuildType)?;
     let console_type = args
         .console
         .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Missing required argument: --console (-c)"))?;
+        .ok_or(CliError::MissingConsole)?;
 
     // --- Path Resolution ---
     // -d = INI directory (contains _retail.ini, bootloaders, flashfs/)
@@ -473,7 +504,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
             target_filenames.insert(entry.filename.to_lowercase());
         }
     } else {
-        anyhow::bail!("Could not find or read INI at {:?}", ini_path);
+        return Err(CliError::IniRead { path: ini_path });
     }
 
     info!("[cli] Build Configuration");
@@ -680,7 +711,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         }
 
         if !key_found {
-            anyhow::bail!("No CPU Key provided. A CPU key is strictly required to build.");
+            return Err(CliError::MissingCpuKey);
         }
     }
 
@@ -820,7 +851,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
+fn handle_extract(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
     // -f = data directory (nand dump, cpu key)
     let data_dir = args
         .fw_dir
@@ -829,9 +860,7 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     let all = matches!(args.mode, Some(GgxMode::Extract { all: true }));
 
     if args.ecc.is_some() && args.source_nand.is_some() {
-        return Err(anyhow::anyhow!(
-            "Provide either -l/--image (NAND) or --ecc (ECC image), not both."
-        ));
+        return Err(CliError::InvalidExtractSource);
     }
 
     // -o options: nomobile
@@ -873,7 +902,7 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         candidates
             .into_iter()
             .find(|p| p.exists())
-            .ok_or_else(|| anyhow::anyhow!("No NAND/ECC image found. Provide one via -l/--image or --ecc, or place it in the data dir (-f/--data)."))?
+            .ok_or(CliError::ExtractSourceNotFound)?
     };
 
     if image_path
