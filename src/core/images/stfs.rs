@@ -24,6 +24,7 @@ use log::info;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use thiserror::Error;
 
 use crate::builder::chain::cf::BootloaderCf;
 use crate::builder::chain::cg::BootloaderCg;
@@ -35,18 +36,29 @@ pub const ONE_BL_KEY: [u8; 16] = [
     0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA,
 ];
 
+#[derive(Error, Debug)]
+pub enum StfsContainerError {
+    #[error("Invalid STFS signature: Expected 'PIRS'")]
+    InvalidSignature,
+    #[error("Failed to open STFS package: {0}")]
+    OpenFailed(#[from] stfs::StfsError),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Failed to extract file '{name}': {source}")]
+    ExtractFailed { name: String, source: stfs::StfsError },
+}
+
 pub struct StfsContainer<'a> {
     reader: stfs::BytesStfsReader<&'a [u8]>,
 }
 
 impl<'a> StfsContainer<'a> {
-    pub fn new(data: &'a [u8]) -> Result<Self, String> {
+    pub fn new(data: &'a [u8]) -> Result<Self, StfsContainerError> {
         if data.len() < 4 || &data[0..4] != b"PIRS" {
-            return Err("Invalid STFS signature: Expected 'PIRS'".into());
+            return Err(StfsContainerError::InvalidSignature);
         }
 
-        let reader = stfs::BytesStfsReader::open(data)
-            .map_err(|e| format!("Failed to open STFS package: {}", e))?;
+        let reader = stfs::BytesStfsReader::open(data)?;
 
         info!(
             "[builder] STFS container validated (PIRS magic OK, {} bytes)",
@@ -55,9 +67,9 @@ impl<'a> StfsContainer<'a> {
         Ok(Self { reader })
     }
 
-    pub fn extract_all(&self, target_dir: &Path) -> Result<(), String> {
+    pub fn extract_all(&self, target_dir: &Path) -> Result<(), StfsContainerError> {
         if !target_dir.exists() {
-            fs::create_dir_all(target_dir).map_err(|e| e.to_string())?;
+            fs::create_dir_all(target_dir)?;
         }
 
         let tree = self.reader.package().file_table.build_tree();
@@ -70,27 +82,30 @@ impl<'a> StfsContainer<'a> {
         node: &stfs::StfsTreeNode,
         parent_path: &Path,
         reader: &stfs::BytesStfsReader<&'a [u8]>,
-    ) -> Result<(), String> {
+    ) -> Result<(), StfsContainerError> {
         for child in &node.children {
             let name = &child.entry.name;
             let full_path = parent_path.join(name);
 
             if child.entry.is_directory() {
-                fs::create_dir_all(&full_path).map_err(|e| e.to_string())?;
+                fs::create_dir_all(&full_path)?;
                 Self::extract_tree_node(child, &full_path, reader)?;
             } else {
                 let mut file_data = Vec::new();
                 reader
                     .extract_file(&mut file_data, &child.entry)
-                    .map_err(|e| format!("Failed to extract file '{}': {}", name, e))?;
-                fs::write(&full_path, file_data).map_err(|e| e.to_string())?;
+                    .map_err(|e| StfsContainerError::ExtractFailed {
+                        name: name.clone(),
+                        source: e,
+                    })?;
+                fs::write(&full_path, file_data)?;
                 info!("[builder] STFS extracted file: {}", name);
             }
         }
         Ok(())
     }
 
-    pub fn extract_to_memory(&self) -> Result<HashMap<String, Vec<u8>>, String> {
+    pub fn extract_to_memory(&self) -> Result<HashMap<String, Vec<u8>>, StfsContainerError> {
         info!("[builder] STFS extract_to_memory starting");
 
         let mut results = HashMap::new();
@@ -106,7 +121,10 @@ impl<'a> StfsContainer<'a> {
             let mut file_data = Vec::new();
             self.reader
                 .extract_file(&mut file_data, &walk_entry.entry)
-                .map_err(|e| format!("Failed to extract file '{}': {}", walk_entry.path, e))?;
+                .map_err(|e| StfsContainerError::ExtractFailed {
+                    name: walk_entry.path.clone(),
+                    source: e,
+                })?;
 
             results.insert(name.to_lowercase(), file_data);
         }

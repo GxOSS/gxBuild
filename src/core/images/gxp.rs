@@ -24,6 +24,29 @@ use log::{info, warn};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
+use thiserror::Error;
+
+/// Errors that can occur during GXP operations.
+#[derive(Error, Debug)]
+pub enum GxpError {
+    #[error("[gxp] IO error: {0}")]
+    Io(#[from] io::Error),
+
+    #[error("[gxp] Parse error: {0}")]
+    Parse(#[from] std::num::ParseIntError),
+
+    #[error("[gxp] Invalid GXP magic bytes: expected GXP\\0, got {0:?}")]
+    InvalidMagic([u8; 4]),
+
+    #[error("[gxp] Patch address 0x{address:X} exceeds 4MB safety limit")]
+    AddressLimitExceeded { address: usize },
+
+    #[error("[gxp] Patch file contains no sections")]
+    EmptyPatch,
+
+    #[error("[gxp] Unexpected section count: got {got}, expected at least {expected}")]
+    InsufficientSections { got: usize, expected: usize },
+}
 
 /// GXP Header Magic: "GXP\0"
 pub const GXP_MAGIC: [u8; 4] = [0x47, 0x58, 0x50, 0x00];
@@ -252,7 +275,7 @@ fn read_patch_sections(
     Ok(sections)
 }
 
-pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> {
+pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> Result<GxpBinary, GxpError> {
     let mut file = File::open(&path)?;
     let mut magic_buf = [0u8; 4];
     file.read_exact(&mut magic_buf)?;
@@ -396,7 +419,7 @@ pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> 
     Ok(binary)
 }
 
-pub fn parse_gxs_source<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpSection> {
+pub fn parse_gxs_source<P: AsRef<Path>>(path: P) -> Result<GxpSection, GxpError> {
     let file = File::open(&path)?;
     let reader = BufReader::new(file);
     let mut records = Vec::new();
@@ -470,7 +493,7 @@ pub fn serialize_records(records: &[PatchRecord]) -> Vec<u8> {
     buf
 }
 
-pub fn apply_records(records: &[PatchRecord], data: &mut Vec<u8>) -> anyhow::Result<()> {
+pub fn apply_records(records: &[PatchRecord], data: &mut Vec<u8>) -> Result<(), GxpError> {
     info!(
         "[gxp] Applying {} records to buffer (size 0x{:X})",
         records.len(),
@@ -483,10 +506,9 @@ pub fn apply_records(records: &[PatchRecord], data: &mut Vec<u8>) -> anyhow::Res
 
         if offset + record.data.len() > data.len() {
             if offset + record.data.len() > 0x400000 {
-                anyhow::bail!(
-                    "Patch address 0x{:X} exceeds 4MB safety limit",
-                    offset + record.data.len()
-                );
+                return Err(GxpError::AddressLimitExceeded {
+                    address: offset + record.data.len(),
+                });
             }
             data.resize(offset + record.data.len(), 0);
         }
@@ -506,12 +528,12 @@ pub fn apply_records(records: &[PatchRecord], data: &mut Vec<u8>) -> anyhow::Res
 pub fn parse_and_apply_to_buffer<P: AsRef<Path>>(
     path: P,
     data: &mut Vec<u8>,
-) -> anyhow::Result<()> {
+) -> Result<(), GxpError> {
     let patch = parse_patch_binary(path)?;
     if let Some(section) = patch.sections.first() {
         apply_records(&section.records, data)
     } else {
-        anyhow::bail!("Patch file contains no sections")
+        Err(GxpError::EmptyPatch)
     }
 }
 

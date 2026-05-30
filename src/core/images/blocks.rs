@@ -20,7 +20,30 @@
   3. This notice may not be removed or altered from any source distribution.
 */
 use log::{info, warn};
+use thiserror::Error;
 
+
+/// Errors that can occur during NAND block operations.
+#[derive(Error, Debug)]
+pub enum BlocksError {
+    #[error("[blocks] NAND layout detection failed: could not detect layout for image size 0x{size:x}")]
+    LayoutDetectionFailed { size: usize },
+
+    #[error("[blocks] Invalid image size: {size} bytes (expected aligned to block size)")]
+    InvalidImageSize { size: usize },
+
+    #[error("[blocks] Bad block remapping failed: {message}")]
+    RemapFailed { message: String },
+
+    #[error("[blocks] Image too short for operation: got {got} bytes, need at least {need}")]
+    ImageTooShort { got: usize, need: usize },
+
+    #[error("[blocks] Invalid block number: {block} (max: {max})")]
+    InvalidBlock { block: usize, max: usize },
+
+    #[error("[blocks] ECC verification failed for page {page}")]
+    EccVerificationFailed { page: usize },
+}
 
 pub const EMMC_ANCHOR_OFFSETS: [usize; 4] = [0x2fe0000, 0x2fe4000, 0x2fe8000, 0x2fec000];
 
@@ -370,7 +393,7 @@ pub fn write_logical_data(
 impl NandLayout {
 
 
-    pub fn detect(image: &[u8]) -> Result<Self, String> {
+    pub fn detect(image: &[u8]) -> Result<Self, BlocksError> {
         let len = image.len();
         let layout = match len {
             // Physical sizes (data + spare, 0x210 bytes/page)
@@ -472,7 +495,7 @@ impl NandLayout {
                         Ok(NandLayout::Sb)
                     }
                 } else {
-                    Err(format!("Could not detect NAND layout for size 0x{:x}", len))
+                    Err(BlocksError::LayoutDetectionFailed { size: len })
                 }
             }
         };
@@ -1100,7 +1123,7 @@ impl BlockMap {
         })
     }
 
-    pub fn map_and_heal(&mut self, image: &mut [u8]) -> Result<(), String> {
+    pub fn map_and_heal(&mut self, image: &mut [u8]) -> Result<(), BlocksError> {
         let bad_indices: Vec<usize> = self.blocks.iter().map(|b| b.block).collect();
         if bad_indices.is_empty() {
             return Ok(());
@@ -1138,7 +1161,7 @@ pub fn resolve_remapped_blocks(
     image: &[u8],
     bad_blocks: &[usize],
     layout: &NandLayout,
-) -> Result<Vec<Option<usize>>, String> {
+) -> Result<Vec<Option<usize>>, BlocksError> {
     let mut remapped = vec![None; bad_blocks.len()];
     let mut resolved = 0;
     let b_size = layout.block_size();
@@ -1284,21 +1307,21 @@ impl LbaMap {
 }
 
 impl NandProcessor {
-    pub fn preprocess_nand(raw_image: &[u8]) -> Result<(Vec<u8>, NandLayout), String> {
+    pub fn preprocess_nand(raw_image: &[u8]) -> Result<(Vec<u8>, NandLayout), BlocksError> {
         let (clean, layout, _lba_map) = Self::preprocess_nand_with_lba(raw_image)?;
         Ok((clean, layout))
     }
 
     pub fn preprocess_nand_with_lba(
         raw_image: &[u8],
-    ) -> Result<(Vec<u8>, NandLayout, LbaMap), String> {
+    ) -> Result<(Vec<u8>, NandLayout, LbaMap), BlocksError> {
         Self::preprocess_nand_with_lba_options(raw_image, true)
     }
 
     pub fn preprocess_nand_with_lba_options(
         raw_image: &[u8],
         remap_bad_blocks: bool,
-    ) -> Result<(Vec<u8>, NandLayout, LbaMap), String> {
+    ) -> Result<(Vec<u8>, NandLayout, LbaMap), BlocksError> {
         let base_layout = NandLayout::detect(raw_image)?;
         if base_layout == NandLayout::Emmc {
             let total_blocks = raw_image.len() / (base_layout.logical_pages_per_block() * 0x200);
