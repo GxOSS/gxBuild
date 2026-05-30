@@ -26,13 +26,14 @@ All projects used for gxBuild, directly or indirectly.
 - [x360utils](https://github.com/Swizzy/x360Utils) by [Swizzy](https://github.com/Swizzy)
 - [RGBuild++](https://github.com/emoose/RGBuildPP) by [emoose](https://github.com/emoose)
 
-### Crypto
+### Crypto / GxCrypt
 
-- [ExCrypt]() by [emoose](https://github.com/emoose)
+- [ExCrypt](https://github.com/emoose/ExCrypt) by [emoose](https://github.com/emoose)
+- [XeCrypt](https://github.com/landaire/acceleration/tree/main/crates/xecrypt) by [Landaire](https://github.com/landaire)
 
 ### SMC Patching
 
-- [smc360]() by [wurthless-elektroniks](https://github.com/wurthless-elektroniks)
+- [smc360](https://github.com/wurthless-elektroniks/smc360) by [wurthless-elektroniks](https://github.com/wurthless-elektroniks)
 - [x360utils](https://github.com/Swizzy/x360Utils) by [Swizzy](https://github.com/Swizzy)
 
 ### General Patching

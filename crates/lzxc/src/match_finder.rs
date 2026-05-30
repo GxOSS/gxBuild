@@ -120,7 +120,13 @@ impl MatchFinder {
     /// KB32 -> 32765, KB64 -> 65533, ..., MB32 -> window_bytes - 3. See
     /// `WindowSize::max_match_offset` in `lib.rs` for the mapping.
     pub fn new(max_offset: usize) -> Self {
-        Self { max_offset, history: Vec::new(), base: 0, head: vec![u32::MAX; HASH_SIZE], prev: Vec::new() }
+        Self {
+            max_offset,
+            history: Vec::new(),
+            base: 0,
+            head: vec![u32::MAX; HASH_SIZE],
+            prev: Vec::new(),
+        }
     }
 
     /// Feed a chunk of input through the match finder, writing the
@@ -183,7 +189,17 @@ impl MatchFinder {
             while p_rel + 4 <= history_len {
                 let p_abs = base + p_rel as u64;
                 let h = hash4(&history[p_rel..p_rel + 4]);
-                let best = Self::find_best_match(history, head, prev, base, p_abs, p_rel, h, end_abs, self.max_offset);
+                let best = Self::find_best_match(
+                    history,
+                    head,
+                    prev,
+                    base,
+                    p_abs,
+                    p_rel,
+                    h,
+                    end_abs,
+                    self.max_offset,
+                );
 
                 if best.length >= MIN_MATCH {
                     // Sparse insert: only record the match-start position in
@@ -202,8 +218,12 @@ impl MatchFinder {
                     // `MAX_MATCH` (= 257, assigned in `find_best_match`), so
                     // the `as u32` cast cannot truncate a large `usize` to
                     // zero. The `NonZeroU32` invariant is therefore met.
-                    let length = unsafe { core::num::NonZeroU32::new_unchecked(best.length as u32) };
-                    tokens_spare[tok_written] = MaybeUninit::new(Token::Match { offset: best.offset, length });
+                    let length =
+                        unsafe { core::num::NonZeroU32::new_unchecked(best.length as u32) };
+                    tokens_spare[tok_written] = MaybeUninit::new(Token::Match {
+                        offset: best.offset,
+                        length,
+                    });
                     prev[p_rel] = head[h];
                     head[h] = p_abs as u32;
                     tok_written += 1;
@@ -256,9 +276,22 @@ impl MatchFinder {
     /// is intentional for that reason -- grouping them back into a struct
     /// would hide the disjoint-borrow structure from the optimiser.
     #[allow(clippy::too_many_arguments)]
-    fn find_best_match(history: &[u8], head: &[u32], prev: &[u32], base: u64, p_abs: u64, p_rel: usize, hash: usize, end_abs: u64, max_offset: usize) -> BestMatch {
+    fn find_best_match(
+        history: &[u8],
+        head: &[u32],
+        prev: &[u32],
+        base: u64,
+        p_abs: u64,
+        p_rel: usize,
+        hash: usize,
+        end_abs: u64,
+        max_offset: usize,
+    ) -> BestMatch {
         let max_possible = MAX_MATCH.min((end_abs - p_abs) as usize);
-        let mut best = BestMatch { length: 0, offset: 0 };
+        let mut best = BestMatch {
+            length: 0,
+            offset: 0,
+        };
         let mut candidate_abs = head[hash] as u64;
         let mut depth = 0;
         while depth < MAX_CHAIN_DEPTH && candidate_abs != u32::MAX as u64 {
@@ -289,7 +322,10 @@ impl MatchFinder {
 
             let len = common_prefix_len(&history[c_rel..], &history[p_rel..], max_possible);
             if len > best.length && len >= MIN_MATCH {
-                best = BestMatch { length: len, offset: offset as u32 };
+                best = BestMatch {
+                    length: len,
+                    offset: offset as u32,
+                };
                 if len >= max_possible {
                     break;
                 }
@@ -393,6 +429,10 @@ mod tests {
                 }
             }
         }
-        assert!(found_cross_chunk, "expected a match referencing chunk 1; tokens2 = {:?}", tokens2);
+        assert!(
+            found_cross_chunk,
+            "expected a match referencing chunk 1; tokens2 = {:?}",
+            tokens2
+        );
     }
 }

@@ -106,7 +106,9 @@ impl NandLayout {
     pub fn logical_to_physical(&self, logical_page: usize) -> u64 {
         match self {
             NandLayout::Emmc => logical_page as u64,
-            NandLayout::Xsb | NandLayout::Sb => ((logical_page / 512) * 528 + (logical_page % 512)) as u64,
+            NandLayout::Xsb | NandLayout::Sb => {
+                ((logical_page / 512) * 528 + (logical_page % 512)) as u64
+            }
             NandLayout::Bb => ((logical_page / 2048) * 2112 + (logical_page % 2048)) as u64,
         }
     }
@@ -221,13 +223,22 @@ pub fn detect_bb_physical_format(image: &[u8]) -> BbPhysicalFormat {
     BbPhysicalFormat::PerPage
 }
 
-pub fn read_logical_from_physical(image: &[u8], logical_offset: usize, len: usize, layout: NandLayout) -> Option<Vec<u8>> {
+pub fn read_logical_from_physical(
+    image: &[u8],
+    logical_offset: usize,
+    len: usize,
+    layout: NandLayout,
+) -> Option<Vec<u8>> {
     if image.is_empty() || len == 0 {
         return None;
     }
 
     let logical_page_size = layout.page_size();
-    let bb_fmt = if layout == NandLayout::Bb { Some(detect_bb_physical_format(image)) } else { None };
+    let bb_fmt = if layout == NandLayout::Bb {
+        Some(detect_bb_physical_format(image))
+    } else {
+        None
+    };
     let mut result = vec![0u8; len];
     let mut cur = 0;
 
@@ -237,9 +248,13 @@ pub fn read_logical_from_physical(image: &[u8], logical_offset: usize, len: usiz
         let page_offset = current_logical_offset % logical_page_size;
         let phys_offset = match layout {
             NandLayout::Emmc => current_logical_offset,
-            NandLayout::Xsb | NandLayout::Sb => (current_page * layout.physical_page_size()) + page_offset,
+            NandLayout::Xsb | NandLayout::Sb => {
+                (current_page * layout.physical_page_size()) + page_offset
+            }
             NandLayout::Bb => match bb_fmt.unwrap_or(BbPhysicalFormat::PerPage) {
-                BbPhysicalFormat::PerPage => (current_page * layout.physical_page_size()) + page_offset,
+                BbPhysicalFormat::PerPage => {
+                    (current_page * layout.physical_page_size()) + page_offset
+                }
                 BbPhysicalFormat::Chunked => bb_data_offset_chunked(current_page) + page_offset,
             },
         };
@@ -262,13 +277,22 @@ pub fn read_logical_from_physical(image: &[u8], logical_offset: usize, len: usiz
     Some(result)
 }
 
-pub fn write_logical_data(image: &mut [u8], logical_offset: usize, data: &[u8], layout: NandLayout) {
+pub fn write_logical_data(
+    image: &mut [u8],
+    logical_offset: usize,
+    data: &[u8],
+    layout: NandLayout,
+) {
     if image.is_empty() || data.is_empty() {
         return;
     }
 
     let logical_page_size = layout.page_size();
-    let bb_fmt = if layout == NandLayout::Bb { Some(detect_bb_physical_format(image)) } else { None };
+    let bb_fmt = if layout == NandLayout::Bb {
+        Some(detect_bb_physical_format(image))
+    } else {
+        None
+    };
     let mut cur = 0;
     let len = data.len();
 
@@ -278,9 +302,13 @@ pub fn write_logical_data(image: &mut [u8], logical_offset: usize, data: &[u8], 
         let page_offset = current_logical_byte % logical_page_size;
         let phys_offset = match layout {
             NandLayout::Emmc => current_logical_byte,
-            NandLayout::Xsb | NandLayout::Sb => (current_page * layout.physical_page_size()) + page_offset,
+            NandLayout::Xsb | NandLayout::Sb => {
+                (current_page * layout.physical_page_size()) + page_offset
+            }
             NandLayout::Bb => match bb_fmt.unwrap_or(BbPhysicalFormat::PerPage) {
-                BbPhysicalFormat::PerPage => (current_page * layout.physical_page_size()) + page_offset,
+                BbPhysicalFormat::PerPage => {
+                    (current_page * layout.physical_page_size()) + page_offset
+                }
                 BbPhysicalFormat::Chunked => bb_data_offset_chunked(current_page) + page_offset,
             },
         };
@@ -447,7 +475,10 @@ impl NandLayout {
         };
 
         if let Ok(l) = &layout {
-            info!("[blocks] Detected NAND Layout: {:?} (Image Size: 0x{:x})", l, len);
+            info!(
+                "[blocks] Detected NAND Layout: {:?} (Image Size: 0x{:x})",
+                l, len
+            );
         }
         layout
     }
@@ -462,7 +493,12 @@ pub fn calculate_ecc(data: &mut [u8]) {
     for i in 0..0x1066 {
         if (i & 31) == 0 {
             let offset = i / 8;
-            v = !u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
+            v = !u32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]);
         }
         val ^= v & 1;
         v >>= 1;
@@ -484,7 +520,12 @@ fn compute_ecc(data: &[u8]) -> [u8; 4] {
     for i in 0..0x1066 {
         if (i & 31) == 0 {
             let offset = i / 8;
-            v = !u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
+            v = !u32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]);
         }
         val ^= v & 1;
         v >>= 1;
@@ -556,7 +597,10 @@ pub fn add_spare(
 
                 if val >= reserve_start {
                     // Reserve region: leave spare fully erased (0xFF), no ECC
-                } else if let Some(fs) = mobile_meta.and_then(|m| m.get(&i)).or_else(|| fs_meta.and_then(|m| m.get(&val))) {
+                } else if let Some(fs) = mobile_meta
+                    .and_then(|m| m.get(&i))
+                    .or_else(|| fs_meta.and_then(|m| m.get(&val)))
+                {
                     spare[1] = (val & 0xFF) as u8;
                     spare[2] = ((val >> 8) & 0xFF) as u8;
                     spare[5] = (fs.sequence & 0xFF) as u8;
@@ -603,13 +647,19 @@ pub fn add_spare(
                     if let Some(syscall) = jtag_syscall {
                         spare[10] = (syscall >> 8) as u8;
                         spare[11] = (syscall & 0xFF) as u8;
-                        info!("[blocks] Injected JTAG Syscall 0x{:04X} into Page 1 spare", syscall);
+                        info!(
+                            "[blocks] Injected JTAG Syscall 0x{:04X} into Page 1 spare",
+                            syscall
+                        );
                     }
                 }
 
                 if val >= reserve_start {
                     // Reserve region: leave spare fully erased (0xFF), no ECC
-                } else if let Some(fs) = mobile_meta.and_then(|m| m.get(&i)).or_else(|| fs_meta.and_then(|m| m.get(&val))) {
+                } else if let Some(fs) = mobile_meta
+                    .and_then(|m| m.get(&i))
+                    .or_else(|| fs_meta.and_then(|m| m.get(&val)))
+                {
                     spare[7] = (fs.size & 0xFF) as u8;
                     spare[8] = ((fs.size >> 8) & 0xFF) as u8;
                     spare[9] = fs.page_count;
@@ -693,7 +743,11 @@ pub fn has_spare(image: &[u8]) -> bool {
                     let spare3 = image.get(i + 3).copied().unwrap_or(0);
                     let spare4 = image.get(i + 4).copied().unwrap_or(0);
 
-                    if (spare0 == 0xFF || spare5 == 0xFF) && spare3 == 0x00 && spare4 == 0x00 && i + 0x10 <= image.len() {
+                    if (spare0 == 0xFF || spare5 == 0xFF)
+                        && spare3 == 0x00
+                        && spare4 == 0x00
+                        && i + 0x10 <= image.len()
+                    {
                         let ecc_bytes = &image[i + 0xC..i + 0x10];
                         let all_ff = ecc_bytes.iter().all(|&b| b == 0xFF);
                         let all_00 = ecc_bytes.iter().all(|&b| b == 0x00);
@@ -713,7 +767,10 @@ pub fn has_spare(image: &[u8]) -> bool {
     }
 
     if image.len() > 0x840 {
-        if image[0x800] == 0xFF && image.get(0x810).copied().unwrap_or(0) == 0xFF && image.get(0x820).copied().unwrap_or(0) == 0xFF {
+        if image[0x800] == 0xFF
+            && image.get(0x810).copied().unwrap_or(0) == 0xFF
+            && image.get(0x820).copied().unwrap_or(0) == 0xFF
+        {
             return true;
         }
     }
@@ -758,7 +815,8 @@ pub fn detect_meta_type(image: &[u8], layout: NandLayout) -> SpareMetaType {
 
     // Try spare at block 1, page 0
     let spare = match layout {
-        NandLayout::Bb => get_page_spare(image, layout.logical_pages_per_block(), &layout).and_then(|v| v.try_into().ok()),
+        NandLayout::Bb => get_page_spare(image, layout.logical_pages_per_block(), &layout)
+            .and_then(|v| v.try_into().ok()),
         _ => read_spare(0x4400),
     };
 
@@ -840,15 +898,21 @@ pub fn remove_spare(image: &[u8]) -> Vec<u8> {
                             let spare_start = in_offset + 0x800 + p * 0x10;
                             let mut buf = [0u8; 0x210];
                             buf[..0x200].copy_from_slice(&image[data_start..data_start + 0x200]);
-                            buf[0x200..0x210].copy_from_slice(&image[spare_start..spare_start + 0x10]);
+                            buf[0x200..0x210]
+                                .copy_from_slice(&image[spare_start..spare_start + 0x10]);
                             if !ecc_verify_and_correct(&mut buf) {
                                 ecc_bad += 1;
                             }
                         }
-                        result[out_offset..out_offset + chunk_out].copy_from_slice(&image[in_offset..in_offset + chunk_out]);
+                        result[out_offset..out_offset + chunk_out]
+                            .copy_from_slice(&image[in_offset..in_offset + chunk_out]);
                     }
                     if ecc_bad > 0 {
-                        warn!("[blocks] ECC: {} page(s) failed verification out of {}", ecc_bad, chunks * 4);
+                        warn!(
+                            "[blocks] ECC: {} page(s) failed verification out of {}",
+                            ecc_bad,
+                            chunks * 4
+                        );
                     }
                     result
                 }
@@ -866,10 +930,14 @@ pub fn remove_spare(image: &[u8]) -> Vec<u8> {
                                 ecc_bad += 1;
                             }
                         }
-                        result[i * l_page..(i + 1) * l_page].copy_from_slice(&image[i * p_page..i * p_page + l_page]);
+                        result[i * l_page..(i + 1) * l_page]
+                            .copy_from_slice(&image[i * p_page..i * p_page + l_page]);
                     }
                     if ecc_bad > 0 {
-                        warn!("[blocks] ECC: {} page(s) failed verification out of {}", ecc_bad, pages);
+                        warn!(
+                            "[blocks] ECC: {} page(s) failed verification out of {}",
+                            ecc_bad, pages
+                        );
                     }
                     result
                 }
@@ -894,7 +962,10 @@ pub fn remove_spare(image: &[u8]) -> Vec<u8> {
                 result[i * l_page..(i + 1) * l_page].copy_from_slice(&src[..l_page]);
             }
             if ecc_bad > 0 {
-                warn!("[blocks] ECC: {} page(s) failed verification out of {}", ecc_bad, pages);
+                warn!(
+                    "[blocks] ECC: {} page(s) failed verification out of {}",
+                    ecc_bad, pages
+                );
             }
             result
         }
@@ -905,7 +976,12 @@ pub fn remove_spare(image: &[u8]) -> Vec<u8> {
     }
 }
 
-pub fn get_page_spare_fmt(image: &[u8], page: usize, layout: &NandLayout, bb_fmt: BbPhysicalFormat) -> Option<Vec<u8>> {
+pub fn get_page_spare_fmt(
+    image: &[u8],
+    page: usize,
+    layout: &NandLayout,
+    bb_fmt: BbPhysicalFormat,
+) -> Option<Vec<u8>> {
     let spare_size = layout.spare_size();
     if spare_size == 0 {
         return None;
@@ -1009,10 +1085,16 @@ impl BlockMap {
         let mut bad_blocks = Vec::new();
         for block in 0..layout.total_blocks(image.len()) {
             if is_bad_block(image, block, &layout) {
-                bad_blocks.push(BadBlock { block, target: block });
+                bad_blocks.push(BadBlock {
+                    block,
+                    target: block,
+                });
             }
         }
-        Some(Self { blocks: bad_blocks, layout })
+        Some(Self {
+            blocks: bad_blocks,
+            layout,
+        })
     }
 
     pub fn map_and_heal(&mut self, image: &mut [u8]) -> Result<(), String> {
@@ -1021,14 +1103,23 @@ impl BlockMap {
             return Ok(());
         }
 
-        info!("[blocks] Found {} Bad Physical Blocks. Attempting Healing/Remapping...", bad_indices.len());
+        info!(
+            "[blocks] Found {} Bad Physical Blocks. Attempting Healing/Remapping...",
+            bad_indices.len()
+        );
         let remapped = resolve_remapped_blocks(image, &bad_indices, &self.layout)?;
         for (i, &bad_block) in bad_indices.iter().enumerate() {
             let Some(target) = remapped[i] else {
-                info!("[blocks] Bad Block {} has no remap entry; leaving as-is", bad_block);
+                info!(
+                    "[blocks] Bad Block {} has no remap entry; leaving as-is",
+                    bad_block
+                );
                 continue;
             };
-            info!("[blocks] Remapping Bad Block {} -> Reserved Physical Block {}", bad_block, target);
+            info!(
+                "[blocks] Remapping Bad Block {} -> Reserved Physical Block {}",
+                bad_block, target
+            );
             let b_size = self.layout.block_size();
             let mut buf = vec![0u8; b_size];
             buf.copy_from_slice(&image[target * b_size..target * b_size + b_size]);
@@ -1040,7 +1131,11 @@ impl BlockMap {
     }
 }
 
-pub fn resolve_remapped_blocks(image: &[u8], bad_blocks: &[usize], layout: &NandLayout) -> Result<Vec<Option<usize>>, String> {
+pub fn resolve_remapped_blocks(
+    image: &[u8],
+    bad_blocks: &[usize],
+    layout: &NandLayout,
+) -> Result<Vec<Option<usize>>, String> {
     let mut remapped = vec![None; bad_blocks.len()];
     let mut resolved = 0;
     let b_size = layout.block_size();
@@ -1092,7 +1187,11 @@ pub struct LbaMap {
 
 impl LbaMap {
     pub fn new(total_blocks: usize) -> Self {
-        Self { bad_blocks: Vec::new(), logical_to_physical: (0..total_blocks).collect(), meta_type: SpareMetaType::MetaTypeNone }
+        Self {
+            bad_blocks: Vec::new(),
+            logical_to_physical: (0..total_blocks).collect(),
+            meta_type: SpareMetaType::MetaTypeNone,
+        }
     }
 
     pub fn from_layout(layout: NandLayout, total_blocks: usize) -> Self {
@@ -1112,7 +1211,10 @@ impl LbaMap {
         for (logical, physical) in self.logical_to_physical.iter_mut().enumerate() {
             if *physical == replacement_block {
                 *physical = bad_block;
-                info!("[blocks] LBA {:#X}: physical block {:#X} -> {:#X} (bad block healed)", logical, replacement_block, bad_block);
+                info!(
+                    "[blocks] LBA {:#X}: physical block {:#X} -> {:#X} (bad block healed)",
+                    logical, replacement_block, bad_block
+                );
             }
         }
     }
@@ -1125,7 +1227,11 @@ impl LbaMap {
         self.bad_blocks.contains(&physical)
     }
 
-    pub fn find_available_reserve_block(&self, layout: &NandLayout, image_len: usize) -> Option<usize> {
+    pub fn find_available_reserve_block(
+        &self,
+        layout: &NandLayout,
+        image_len: usize,
+    ) -> Option<usize> {
         let res_start = layout.reserve_start(image_len);
         let max_blocks = layout.total_blocks(image_len);
 
@@ -1135,14 +1241,21 @@ impl LbaMap {
                 continue;
             }
 
-            if !self.bad_blocks.contains(&physical_block) && !self.logical_to_physical.contains(&physical_block) {
+            if !self.bad_blocks.contains(&physical_block)
+                && !self.logical_to_physical.contains(&physical_block)
+            {
                 return Some(physical_block);
             }
         }
         None
     }
 
-    pub fn get_live_remap_target(&mut self, bad_block: usize, layout: &NandLayout, image_len: usize) -> Option<usize> {
+    pub fn get_live_remap_target(
+        &mut self,
+        bad_block: usize,
+        layout: &NandLayout,
+        image_len: usize,
+    ) -> Option<usize> {
         if bad_block >= layout.reserve_start(image_len) {
             return None;
         }
@@ -1159,7 +1272,10 @@ impl LbaMap {
             }
         }
 
-        info!("[blocks] Live Remap: failed block {:#X} -> redirected to {:#X}", bad_block, target);
+        info!(
+            "[blocks] Live Remap: failed block {:#X} -> redirected to {:#X}",
+            bad_block, target
+        );
         Some(target)
     }
 }
@@ -1170,11 +1286,16 @@ impl NandProcessor {
         Ok((clean, layout))
     }
 
-    pub fn preprocess_nand_with_lba(raw_image: &[u8]) -> Result<(Vec<u8>, NandLayout, LbaMap), String> {
+    pub fn preprocess_nand_with_lba(
+        raw_image: &[u8],
+    ) -> Result<(Vec<u8>, NandLayout, LbaMap), String> {
         Self::preprocess_nand_with_lba_options(raw_image, true)
     }
 
-    pub fn preprocess_nand_with_lba_options(raw_image: &[u8], remap_bad_blocks: bool) -> Result<(Vec<u8>, NandLayout, LbaMap), String> {
+    pub fn preprocess_nand_with_lba_options(
+        raw_image: &[u8],
+        remap_bad_blocks: bool,
+    ) -> Result<(Vec<u8>, NandLayout, LbaMap), String> {
         let base_layout = NandLayout::detect(raw_image)?;
         if base_layout == NandLayout::Emmc {
             let total_blocks = raw_image.len() / (base_layout.logical_pages_per_block() * 0x200);
@@ -1183,7 +1304,10 @@ impl NandProcessor {
 
         let layout = promote_layout(raw_image, base_layout);
         if layout != base_layout {
-            info!("[blocks] Promoted layout: {:?} -> {:?} (Xenon spare format detected)", base_layout, layout);
+            info!(
+                "[blocks] Promoted layout: {:?} -> {:?} (Xenon spare format detected)",
+                base_layout, layout
+            );
         }
 
         let meta_type = detect_meta_type(raw_image, layout);
@@ -1224,7 +1348,15 @@ impl NandProcessor {
         if layout == NandLayout::Emmc {
             return clean_data.to_vec();
         }
-        add_spare(clean_data, layout, meta_type, 0, fs_meta, mobile_meta, jtag_syscall)
+        add_spare(
+            clean_data,
+            layout,
+            meta_type,
+            0,
+            fs_meta,
+            mobile_meta,
+            jtag_syscall,
+        )
     }
 }
 
@@ -1253,8 +1385,20 @@ mod nand_layout_detection_tests {
             img[off..off + 16].copy_from_slice(&spare);
         };
 
-        set_spare(&mut buf, 0, [0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4]);
-        set_spare(&mut buf, 256, [0xFF, 0x01, 0x00, 0x00, 0x00, 0xFF, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4]);
+        set_spare(
+            &mut buf,
+            0,
+            [
+                0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4,
+            ],
+        );
+        set_spare(
+            &mut buf,
+            256,
+            [
+                0xFF, 0x01, 0x00, 0x00, 0x00, 0xFF, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4,
+            ],
+        );
 
         assert_eq!(NandLayout::detect(&buf).unwrap(), NandLayout::Bb);
     }

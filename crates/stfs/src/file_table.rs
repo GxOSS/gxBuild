@@ -48,7 +48,12 @@ pub struct StfsTreeNode {
 }
 
 impl StfsFileTable {
-    pub fn read<R: ReadAt>(source: &R, hash_meta: &HashTableMeta, stfs_vol: &StfsVolumeDescriptor, sex: StfsPackageSex) -> Result<Self, StfsError> {
+    pub fn read<R: ReadAt>(
+        source: &R,
+        hash_meta: &HashTableMeta,
+        stfs_vol: &StfsVolumeDescriptor,
+        sex: StfsPackageSex,
+    ) -> Result<Self, StfsError> {
         let mut entries = Vec::new();
         let mut block = stfs_vol.file_table_block_num;
 
@@ -67,9 +72,10 @@ impl StfsFileTable {
                 let name = read_utf8_with_max_len(&block_data[entry_offset..], 0x28);
                 cursor.set_position((entry_offset + 0x28) as u64);
 
-                let name_len = cursor
-                    .read_u8()
-                    .map_err(|_| StfsError::ReadError { offset: current_addr + entry_offset + 0x28, message: "failed to read name_len".into() })?;
+                let name_len = cursor.read_u8().map_err(|_| StfsError::ReadError {
+                    offset: current_addr + entry_offset + 0x28,
+                    message: "failed to read name_len".into(),
+                })?;
 
                 if name_len & 0x3F == 0 {
                     continue;
@@ -114,16 +120,26 @@ impl StfsFileTable {
     }
 
     pub fn build_tree(&self) -> StfsTreeNode {
-        let root = StfsFileEntry { name: String::new(), ..Default::default() };
+        let root = StfsFileEntry {
+            name: String::new(),
+            ..Default::default()
+        };
 
         let mut folder_children: HashMap<u16, Vec<usize>> = HashMap::new();
 
         // Group entries by their path_indicator (parent folder index)
         for (i, entry) in self.entries.iter().enumerate() {
-            folder_children.entry(entry.path_indicator).or_default().push(i);
+            folder_children
+                .entry(entry.path_indicator)
+                .or_default()
+                .push(i);
         }
 
-        fn build_children(entries: &[StfsFileEntry], folder_children: &HashMap<u16, Vec<usize>>, parent_index: u16) -> Vec<StfsTreeNode> {
+        fn build_children(
+            entries: &[StfsFileEntry],
+            folder_children: &HashMap<u16, Vec<usize>>,
+            parent_index: u16,
+        ) -> Vec<StfsTreeNode> {
             let Some(child_indices) = folder_children.get(&parent_index) else {
                 return Vec::new();
             };
@@ -137,14 +153,20 @@ impl StfsFileTable {
                     } else {
                         Vec::new()
                     };
-                    StfsTreeNode { entry: entry.clone(), children }
+                    StfsTreeNode {
+                        entry: entry.clone(),
+                        children,
+                    }
                 })
                 .collect()
         }
 
         let children = build_children(&self.entries, &folder_children, 0xFFFF);
 
-        StfsTreeNode { entry: root, children }
+        StfsTreeNode {
+            entry: root,
+            children,
+        }
     }
 
     pub fn walk_files(&self) -> Vec<WalkEntry> {
@@ -161,7 +183,10 @@ impl StfsFileTable {
                 if child.entry.is_directory() {
                     walk(child, &child_path, result);
                 } else {
-                    result.push(WalkEntry { path: child_path, entry: child.entry.clone() });
+                    result.push(WalkEntry {
+                        path: child_path,
+                        entry: child.entry.clone(),
+                    });
                 }
             }
         }

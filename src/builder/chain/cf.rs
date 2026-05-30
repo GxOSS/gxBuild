@@ -61,16 +61,25 @@ pub struct BootloaderCf {
 
 impl BootloaderCf {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload) = BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CF header")?;
+        let (header, payload) =
+            BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CF header")?;
         let total_size = ((header.size.get() as usize) + 0xF) & !0xF;
         if total_size < core::mem::size_of::<BootloaderHeader>() {
             return Err("Invalid CF size in header".to_string());
         }
         if data.len() < total_size {
-            return Err(format!("CF buffer too small: need 0x{:X}, have 0x{:X}", total_size, data.len()));
+            return Err(format!(
+                "CF buffer too small: need 0x{:X}, have 0x{:X}",
+                total_size,
+                data.len()
+            ));
         }
         let payload_len = total_size - core::mem::size_of::<BootloaderHeader>();
-        let mut cf = Self { header: header.clone(), data: payload[..payload_len].to_vec(), metadata: None };
+        let mut cf = Self {
+            header: header.clone(),
+            data: payload[..payload_len].to_vec(),
+            metadata: None,
+        };
         cf.populate_metadata();
         Ok(cf)
     }
@@ -215,22 +224,53 @@ impl BootloaderCf {
     }
 
     pub fn print_info(&self) {
-        let indicator = if (self.header.magic.get() & 0xF000) == 0x5000 { "SF" } else { "CF" };
-        info!("[builder] {} version: {}", indicator, self.header.version.get());
-        info!("[builder] {} size: 0x{:x}", indicator, self.header.size.get());
-        info!("[builder] {} entrypoint: 0x{:x}", indicator, self.header.entrypoint.get());
+        let indicator = if (self.header.magic.get() & 0xF000) == 0x5000 {
+            "SF"
+        } else {
+            "CF"
+        };
+        info!(
+            "[builder] {} version: {}",
+            indicator,
+            self.header.version.get()
+        );
+        info!(
+            "[builder] {} size: 0x{:x}",
+            indicator,
+            self.header.size.get()
+        );
+        info!(
+            "[builder] {} entrypoint: 0x{:x}",
+            indicator,
+            self.header.entrypoint.get()
+        );
 
         if let Some(ref meta) = self.metadata {
-            info!("[builder] {} source build: {}", indicator, meta.source_version);
-            info!("[builder] {} target build: {}", indicator, meta.target_version);
+            info!(
+                "[builder] {} source build: {}",
+                indicator, meta.source_version
+            );
+            info!(
+                "[builder] {} target build: {}",
+                indicator, meta.target_version
+            );
             info!("[builder] {}-G size: 0x{:x}", indicator, meta.cg_size);
 
             if self.is_decrypted() {
                 info!("[builder] {} slot: {}", indicator, meta.update_slot);
-                info!("[builder] {} pairing: {:02x?}", indicator, meta.pairing_data);
-                info!("[builder] {} CG block count: {}", indicator, meta.cg_blocks_used);
+                info!(
+                    "[builder] {} pairing: {:02x?}",
+                    indicator, meta.pairing_data
+                );
+                info!(
+                    "[builder] {} CG block count: {}",
+                    indicator, meta.cg_blocks_used
+                );
                 if meta.cg_blocks_used > 0 {
-                    info!("[builder] {} CG first block: {}", indicator, meta.cg_block_numbers[0]);
+                    info!(
+                        "[builder] {} CG first block: {}",
+                        indicator, meta.cg_block_numbers[0]
+                    );
                 }
                 info!("[builder] {}-G nonce: {:02x?}", indicator, meta.cg_nonce);
                 info!("[builder] {}-G digest: {:02x?}", indicator, meta.cg_digest);

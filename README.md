@@ -13,7 +13,7 @@
 > * The app is still **UNTESTED** against real consoles!
 > * There is a **99.99%** chance you will brick your console!
 
-gxBuild is an Xbox 360 NAND image builder and patcher. It is based on [x360utils](https://github.com/Swizzy/x360Utils), [xenon-bltool](https://github.com/InvoxiPlayGames/xenon-bltool), and [RGBuildPP](https://github.com/emoose/RGBuildPP).
+Xbox 360 NAND image builder and patcher. Based on [x360utils](https://github.com/Swizzy/x360Utils), [xenon-bltool](https://github.com/InvoxiPlayGames/xenon-bltool), and [RGBuildPP](https://github.com/emoose/RGBuildPP).
 
 Sister Repos: 
 
@@ -22,27 +22,10 @@ Sister Repos:
 
 ## Table of Contents
 
-- [Background](#background)
-- [Features](#features)
 - [Install](#install)
 - [Usage](#usage)
-- [Testing](#testing)
 - [Contributing](#contributing)
 - [License](#license)
-
-## Background
-
-gxBuild was created to provide a modern, highly compatible alternative to older tools like xeBuild, but with added extensibility. It aims to bridge multiple Xbox 360 modding workflows by incorporating features for retail, devkit, and custom image building, alongside scripting and Foreign Function Interface (FFI) capabilities for developers.
-
-## Features
-
-- **Compatibility:** Mostly compatible with xeBuild.
-- **Image Types:** Supports NAND, Shadowboot, and XeLL images.
-- **Hack Support:** Build JTAG, Glitch (RGH1, RGH2, RGH3, RJTAG), and DevGL images.
-- **XDK/Development:** Full support for RGBuild, XDKBuild, and Devkit images.
-- **Scripting:** Full scripting support and an Interactive Shell powered by Rhai.
-- **Patching:** Supports XEPATCH, GXS2, and JSON Signature Patches.
-- **Developer-Friendly:** Fully set up with [Interoptopus](https://github.com/ralfbiedert/interoptopus) for FFI bindings with C# and C.
 
 ## Install
 
@@ -84,23 +67,7 @@ cargo build --no-default-features --features ffi,rhai
 
 ## Usage
 
-*Documentation Coming Soon.* Refer to the internal `README.md` files located in each subfolder for detailed technical explanations of individual submodules and underlying logic.
-
-## Testing
-
-*Legend: ✓ = Tested Working*
-
-| Platform | Retail Single | Retail Split | Argon / Aud | JTAG FJZ | RJTAG | Glitch1 | Glitch2 | Glitch3 | Glitch2.3 | XDKBuild | RGBuild |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| **Xenon** |  |  |  |  |  |  |  |  |  |  |  |
-| **Zephyr** |  |  |  |  |  |  |  |  |  |  |  |
-| **Falcon** |  |  |  |  |  |  |  |  |  |  |  |
-| **Jasper** |  |  |  |  |  |  | - |  |  |  |  |
-| **Jasper BB** |  |  |  |  |  |  |  |  |  |  |  |
-| **Trinity** |  |  |  |  |  |  | - |  |  |  |  |
-| **Trinity BB** |  |  |  |  |  |  |  |  |  |  |  |
-| **Corona** |  |  |  |  |  |  |  |  |  |  |  |
-| **Corona 4G** |  |  |  |  |  |  |  |  |  |  |  |
+*Documentation Coming Soon.*
 
 ## Contributing
 
@@ -108,15 +75,12 @@ See [CONTRIBUTING.md](/CONTRIBUTING.md) for details on our code of conduct and t
 
 ## License
 
-This project is multi-licensed. Releases are distributed under the **GNU General Public License v2** (inherited from xenon-bltool).
+This project is multi-licensed. Releases are distributed under the **GNU General Public License v2** inherited from xenon-bltool.
 
 Component breakdown:
 
 * **Original gxBuild code:** Zlib License
 * **xenon-bltool:** GPL v2
-* **libmspack:** Relicensed as GPL v2
-* **ExCrypt:** BSD 3-Clause License
-* **Xenia:** BSD 3-Clause License
 * **x360utils:** Unlicense
 * **XeCrypt:** MIT License
 

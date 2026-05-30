@@ -24,7 +24,11 @@ impl<T: AsRef<[u8]>> StfsPackageReader for BytesStfsReader<T> {
         &self.package
     }
 
-    fn extract_file<W: Write>(&self, writer: &mut W, entry: &StfsFileEntry) -> Result<(), StfsError> {
+    fn extract_file<W: Write>(
+        &self,
+        writer: &mut W,
+        entry: &StfsFileEntry,
+    ) -> Result<(), StfsError> {
         let reader = SliceReader(self.source.as_ref());
         self.package.extract_file(&reader, writer, entry)
     }

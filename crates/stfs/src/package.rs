@@ -31,10 +31,20 @@ impl StfsPackage {
         let stfs_vol = header.volume_descriptor.stfs_ref();
         let file_table = StfsFileTable::read(source, &hash_table_meta, stfs_vol, sex)?;
 
-        Ok(StfsPackage { header, sex, hash_table_meta, file_table })
+        Ok(StfsPackage {
+            header,
+            sex,
+            hash_table_meta,
+            file_table,
+        })
     }
 
-    pub fn extract_file<R: ReadAt, W: Write>(&self, source: &R, writer: &mut W, entry: &StfsFileEntry) -> Result<(), StfsError> {
+    pub fn extract_file<R: ReadAt, W: Write>(
+        &self,
+        source: &R,
+        writer: &mut W,
+        entry: &StfsFileEntry,
+    ) -> Result<(), StfsError> {
         if entry.file_size == 0 {
             return Ok(());
         }
@@ -48,8 +58,15 @@ impl StfsPackage {
         Ok(())
     }
 
-    fn extract_consecutive_blocks<R: ReadAt, W: Write>(&self, source: &R, writer: &mut W, entry: &StfsFileEntry) -> Result<(), StfsError> {
-        let start_address = self.hash_table_meta.block_to_addr(entry.starting_block_num, self.sex);
+    fn extract_consecutive_blocks<R: ReadAt, W: Write>(
+        &self,
+        source: &R,
+        writer: &mut W,
+        entry: &StfsFileEntry,
+    ) -> Result<(), StfsError> {
+        let start_address = self
+            .hash_table_meta
+            .block_to_addr(entry.starting_block_num, self.sex);
 
         let blocks_until_hash_table = (self
             .hash_table_meta
@@ -74,14 +91,21 @@ impl StfsPackage {
 
                 data_remaining -= read_len;
                 next_address += read_len;
-                next_address += self.hash_table_meta.hash_table_skip_for_address(next_address, self.sex);
+                next_address += self
+                    .hash_table_meta
+                    .hash_table_skip_for_address(next_address, self.sex);
             }
         }
 
         Ok(())
     }
 
-    fn extract_chained_blocks<R: ReadAt, W: Write>(&self, source: &R, writer: &mut W, entry: &StfsFileEntry) -> Result<(), StfsError> {
+    fn extract_chained_blocks<R: ReadAt, W: Write>(
+        &self,
+        source: &R,
+        writer: &mut W,
+        entry: &StfsFileEntry,
+    ) -> Result<(), StfsError> {
         let mut data_remaining = entry.file_size;
         let mut block_count = data_remaining / BLOCK_SIZE;
         if !data_remaining.is_multiple_of(BLOCK_SIZE) {
@@ -98,7 +122,9 @@ impl StfsPackage {
             let data = source.read_at(block_address..block_address + read_len)?;
             writer.write_all(data.as_ref())?;
 
-            let hash_entry = self.hash_table_meta.read_block_hash_entry(source, block, self.sex, stfs_vol)?;
+            let hash_entry = self
+                .hash_table_meta
+                .read_block_hash_entry(source, block, self.sex, stfs_vol)?;
             block = hash_entry.next_block;
             data_remaining -= read_len;
         }

@@ -179,7 +179,12 @@ pub struct GxpBinary {
 }
 
 /// Parse sections and determine xepatch or gxs
-fn read_patch_sections(mut reader: impl Read, patch_type: GxpPatchType, is_legacy: bool, smc_id: BootloaderId) -> io::Result<Vec<GxpSection>> {
+fn read_patch_sections(
+    mut reader: impl Read,
+    patch_type: GxpPatchType,
+    is_legacy: bool,
+    smc_id: BootloaderId,
+) -> io::Result<Vec<GxpSection>> {
     let mut sections = Vec::new();
     let mut cur_records = Vec::new();
 
@@ -187,7 +192,9 @@ fn read_patch_sections(mut reader: impl Read, patch_type: GxpPatchType, is_legac
         let mut buf = [0u8; 4];
         if reader.read_exact(&mut buf).is_err() {
             if !cur_records.is_empty() {
-                sections.push(GxpSection { records: cur_records });
+                sections.push(GxpSection {
+                    records: cur_records,
+                });
             }
             break;
         }
@@ -195,7 +202,9 @@ fn read_patch_sections(mut reader: impl Read, patch_type: GxpPatchType, is_legac
         let word = u32::from_be_bytes(buf);
 
         if word == 0xFFFFFFFF {
-            sections.push(GxpSection { records: std::mem::take(&mut cur_records) });
+            sections.push(GxpSection {
+                records: std::mem::take(&mut cur_records),
+            });
             continue;
         }
 
@@ -233,7 +242,11 @@ fn read_patch_sections(mut reader: impl Read, patch_type: GxpPatchType, is_legac
             }
         }
 
-        cur_records.push(PatchRecord { address, amount, data });
+        cur_records.push(PatchRecord {
+            address,
+            amount,
+            data,
+        });
     }
 
     Ok(sections)
@@ -261,7 +274,8 @@ pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> 
     } else {
         // XEPATCH
         file.seek(SeekFrom::Start(0))?;
-        let temp_sections = read_patch_sections(&mut file, GxpPatchType::Unknown, true, BootloaderId::None)?;
+        let temp_sections =
+            read_patch_sections(&mut file, GxpPatchType::Unknown, true, BootloaderId::None)?;
         let header = GxpHeader::new_legacy(temp_sections.len());
         // Rewind again so unified loop can read it fully
         file.seek(SeekFrom::Start(0))?;
@@ -291,8 +305,18 @@ pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> 
 
     let sections_raw = read_patch_sections(file, header.patch_type, is_legacy, header.bootloader)?;
 
-    let mut binary =
-        GxpBinary { header: header.clone(), sections: sections_raw.clone(), is_legacy, onebl: None, cb: None, cb_a: None, cb_b: None, cd: None, khv: None, smc: None };
+    let mut binary = GxpBinary {
+        header: header.clone(),
+        sections: sections_raw.clone(),
+        is_legacy,
+        onebl: None,
+        cb: None,
+        cb_a: None,
+        cb_b: None,
+        cd: None,
+        khv: None,
+        smc: None,
+    };
 
     match header.patch_type {
         GxpPatchType::Rgh4Section => {
@@ -302,7 +326,10 @@ pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> 
                 binary.khv = Some(sections_raw[2].clone());
                 binary.smc = Some(sections_raw[3].clone());
             } else {
-                warn!("[gxp] RGH 4-Section Patch has only {} sections!", sections_raw.len());
+                warn!(
+                    "[gxp] RGH 4-Section Patch has only {} sections!",
+                    sections_raw.len()
+                );
             }
         }
         GxpPatchType::Jtag5Section => {
@@ -313,7 +340,10 @@ pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> 
                 binary.khv = Some(sections_raw[3].clone());
                 binary.smc = Some(sections_raw[4].clone());
             } else {
-                warn!("[gxp] JTAG 5-Section Patch has only {} sections!", sections_raw.len());
+                warn!(
+                    "[gxp] JTAG 5-Section Patch has only {} sections!",
+                    sections_raw.len()
+                );
             }
         }
         GxpPatchType::Jtag4Section => {
@@ -323,7 +353,10 @@ pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> 
                 binary.cd = Some(sections_raw[2].clone());
                 binary.khv = Some(sections_raw[3].clone());
             } else {
-                warn!("[gxp] JTAG 4-Section Patch has only {} sections!", sections_raw.len());
+                warn!(
+                    "[gxp] JTAG 4-Section Patch has only {} sections!",
+                    sections_raw.len()
+                );
             }
         }
         GxpPatchType::Rgh3Section => {
@@ -332,7 +365,10 @@ pub fn parse_patch_binary<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpBinary> 
                 binary.cd = Some(sections_raw[1].clone());
                 binary.khv = Some(sections_raw[2].clone());
             } else {
-                warn!("[gxp] RGH 3-Section Patch has only {} sections!", sections_raw.len());
+                warn!(
+                    "[gxp] RGH 3-Section Patch has only {} sections!",
+                    sections_raw.len()
+                );
             }
         }
         GxpPatchType::Standalone | GxpPatchType::Addon => {
@@ -379,7 +415,11 @@ pub fn parse_gxs_source<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpSection> {
         if let Some((addr_part, data_part)) = line_clean.split_once(':') {
             // New record found. Flush previous if any.
             if let Some(addr) = current_address {
-                records.push(PatchRecord { address: addr, amount: current_data.len() as u32, data: std::mem::take(&mut current_data) });
+                records.push(PatchRecord {
+                    address: addr,
+                    amount: current_data.len() as u32,
+                    data: std::mem::take(&mut current_data),
+                });
             }
 
             let addr_str = addr_part.trim().trim_start_matches("0x");
@@ -398,10 +438,18 @@ pub fn parse_gxs_source<P: AsRef<Path>>(path: P) -> anyhow::Result<GxpSection> {
 
     // Final flush
     if let Some(addr) = current_address {
-        records.push(PatchRecord { address: addr, amount: current_data.len() as u32, data: current_data });
+        records.push(PatchRecord {
+            address: addr,
+            amount: current_data.len() as u32,
+            data: current_data,
+        });
     }
 
-    info!("[gxs] Parsed {} records from {:?}", records.len(), path.as_ref());
+    info!(
+        "[gxs] Parsed {} records from {:?}",
+        records.len(),
+        path.as_ref()
+    );
     Ok(GxpSection { records })
 }
 
@@ -423,7 +471,11 @@ pub fn serialize_records(records: &[PatchRecord]) -> Vec<u8> {
 }
 
 pub fn apply_records(records: &[PatchRecord], data: &mut Vec<u8>) -> anyhow::Result<()> {
-    info!("[gxp] Applying {} records to buffer (size 0x{:X})", records.len(), data.len());
+    info!(
+        "[gxp] Applying {} records to buffer (size 0x{:X})",
+        records.len(),
+        data.len()
+    );
     let mut modified_words = 0;
 
     for record in records {
@@ -431,7 +483,10 @@ pub fn apply_records(records: &[PatchRecord], data: &mut Vec<u8>) -> anyhow::Res
 
         if offset + record.data.len() > data.len() {
             if offset + record.data.len() > 0x400000 {
-                anyhow::bail!("Patch address 0x{:X} exceeds 4MB safety limit", offset + record.data.len());
+                anyhow::bail!(
+                    "Patch address 0x{:X} exceeds 4MB safety limit",
+                    offset + record.data.len()
+                );
             }
             data.resize(offset + record.data.len(), 0);
         }
@@ -440,11 +495,18 @@ pub fn apply_records(records: &[PatchRecord], data: &mut Vec<u8>) -> anyhow::Res
         modified_words += (record.data.len() as u32 + 3) / 4;
     }
 
-    info!("[gxp] patched {} words (0x{:X} bytes)", modified_words, modified_words * 4);
+    info!(
+        "[gxp] patched {} words (0x{:X} bytes)",
+        modified_words,
+        modified_words * 4
+    );
     Ok(())
 }
 
-pub fn parse_and_apply_to_buffer<P: AsRef<Path>>(path: P, data: &mut Vec<u8>) -> anyhow::Result<()> {
+pub fn parse_and_apply_to_buffer<P: AsRef<Path>>(
+    path: P,
+    data: &mut Vec<u8>,
+) -> anyhow::Result<()> {
     let patch = parse_patch_binary(path)?;
     if let Some(section) = patch.sections.first() {
         apply_records(&section.records, data)
@@ -467,7 +529,13 @@ mod tests {
         mock_data.extend_from_slice(&[0x11, 0x22, 0x33, 0x44]); // Data
         mock_data.extend_from_slice(&0xFFFFFFFFu32.to_be_bytes()); // Sentinel
 
-        let sections = read_patch_sections(Cursor::new(mock_data), GxpPatchType::Unknown, true, BootloaderId::None).unwrap();
+        let sections = read_patch_sections(
+            Cursor::new(mock_data),
+            GxpPatchType::Unknown,
+            true,
+            BootloaderId::None,
+        )
+        .unwrap();
         assert_eq!(sections.len(), 1);
         assert_eq!(sections[0].records.len(), 1);
         assert_eq!(sections[0].records[0].data, vec![0x11, 0x22, 0x33, 0x44]);
@@ -486,7 +554,13 @@ mod tests {
         mock_data.push(0x99); // Data (1 byte)
         mock_data.extend_from_slice(&0xFFFFFFFFu32.to_be_bytes()); // Sentinel (aligned to word for reader)
 
-        let sections = read_patch_sections(Cursor::new(mock_data), GxpPatchType::Standalone, false, BootloaderId::Smc).unwrap();
+        let sections = read_patch_sections(
+            Cursor::new(mock_data),
+            GxpPatchType::Standalone,
+            false,
+            BootloaderId::Smc,
+        )
+        .unwrap();
         assert_eq!(sections.len(), 1);
         assert_eq!(sections[0].records.len(), 1);
         assert_eq!(sections[0].records[0].data, vec![0x99]);
@@ -511,7 +585,13 @@ mod tests {
             mock_data.extend_from_slice(&0xFFFFFFFFu32.to_be_bytes());
         }
 
-        let sections = read_patch_sections(Cursor::new(mock_data), GxpPatchType::Jtag5Section, false, BootloaderId::None).unwrap();
+        let sections = read_patch_sections(
+            Cursor::new(mock_data),
+            GxpPatchType::Jtag5Section,
+            false,
+            BootloaderId::None,
+        )
+        .unwrap();
         assert_eq!(sections.len(), 5);
         assert_eq!(sections[4].records[0].data, vec![0xEE]);
 

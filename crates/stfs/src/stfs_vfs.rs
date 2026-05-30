@@ -48,14 +48,23 @@ impl<S> StfsVfs<S> {
 impl<S: ReadAt> StfsVfs<S> {
     pub fn new(source: S, package: StfsPackage) -> Self {
         let tree = build_tree(&package.file_table);
-        StfsVfs { source, package, tree }
+        StfsVfs {
+            source,
+            package,
+            tree,
+        }
     }
 }
 
 fn build_tree(file_table: &StfsFileTable) -> VfsTree<StfsFileMeta> {
     let mut builder = VfsTree::builder();
     for walk_entry in file_table.walk_files() {
-        builder = builder.insert(walk_entry.path, StfsFileMeta { entry: walk_entry.entry });
+        builder = builder.insert(
+            walk_entry.path,
+            StfsFileMeta {
+                entry: walk_entry.entry,
+            },
+        );
     }
     builder.build()
 }
@@ -96,11 +105,17 @@ const _: () = {
 
     #[async_trait]
     impl<S: ReadAt + Debug + Send + Sync + 'static> AsyncFileSystem for StfsVfs<S> {
-        async fn read_dir(&self, path: &str) -> vfs::VfsResult<Box<dyn Unpin + futures::Stream<Item = String> + Send>> {
+        async fn read_dir(
+            &self,
+            path: &str,
+        ) -> vfs::VfsResult<Box<dyn Unpin + futures::Stream<Item = String> + Send>> {
             self.tree.async_vfs_read_dir(path)
         }
 
-        async fn open_file(&self, path: &str) -> vfs::VfsResult<Box<dyn vfs::async_vfs::SeekAndRead + Send + Unpin>> {
+        async fn open_file(
+            &self,
+            path: &str,
+        ) -> vfs::VfsResult<Box<dyn vfs::async_vfs::SeekAndRead + Send + Unpin>> {
             let entry = self.tree.vfs_lookup(path)?;
             let VfsEntry::File(meta) = entry else {
                 return Err(VfsErrorKind::Other("not a file".into()).into());
@@ -109,7 +124,9 @@ const _: () = {
             let mut data = Vec::with_capacity(meta.entry.file_size);
             self.package
                 .extract_file(&self.source, &mut data, &meta.entry)
-                .map_err(|e| vfs::VfsError::from(VfsErrorKind::IoError(std::io::Error::other(e))))?;
+                .map_err(|e| {
+                    vfs::VfsError::from(VfsErrorKind::IoError(std::io::Error::other(e)))
+                })?;
             Ok(Box::new(futures::io::Cursor::new(data)))
         }
 
@@ -125,11 +142,17 @@ const _: () = {
             Err(VfsErrorKind::NotSupported.into())
         }
 
-        async fn create_file(&self, _path: &str) -> vfs::VfsResult<Box<dyn futures::io::AsyncWrite + Send + Unpin>> {
+        async fn create_file(
+            &self,
+            _path: &str,
+        ) -> vfs::VfsResult<Box<dyn futures::io::AsyncWrite + Send + Unpin>> {
             Err(VfsErrorKind::NotSupported.into())
         }
 
-        async fn append_file(&self, _path: &str) -> vfs::VfsResult<Box<dyn futures::io::AsyncWrite + Send + Unpin>> {
+        async fn append_file(
+            &self,
+            _path: &str,
+        ) -> vfs::VfsResult<Box<dyn futures::io::AsyncWrite + Send + Unpin>> {
             Err(VfsErrorKind::NotSupported.into())
         }
 

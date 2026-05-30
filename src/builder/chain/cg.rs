@@ -43,8 +43,13 @@ pub struct BootloaderCg {
 
 impl BootloaderCg {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload): (BootloaderHeader, &[u8]) = BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CG header")?;
-        let mut cg = Self { header, data: payload.to_vec(), metadata: None };
+        let (header, payload): (BootloaderHeader, &[u8]) =
+            BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CG header")?;
+        let mut cg = Self {
+            header,
+            data: payload.to_vec(),
+            metadata: None,
+        };
         cg.populate_metadata();
         Ok(cg)
     }
@@ -62,7 +67,12 @@ impl BootloaderCg {
         let mut new_hash = [0u8; 0x14];
         new_hash.copy_from_slice(&self.data[0x2C..0x40]);
 
-        self.metadata = Some(CgMetadata { original_size, original_hash, new_size, new_hash });
+        self.metadata = Some(CgMetadata {
+            original_size,
+            original_hash,
+            new_size,
+            new_hash,
+        });
     }
 
     pub fn sync_metadata(&mut self) {
@@ -87,16 +97,37 @@ impl BootloaderCg {
     }
 
     pub fn print_info(&self) {
-        let indicator = if (self.header.magic.get() & 0xF000) == 0x5000 { "SG" } else { "CG" };
-        info!("[builder] {} version: {}", indicator, self.header.version.get());
-        info!("[builder] {} size: 0x{:x}", indicator, self.header.size.get());
+        let indicator = if (self.header.magic.get() & 0xF000) == 0x5000 {
+            "SG"
+        } else {
+            "CG"
+        };
+        info!(
+            "[builder] {} version: {}",
+            indicator,
+            self.header.version.get()
+        );
+        info!(
+            "[builder] {} size: 0x{:x}",
+            indicator,
+            self.header.size.get()
+        );
 
         if self.is_decrypted() {
             if let Some(ref meta) = self.metadata {
-                info!("[builder] {} base size: 0x{:x}", indicator, meta.original_size);
-                info!("[builder] {}-G base hash: {:02x?}", indicator, meta.original_hash);
+                info!(
+                    "[builder] {} base size: 0x{:x}",
+                    indicator, meta.original_size
+                );
+                info!(
+                    "[builder] {}-G base hash: {:02x?}",
+                    indicator, meta.original_hash
+                );
                 info!("[builder] {} target size: 0x{:x}", indicator, meta.new_size);
-                info!("[builder] {}-G target hash: {:02x?}", indicator, meta.new_hash);
+                info!(
+                    "[builder] {}-G target hash: {:02x?}",
+                    indicator, meta.new_hash
+                );
             } else {
                 let original_size = BigEndian::read_u32(&self.data[0x10..0x14]);
                 let original_hash = &self.data[0x14..0x28];
@@ -104,7 +135,10 @@ impl BootloaderCg {
                 let new_hash = &self.data[0x2C..0x40];
 
                 info!("[builder] {} base size: 0x{:x}", indicator, original_size);
-                info!("[builder] {}-G base hash: {:02x?}", indicator, original_hash);
+                info!(
+                    "[builder] {}-G base hash: {:02x?}",
+                    indicator, original_hash
+                );
                 info!("[builder] {} target size: 0x{:x}", indicator, new_size);
                 info!("[builder] {}-G target hash: {:02x?}", indicator, new_hash);
             }
@@ -142,7 +176,10 @@ impl BootloaderCg {
             return;
         }
 
-        if let Ok(hash) = rot_sum_sha(&IntoBytes::as_bytes(&self.header)[..0x10], &self.data[0x10..payload_len]) {
+        if let Ok(hash) = rot_sum_sha(
+            &IntoBytes::as_bytes(&self.header)[..0x10],
+            &self.data[0x10..payload_len],
+        ) {
             sha_out.copy_from_slice(&hash);
         }
     }

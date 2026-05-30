@@ -48,7 +48,14 @@ pub struct SmcMetadata {
     pub pairing_data: [u8; 3],
 }
 
-#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
+#[derive(
+    zerocopy::FromBytes,
+    zerocopy::IntoBytes,
+    zerocopy::KnownLayout,
+    zerocopy::Immutable,
+    Clone,
+    Copy,
+)]
 #[repr(C)]
 pub struct SmcHeader {
     pub header: BootloaderHeader,
@@ -64,8 +71,13 @@ pub struct Smc {
 
 impl Smc {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload) = SmcHeader::read_from_prefix(data).map_err(|_| "Failed to parse SMC header")?;
-        let mut smc = Self { header: header.clone(), data: payload.to_vec(), metadata: None };
+        let (header, payload) =
+            SmcHeader::read_from_prefix(data).map_err(|_| "Failed to parse SMC header")?;
+        let mut smc = Self {
+            header: header.clone(),
+            data: payload.to_vec(),
+            metadata: None,
+        };
         smc.populate_metadata();
         Ok(smc)
     }
@@ -97,7 +109,10 @@ impl Smc {
         });
 
         if let Some(meta) = &self.metadata {
-            info!("[smc] Metadata: [{:?}] Type 0x{:02X}, Ver {}.{:02}", meta.smc_type, meta.type_byte, meta.major_version, meta.minor_version);
+            info!(
+                "[smc] Metadata: [{:?}] Type 0x{:02X}, Ver {}.{:02}",
+                meta.smc_type, meta.type_byte, meta.major_version, meta.minor_version
+            );
         }
     }
 
@@ -113,12 +128,19 @@ impl Smc {
         for i in 0..self.data.len() - 6 {
             match self.data[i] {
                 0x05 => {
-                    if self.data[i + 2] == 0xE5 && self.data[i + 4] == 0xB4 && self.data[i + 5] == 0x05 {
+                    if self.data[i + 2] == 0xE5
+                        && self.data[i + 4] == 0xB4
+                        && self.data[i + 5] == 0x05
+                    {
                         retail_found = true;
                     }
                 }
                 0x00 => {
-                    if self.data[i + 1] == 0x00 && self.data[i + 2] == 0xE5 && self.data[i + 4] == 0xB4 && self.data[i + 5] == 0x05 {
+                    if self.data[i + 1] == 0x00
+                        && self.data[i + 2] == 0xE5
+                        && self.data[i + 4] == 0xB4
+                        && self.data[i + 5] == 0x05
+                    {
                         glitch_patched = true;
                     }
                 }
@@ -128,7 +150,10 @@ impl Smc {
                     }
                 }
                 0xD0 => {
-                    if self.data[i + 1] == 0x00 && self.data[i + 2] == 0x00 && self.data[i + 3] == 0x1B {
+                    if self.data[i + 1] == 0x00
+                        && self.data[i + 2] == 0x00
+                        && self.data[i + 3] == 0x1B
+                    {
                         identified = SmcType::Jtag;
                     }
                 }
@@ -154,7 +179,10 @@ impl Smc {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
 
-        if let Ok(hash) = rot_sum_sha(&IntoBytes::as_bytes(&self.header.header)[..0x10], &self.data[..(size_aligned as usize - std::mem::size_of::<SmcHeader>())]) {
+        if let Ok(hash) = rot_sum_sha(
+            &IntoBytes::as_bytes(&self.header.header)[..0x10],
+            &self.data[..(size_aligned as usize - std::mem::size_of::<SmcHeader>())],
+        ) {
             sha_out.copy_from_slice(&hash);
         }
     }
@@ -192,7 +220,10 @@ pub struct RawSmc {
 
 impl RawSmc {
     pub fn new(data: Vec<u8>) -> Self {
-        let mut smc = Self { data, metadata: None };
+        let mut smc = Self {
+            data,
+            metadata: None,
+        };
         smc.populate_metadata();
         smc
     }
@@ -239,10 +270,16 @@ impl RawSmc {
         });
 
         if major != 0 && major != 0xFF {
-            info!("[smc] Identified Version: {}.{:02} (Type: 0x{:02X}, Offset: 0x101)", major, minor, type_byte);
+            info!(
+                "[smc] Identified Version: {}.{:02} (Type: 0x{:02X}, Offset: 0x101)",
+                major, minor, type_byte
+            );
         } else {
             // For debugging garbage versions
-            info!("[smc] Raw Version Bytes at 0x100: {:02X} {:02X} {:02X}", type_byte, major, minor);
+            info!(
+                "[smc] Raw Version Bytes at 0x100: {:02X} {:02X} {:02X}",
+                type_byte, major, minor
+            );
         }
     }
 
@@ -258,12 +295,19 @@ impl RawSmc {
         for i in 0..self.data.len() - 6 {
             match self.data[i] {
                 0x05 => {
-                    if self.data[i + 2] == 0xE5 && self.data[i + 4] == 0xB4 && self.data[i + 5] == 0x05 {
+                    if self.data[i + 2] == 0xE5
+                        && self.data[i + 4] == 0xB4
+                        && self.data[i + 5] == 0x05
+                    {
                         retail_found = true;
                     }
                 }
                 0x00 => {
-                    if self.data[i + 1] == 0x00 && self.data[i + 2] == 0xE5 && self.data[i + 4] == 0xB4 && self.data[i + 5] == 0x05 {
+                    if self.data[i + 1] == 0x00
+                        && self.data[i + 2] == 0xE5
+                        && self.data[i + 4] == 0xB4
+                        && self.data[i + 5] == 0x05
+                    {
                         glitch_patched = true;
                     }
                 }
@@ -273,7 +317,10 @@ impl RawSmc {
                     }
                 }
                 0xD0 => {
-                    if self.data[i + 1] == 0x00 && self.data[i + 2] == 0x00 && self.data[i + 3] == 0x1B {
+                    if self.data[i + 1] == 0x00
+                        && self.data[i + 2] == 0x00
+                        && self.data[i + 3] == 0x1B
+                    {
                         identified = SmcType::Jtag;
                     }
                 }
@@ -414,14 +461,18 @@ impl SmcConfig {
     }
 
     pub fn new_empty() -> Self {
-        Self { data: Box::new([0xFF; Self::SIZE]) }
+        Self {
+            data: Box::new([0xFF; Self::SIZE]),
+        }
     }
 
     pub fn parse(data: &[u8]) -> Result<Self, String> {
         if data.len() != Self::SIZE {
             return Err(format!("Invalid SMC Config size"));
         }
-        let mut config = Self { data: Box::new([0; Self::SIZE]) };
+        let mut config = Self {
+            data: Box::new([0; Self::SIZE]),
+        };
         config.data.copy_from_slice(data);
         Ok(config)
     }

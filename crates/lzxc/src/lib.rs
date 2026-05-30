@@ -320,7 +320,8 @@ impl Encoder {
             }
             Strategy::LiteralOnly => {
                 self.tokens.clear();
-                self.tokens.extend(effective_input.iter().map(|&b| verbatim::Token::Literal(b)));
+                self.tokens
+                    .extend(effective_input.iter().map(|&b| verbatim::Token::Literal(b)));
                 true
             }
             // Greedy feeds the stateful match finder so matches span chunks.
@@ -336,10 +337,17 @@ impl Encoder {
         // The check needs the current R-queue to simulate main-symbol lookup
         // accurately.
         let current_r = self.verbatim_state.r;
-        let use_verbatim = has_tokens && verbatim::main_tree_is_nondegenerate(&self.tokens, current_r);
+        let use_verbatim =
+            has_tokens && verbatim::main_tree_is_nondegenerate(&self.tokens, current_r);
 
         if use_verbatim {
-            verbatim::emit_verbatim_block(&mut w, &mut self.verbatim_state, &self.tokens, effective_input.len() as u32, self.window_size);
+            verbatim::emit_verbatim_block(
+                &mut w,
+                &mut self.verbatim_state,
+                &self.tokens,
+                effective_input.len() as u32,
+                self.window_size,
+            );
         } else {
             self.emit_uncompressed_block(&mut w, effective_input);
         }
@@ -466,7 +474,11 @@ impl<W: std::io::Write> EncoderWriter<W> {
     /// Wrap `inner`, compressing every byte written to this `EncoderWriter`
     /// before forwarding it.
     pub fn new(inner: W, window_size: WindowSize) -> Self {
-        Self { inner: Some(inner), encoder: Encoder::new(window_size), buf: Vec::with_capacity(MAX_CHUNK_SIZE) }
+        Self {
+            inner: Some(inner),
+            encoder: Encoder::new(window_size),
+            buf: Vec::with_capacity(MAX_CHUNK_SIZE),
+        }
     }
 
     /// Enable E8 preprocessing with the given translation bound. See
@@ -495,7 +507,10 @@ impl<W: std::io::Write> EncoderWriter<W> {
         // `inner` is still Some unless an earlier write error poisoned it;
         // Drop's best-effort flush only runs if we leave Some here, which we
         // don't want after a successful finish.
-        Ok(self.inner.take().expect("EncoderWriter::finish called twice"))
+        Ok(self
+            .inner
+            .take()
+            .expect("EncoderWriter::finish called twice"))
     }
 
     fn flush_trailing(&mut self) -> std::io::Result<()> {
@@ -507,7 +522,12 @@ impl<W: std::io::Write> EncoderWriter<W> {
 
     fn emit_chunk(&mut self) -> std::io::Result<()> {
         let chunk = self.encoder.encode_chunk(&self.buf);
-        let size = u16::try_from(chunk.len()).map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "compressed chunk exceeds u16 size prefix"))?;
+        let size = u16::try_from(chunk.len()).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "compressed chunk exceeds u16 size prefix",
+            )
+        })?;
         // `unwrap` is safe: `flush_trailing` guards this path, and `write`
         // asserts on missing-inner before it ever reaches here.
         let inner = self.inner.as_mut().expect("inner sink taken; cannot emit");
@@ -539,7 +559,10 @@ impl<W: std::io::Write> std::io::Write for EncoderWriter<W> {
     /// a partial chunk can only be emitted once, at the end of the input.
     /// Use [`finish`][Self::finish] for that.
     fn flush(&mut self) -> std::io::Result<()> {
-        self.inner.as_mut().expect("EncoderWriter: flush after finish").flush()
+        self.inner
+            .as_mut()
+            .expect("EncoderWriter: flush after finish")
+            .flush()
     }
 }
 
@@ -577,7 +600,11 @@ mod tests {
         let mut dec = lzxd::Lzxd::new(to_lzxd(window));
         let mut decoded: Vec<u8> = Vec::with_capacity(input.len());
         let mut offset = 0;
-        let chunks: Vec<&[u8]> = if input.is_empty() { vec![&[][..]] } else { input.chunks(MAX_CHUNK_SIZE).collect() };
+        let chunks: Vec<&[u8]> = if input.is_empty() {
+            vec![&[][..]]
+        } else {
+            input.chunks(MAX_CHUNK_SIZE).collect()
+        };
         for chunk in chunks {
             let chunk_bytes = enc.encode_chunk(chunk);
             if chunk.is_empty() {
@@ -615,7 +642,9 @@ mod tests {
 
     #[test]
     fn multiple_chunks() {
-        let input: Vec<u8> = (0..MAX_CHUNK_SIZE * 3 + 100).map(|i| (i & 0xFF) as u8).collect();
+        let input: Vec<u8> = (0..MAX_CHUNK_SIZE * 3 + 100)
+            .map(|i| (i & 0xFF) as u8)
+            .collect();
         roundtrip(&input, WindowSize::KB64);
     }
 
@@ -642,8 +671,16 @@ mod tests {
 
         // Now check actual compression size.
         let mut enc = Encoder::new(WindowSize::KB32);
-        let compressed: usize = input.chunks(MAX_CHUNK_SIZE).map(|c| enc.encode_chunk(c).len()).sum();
-        assert!(compressed < input.len() / 4, "expected at least 4x compression, got {} -> {}", input.len(), compressed);
+        let compressed: usize = input
+            .chunks(MAX_CHUNK_SIZE)
+            .map(|c| enc.encode_chunk(c).len())
+            .sum();
+        assert!(
+            compressed < input.len() / 4,
+            "expected at least 4x compression, got {} -> {}",
+            input.len(),
+            compressed
+        );
     }
 
     #[test]
@@ -762,7 +799,12 @@ mod tests {
             decoded.extend_from_slice(out);
         }
         assert_eq!(decoded, basefile, "round-trip failed on real XEX bytes");
-        eprintln!("afplayer.xex: {} -> {} ({:.1}%)", basefile.len(), compressed, 100.0 * compressed as f64 / basefile.len() as f64);
+        eprintln!(
+            "afplayer.xex: {} -> {} ({:.1}%)",
+            basefile.len(),
+            compressed,
+            100.0 * compressed as f64 / basefile.len() as f64
+        );
     }
 
     #[test]

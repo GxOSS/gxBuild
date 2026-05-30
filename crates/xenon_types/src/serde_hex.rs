@@ -7,10 +7,17 @@ fn serialize_hex<S: Serializer>(bytes: &[u8], s: S) -> Result<S::Ok, S::Error> {
     s.serialize_str(&hex)
 }
 
-fn deserialize_hex<'de, D: Deserializer<'de>>(d: D, expected_len: usize) -> Result<Vec<u8>, D::Error> {
+fn deserialize_hex<'de, D: Deserializer<'de>>(
+    d: D,
+    expected_len: usize,
+) -> Result<Vec<u8>, D::Error> {
     let s: &str = de::Deserialize::deserialize(d)?;
     if s.len() != expected_len * 2 {
-        return Err(de::Error::custom(format!("expected {} hex chars, got {}", expected_len * 2, s.len())));
+        return Err(de::Error::custom(format!(
+            "expected {} hex chars, got {}",
+            expected_len * 2,
+            s.len()
+        )));
     }
     let mut bytes = Vec::with_capacity(expected_len);
     for i in 0..expected_len {
@@ -32,9 +39,9 @@ macro_rules! hex_serde_mod {
 
             pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; $len], D::Error> {
                 let bytes = super::deserialize_hex(d, $len)?;
-                bytes
-                    .try_into()
-                    .map_err(|_| serde::de::Error::custom(concat!("expected ", stringify!($len), " bytes")))
+                bytes.try_into().map_err(|_| {
+                    serde::de::Error::custom(concat!("expected ", stringify!($len), " bytes"))
+                })
             }
         }
     };

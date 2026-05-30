@@ -35,7 +35,12 @@ use zerocopy::FromBytes;
 
 /// xeBuild v1.21.810 clone - System image builder
 #[derive(Parser, Debug)]
-#[command(name = "gxBuild", about = "Rust Xbox 360 Nand Manipulation Utility", version, disable_help_flag = true)]
+#[command(
+    name = "gxBuild",
+    about = "Rust Xbox 360 Nand Manipulation Utility",
+    version,
+    disable_help_flag = true
+)]
 pub struct GgxArgs {
     /// Operation mode (defaults to build)
     #[command(subcommand)]
@@ -291,14 +296,18 @@ pub fn ggx_cli() {
             error!("[cli] Session failed: {}", e);
         } else if let Some(GgxMode::Build { .. }) | None = args.mode {
             // Build succeeded, calculate SHA-1 if requested
-            let output_path = args
-                .output
-                .clone()
-                .unwrap_or_else(|| args.output_dir.clone().unwrap_or_else(|| PathBuf::from("updflash.bin")));
+            let output_path = args.output.clone().unwrap_or_else(|| {
+                args.output_dir
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from("updflash.bin"))
+            });
             if output_path.exists() {
                 if let Ok(data) = std::fs::read(&output_path) {
                     if let Ok(hash) = crate::crypto::sha(&[&data]) {
-                        let sha_str = hash.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                        let sha_str = hash
+                            .iter()
+                            .map(|b| format!("{:02x}", b))
+                            .collect::<String>();
                         info!("[cli] Image SHA-1: {}", sha_str);
 
                         if let Some(sha_p) = args.sha_file.clone() {
@@ -322,20 +331,32 @@ pub fn ggx_cli() {
 }
 
 fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
-    let build_type = args.build_type.as_ref().ok_or_else(|| anyhow::anyhow!("Missing required argument: --type (-t)"))?;
-    let console_type = args.console.as_ref().ok_or_else(|| anyhow::anyhow!("Missing required argument: --console (-c)"))?;
+    let build_type = args
+        .build_type
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Missing required argument: --type (-t)"))?;
+    let console_type = args
+        .console
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Missing required argument: --console (-c)"))?;
 
     // --- Path Resolution ---
     // -d = INI directory (contains _retail.ini, bootloaders, flashfs/)
     let ini_dir = args.data_dir.clone().unwrap_or_else(|| PathBuf::from("."));
 
     // -f = data directory (nand dump, cpu key, smc, fcrt, keyvault)
-    let data_dir = args.fw_dir.clone().unwrap_or_else(|| PathBuf::from("mydata"));
+    let data_dir = args
+        .fw_dir
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("mydata"));
     let payloads_dir = ini_dir.join("../payloads");
     let smc_dir = ini_dir.join("../smc");
 
     // -m = common directory (shared bootloaders, defaults to <ini_dir>/../common)
-    let resolved_common_dir = args.common_dir.clone().unwrap_or_else(|| ini_dir.join("../common"));
+    let resolved_common_dir = args
+        .common_dir
+        .clone()
+        .unwrap_or_else(|| ini_dir.join("../common"));
 
     session.set_ini_dir(ini_dir.clone());
     session.set_common_dir(resolved_common_dir.clone());
@@ -424,7 +445,11 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
 
     // Resolve INI file path: <ini_dir>/_<type>.ini
     let build_type_str = format!("{:?}", build_type).to_lowercase();
-    let ini_suffix = args.ini_ext.as_ref().map(|ext| format!("_{}", ext)).unwrap_or_default();
+    let ini_suffix = args
+        .ini_ext
+        .as_ref()
+        .map(|ext| format!("_{}", ext))
+        .unwrap_or_default();
     let ini_filename = format!("_{}{}.ini", build_type_str, ini_suffix);
     let ini_path = ini_dir.join(&ini_filename);
 
@@ -466,23 +491,26 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     session.enqueue(InternalCommand::FinalizeMobile);
 
     // Try to find and enqueue a file by name across search paths
-    let enqueue_if_found = |session: &mut Session, name: &str, search_paths: &[&std::path::PathBuf]| {
-        let lower = name.to_lowercase();
-        for dir in search_paths {
-            let candidate = dir.join(name);
-            if candidate.exists() {
-                session.enqueue(InternalCommand::Update { path: candidate });
-                return true;
+    let enqueue_if_found =
+        |session: &mut Session, name: &str, search_paths: &[&std::path::PathBuf]| {
+            let lower = name.to_lowercase();
+            for dir in search_paths {
+                let candidate = dir.join(name);
+                if candidate.exists() {
+                    session.enqueue(InternalCommand::Update { path: candidate });
+                    return true;
+                }
+                // Also try lowercase variant
+                let candidate_lower = dir.join(&lower);
+                if candidate_lower.exists() {
+                    session.enqueue(InternalCommand::Update {
+                        path: candidate_lower,
+                    });
+                    return true;
+                }
             }
-            // Also try lowercase variant
-            let candidate_lower = dir.join(&lower);
-            if candidate_lower.exists() {
-                session.enqueue(InternalCommand::Update { path: candidate_lower });
-                return true;
-            }
-        }
-        false
-    };
+            false
+        };
 
     // Build search path list: INI dir, INI subfolders, common
     let ini_flashfs = ini_dir.join("flashfs");
@@ -501,7 +529,10 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     // Enqueue files from INI target filenames, track which CF/CG were actually found
     let mut cf_on_disk = false;
     let mut cg_on_disk = false;
-    info!("[cli] Discovering {} assets from INI targets...", target_filenames.len());
+    info!(
+        "[cli] Discovering {} assets from INI targets...",
+        target_filenames.len()
+    );
     for filename in &target_filenames {
         let found = enqueue_if_found(session, filename, &search_paths);
         if filename.starts_with("cf_") && filename.ends_with(".bin") && found {
@@ -527,7 +558,11 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if path.is_file() {
-                        let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+                        let name = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_lowercase();
                         if name.starts_with("su") {
                             info!("[cli] Found STFS container in INI dir: {:?}", path);
                             session.enqueue(InternalCommand::Update { path });
@@ -539,7 +574,10 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     }
 
     // Data Dir Discovery (-f) - NAND, CPU Key, Security, SMC, FCRT, KV
-    info!("[cli] Scanning Data Dir (nand/key/smc/fcrt/kv): {:?}", data_dir);
+    info!(
+        "[cli] Scanning Data Dir (nand/key/smc/fcrt/kv): {:?}",
+        data_dir
+    );
 
     // NAND Image Discovery (data dir only)
     let mut nand_found = false;
@@ -583,16 +621,24 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         info!("[cli] Attempting Donor Image");
         let layout = match console_type {
             CliConsoleType::xenon => crate::core::images::blocks::NandLayout::Xsb,
-            CliConsoleType::zephyr | CliConsoleType::falcon | CliConsoleType::jasper => crate::core::images::blocks::NandLayout::Sb,
-            CliConsoleType::jasper256 | CliConsoleType::jasper512 | CliConsoleType::jasperbb | CliConsoleType::jasperbigffs => {
-                crate::core::images::blocks::NandLayout::Bb
+            CliConsoleType::zephyr | CliConsoleType::falcon | CliConsoleType::jasper => {
+                crate::core::images::blocks::NandLayout::Sb
             }
+            CliConsoleType::jasper256
+            | CliConsoleType::jasper512
+            | CliConsoleType::jasperbb
+            | CliConsoleType::jasperbigffs => crate::core::images::blocks::NandLayout::Bb,
             CliConsoleType::trinity => crate::core::images::blocks::NandLayout::Sb,
             CliConsoleType::trinitybigffs => crate::core::images::blocks::NandLayout::Bb,
             CliConsoleType::corona => crate::core::images::blocks::NandLayout::Sb,
-            CliConsoleType::corona4g | CliConsoleType::winchester => crate::core::images::blocks::NandLayout::Emmc,
+            CliConsoleType::corona4g | CliConsoleType::winchester => {
+                crate::core::images::blocks::NandLayout::Emmc
+            }
         };
-        info!("[cli] Synthesizing blank image from scratch (Layout: {:?}).", layout);
+        info!(
+            "[cli] Synthesizing blank image from scratch (Layout: {:?}).",
+            layout
+        );
         session.enqueue(InternalCommand::CreateImage { layout });
     }
 
@@ -601,7 +647,10 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         session.set_cpukey(key.clone());
     } else {
         let mut key_found = false;
-        let key_candidates = [(data_dir.join("cpukey.bin"), true), (data_dir.join("cpukey.txt"), false)];
+        let key_candidates = [
+            (data_dir.join("cpukey.bin"), true),
+            (data_dir.join("cpukey.txt"), false),
+        ];
 
         for (p, is_bin) in &key_candidates {
             if p.exists() {
@@ -647,20 +696,36 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     let nofcrt_enabled = session.options.nofcrt.unwrap_or(false);
 
     for p in &security_candidates {
-        let name = p.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+        let name = p
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase();
         if name == "fcrt.bin" && nofcrt_enabled {
             continue;
         }
         if p.exists() {
             if let Ok(data) = std::fs::read(p) {
-                info!("[cli] Discovered security asset: {:?} ({} bytes)", p, data.len());
+                info!(
+                    "[cli] Discovered security asset: {:?} ({} bytes)",
+                    p,
+                    data.len()
+                );
                 session.pending_assets.insert(name, data);
             }
         }
     }
 
     // Enqueue INI Parsing
-    session.parse_ini(&ini_path, console_section, &ini_dir, &resolved_common_dir, &data_dir, &payloads_dir, &smc_dir);
+    session.parse_ini(
+        &ini_path,
+        console_section,
+        &ini_dir,
+        &resolved_common_dir,
+        &data_dir,
+        &payloads_dir,
+        &smc_dir,
+    );
 
     // 1BL Key Warning
     if args.bl_key.is_some() {
@@ -727,22 +792,29 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                             target: None,
                         });
                     } else {
-                        error!("[cli] Invalid offset value '{}' in raw patch: {}", offset_str, patch_str);
+                        error!(
+                            "[cli] Invalid offset value '{}' in raw patch: {}",
+                            offset_str, patch_str
+                        );
                     }
                 } else {
                     error!("[cli] Raw patch file not found: {}", filename);
                 }
             } else {
-                error!("[cli] Malformed raw patch entry (expected filename,offset): {}", patch_str);
+                error!(
+                    "[cli] Malformed raw patch entry (expected filename,offset): {}",
+                    patch_str
+                );
             }
         }
     }
 
     // Output Path Resolution
-    let output_path = args
-        .output
-        .clone()
-        .unwrap_or_else(|| args.output_dir.clone().unwrap_or_else(|| PathBuf::from("updflash.bin")));
+    let output_path = args.output.clone().unwrap_or_else(|| {
+        args.output_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("updflash.bin"))
+    });
     session.build(output_path.clone(), 0); // Target 0 for now
 
     Ok(())
@@ -750,11 +822,16 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
 
 fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     // -f = data directory (nand dump, cpu key)
-    let data_dir = args.fw_dir.clone().unwrap_or_else(|| PathBuf::from("mydata"));
+    let data_dir = args
+        .fw_dir
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("mydata"));
     let all = matches!(args.mode, Some(GgxMode::Extract { all: true }));
 
     if args.ecc.is_some() && args.source_nand.is_some() {
-        return Err(anyhow::anyhow!("Provide either -l/--image (NAND) or --ecc (ECC image), not both."));
+        return Err(anyhow::anyhow!(
+            "Provide either -l/--image (NAND) or --ecc (ECC image), not both."
+        ));
     }
 
     // -o options: nomobile
@@ -767,7 +844,10 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     }
 
     let base_output_dir = args.output_dir.clone().unwrap_or_else(|| data_dir.clone());
-    let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
     let output_dir = base_output_dir.join(format!("extract-{}", timestamp));
 
     let strip_ecc = |ecc_raw: &[u8]| -> Vec<u8> {
@@ -790,7 +870,11 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                 out[out_off..out_off + 0x200].copy_from_slice(&ecc_raw[in_off..in_off + 0x200]);
             }
             if ecc_bad > 0 {
-                log::warn!("[cli] ECC: {} page(s) failed verification out of {}", ecc_bad, pages);
+                log::warn!(
+                    "[cli] ECC: {} page(s) failed verification out of {}",
+                    ecc_bad,
+                    pages
+                );
             }
             return out;
         }
@@ -802,9 +886,12 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                 let in_off = i * 0x840;
                 let out_off = i * 0x800;
                 out[out_off..out_off + 0x200].copy_from_slice(&ecc_raw[in_off..in_off + 0x200]);
-                out[out_off + 0x200..out_off + 0x400].copy_from_slice(&ecc_raw[in_off + 0x200..in_off + 0x400]);
-                out[out_off + 0x400..out_off + 0x600].copy_from_slice(&ecc_raw[in_off + 0x400..in_off + 0x600]);
-                out[out_off + 0x600..out_off + 0x800].copy_from_slice(&ecc_raw[in_off + 0x600..in_off + 0x800]);
+                out[out_off + 0x200..out_off + 0x400]
+                    .copy_from_slice(&ecc_raw[in_off + 0x200..in_off + 0x400]);
+                out[out_off + 0x400..out_off + 0x600]
+                    .copy_from_slice(&ecc_raw[in_off + 0x400..in_off + 0x600]);
+                out[out_off + 0x600..out_off + 0x800]
+                    .copy_from_slice(&ecc_raw[in_off + 0x600..in_off + 0x800]);
             }
             return out;
         }
@@ -815,7 +902,9 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
     let extract_ecc = |ecc_path: &PathBuf, output_dir: &PathBuf| -> anyhow::Result<()> {
         let _ = std::fs::create_dir_all(&output_dir);
 
-        let ecc_raw = std::fs::read(ecc_path).map_err(|e| anyhow::anyhow!("Failed to read ECC file '{}': {}", ecc_path.display(), e))?;
+        let ecc_raw = std::fs::read(ecc_path).map_err(|e| {
+            anyhow::anyhow!("Failed to read ECC file '{}': {}", ecc_path.display(), e)
+        })?;
         let clean = strip_ecc(&ecc_raw);
         let layout = crate::core::images::blocks::NandLayout::detect(&ecc_raw)
             .or_else(|_| crate::core::images::blocks::NandLayout::detect(&clean))
@@ -828,7 +917,8 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                 return Ok(false);
             }
             let p = output_dir.join(name);
-            std::fs::write(&p, bytes).map_err(|e| anyhow::anyhow!("Failed to write '{}': {}", p.display(), e))?;
+            std::fs::write(&p, bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to write '{}': {}", p.display(), e))?;
             Ok(true)
         };
 
@@ -847,7 +937,9 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                 return false;
             }
             let scan_len = std::cmp::min(data.len(), 0x200);
-            data[..scan_len].windows(b"Microsoft".len()).any(|w| w == b"Microsoft")
+            data[..scan_len]
+                .windows(b"Microsoft".len())
+                .any(|w| w == b"Microsoft")
         };
 
         let walk_chain = |mut off: usize, cf_ptr: usize| -> anyhow::Result<usize> {
@@ -861,12 +953,17 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                 if off.saturating_add(0x10) > clean.len() {
                     break;
                 }
-                let blh = match crate::builder::chain::BootloaderHeader::read_from_prefix(&clean[off..off + 0x10]) {
+                let blh = match crate::builder::chain::BootloaderHeader::read_from_prefix(
+                    &clean[off..off + 0x10],
+                ) {
                     Ok((v, _)) => v,
                     Err(_) => break,
                 };
                 let bl_size = blh.size.get() as usize;
-                if bl_size < 0x10 || bl_size > 0x2000000 || off.saturating_add(bl_size) > clean.len() {
+                if bl_size < 0x10
+                    || bl_size > 0x2000000
+                    || off.saturating_add(bl_size) > clean.len()
+                {
                     break;
                 }
 
@@ -878,7 +975,10 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                         let has_cba_flag = (flags & 0x800) == 0x800;
                         let is_single = cb_seen == 1 && !has_cba_flag;
                         let is_cba = cb_seen == 1 && has_cba_flag;
-                        let is_cbx = cb_seen == 2 && has_cba_flag && bl_size <= 0x800 && (blh.version.get() == 0x3C48 || bl_size == 0x400);
+                        let is_cbx = cb_seen == 2
+                            && has_cba_flag
+                            && bl_size <= 0x800
+                            && (blh.version.get() == 0x3C48 || bl_size == 0x400);
 
                         let name = if is_single {
                             "CB.bin"
@@ -912,14 +1012,22 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                         }
                     }
                     crate::builder::chain::XenonBlType::CF => {
-                        let name = if cf_count == 0 { "CF_0.bin" } else { "CF_1.bin" };
+                        let name = if cf_count == 0 {
+                            "CF_0.bin"
+                        } else {
+                            "CF_1.bin"
+                        };
                         if write_part(name, data, output_dir)? {
                             local_wrote += 1;
                         }
                         cf_count += 1;
                     }
                     crate::builder::chain::XenonBlType::CG => {
-                        let name = if cg_count == 0 { "CG_0.bin" } else { "CG_1.bin" };
+                        let name = if cg_count == 0 {
+                            "CG_0.bin"
+                        } else {
+                            "CG_1.bin"
+                        };
                         if write_part(name, data, output_dir)? {
                             local_wrote += 1;
                         }
@@ -935,7 +1043,9 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                 let scan_end = std::cmp::min(clean.len().saturating_sub(0x10), 0x20000);
                 let mut scan_off = 0x8000usize;
                 while scan_off < scan_end {
-                    if let Ok((blh, _)) = crate::builder::chain::BootloaderHeader::read_from_prefix(&clean[scan_off..scan_off + 0x10]) {
+                    if let Ok((blh, _)) = crate::builder::chain::BootloaderHeader::read_from_prefix(
+                        &clean[scan_off..scan_off + 0x10],
+                    ) {
                         if blh.get_type() == crate::builder::chain::XenonBlType::CB {
                             let bl_size = blh.size.get() as usize;
                             let flags = blh.flags.get();
@@ -964,25 +1074,38 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
                     if scan_off.saturating_add(0x10) > clean.len() {
                         break;
                     }
-                    let blh = match crate::builder::chain::BootloaderHeader::read_from_prefix(&clean[scan_off..scan_off + 0x10]) {
+                    let blh = match crate::builder::chain::BootloaderHeader::read_from_prefix(
+                        &clean[scan_off..scan_off + 0x10],
+                    ) {
                         Ok((v, _)) => v,
                         Err(_) => break,
                     };
                     let bl_size = blh.size.get() as usize;
-                    if bl_size < 0x10 || bl_size > 0x2000000 || scan_off.saturating_add(bl_size) > clean.len() {
+                    if bl_size < 0x10
+                        || bl_size > 0x2000000
+                        || scan_off.saturating_add(bl_size) > clean.len()
+                    {
                         break;
                     }
                     let data = &clean[scan_off..scan_off + bl_size];
                     match blh.get_type() {
                         crate::builder::chain::XenonBlType::CF => {
-                            let name = if cf_count == 0 { "CF_0.bin" } else { "CF_1.bin" };
+                            let name = if cf_count == 0 {
+                                "CF_0.bin"
+                            } else {
+                                "CF_1.bin"
+                            };
                             if write_part(name, data, output_dir)? {
                                 local_wrote += 1;
                             }
                             cf_count += 1;
                         }
                         crate::builder::chain::XenonBlType::CG => {
-                            let name = if cg_count == 0 { "CG_0.bin" } else { "CG_1.bin" };
+                            let name = if cg_count == 0 {
+                                "CG_0.bin"
+                            } else {
+                                "CG_1.bin"
+                            };
                             if write_part(name, data, output_dir)? {
                                 local_wrote += 1;
                             }
@@ -998,7 +1121,11 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         };
 
         if let Some(h) = header {
-            if write_part("NandHeader.bin", zerocopy::IntoBytes::as_bytes(&h), output_dir)? {
+            if write_part(
+                "NandHeader.bin",
+                zerocopy::IntoBytes::as_bytes(&h),
+                output_dir,
+            )? {
                 wrote += 1;
             }
 
@@ -1067,7 +1194,12 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         }
 
         if wrote == 0 {
-            return Err(anyhow::anyhow!("No extractable components found in ECC image (layout={:?}, raw={}, clean={})", layout, ecc_raw.len(), clean.len()));
+            return Err(anyhow::anyhow!(
+                "No extractable components found in ECC image (layout={:?}, raw={}, clean={})",
+                layout,
+                ecc_raw.len(),
+                clean.len()
+            ));
         }
 
         info!("[cli] Extract (ECC): INPUT={:?}, Output={:?} (layout={:?}, raw={}, clean={}, files={})", ecc_path, output_dir, layout, ecc_raw.len(), clean.len(), wrote);
@@ -1100,7 +1232,10 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
             .ok_or_else(|| anyhow::anyhow!("No NAND/ECC image found. Provide one via -l/--image or --ecc, or place it in the data dir (-f/--data)."))?
     };
 
-    if image_path.extension().is_some_and(|e| e.eq_ignore_ascii_case("ecc")) {
+    if image_path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("ecc"))
+    {
         extract_ecc(&image_path, &output_dir)?;
         return Ok(());
     }
@@ -1141,9 +1276,16 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> anyhow::Result<()> {
         output_dir,
         if all { "all" } else { "minimal" },
         if has_cpukey { "" } else { ", encrypted-only" },
-        if has_cpukey { "encrypted+decrypted" } else { "encrypted" }
+        if has_cpukey {
+            "encrypted+decrypted"
+        } else {
+            "encrypted"
+        }
     );
-    session.enqueue(InternalCommand::ParseImage { path: image_path, key: None });
+    session.enqueue(InternalCommand::ParseImage {
+        path: image_path,
+        key: None,
+    });
     session.extract_all(output_dir, all, has_cpukey);
 
     Ok(())

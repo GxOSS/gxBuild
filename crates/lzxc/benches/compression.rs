@@ -28,7 +28,10 @@ fn build_corpus() -> Vec<(&'static str, Vec<u8>)> {
     // reproducible on any host and the bench crate has no file fixtures.
     vec![
         ("text-256k", generate_text(256 * 1024, 0xA17B_CD03)),
-        ("text-256k-pathological", generate_pathological_text(256 * 1024)),
+        (
+            "text-256k-pathological",
+            generate_pathological_text(256 * 1024),
+        ),
         ("structured-1m", generate_structured(1024 * 1024)),
         ("random-256k", generate_random(256 * 1024, 0xCAFE_F00D)),
     ]
@@ -47,18 +50,27 @@ fn generate_text(len: usize, seed: u32) -> Vec<u8> {
     // than having enough variety that no single word dominates; ~200 words
     // is enough to approximate real token distribution at this scale.
     let words: &[&[u8]] = &[
-        b"the", b"be", b"to", b"of", b"and", b"a", b"in", b"that", b"have", b"it", b"for", b"not", b"on", b"with", b"he", b"as", b"you", b"do", b"at", b"this", b"but",
-        b"his", b"by", b"from", b"they", b"we", b"say", b"her", b"she", b"or", b"an", b"will", b"my", b"one", b"all", b"would", b"there", b"their", b"what", b"so",
-        b"up", b"out", b"if", b"about", b"who", b"get", b"which", b"go", b"me", b"when", b"make", b"can", b"like", b"time", b"no", b"just", b"him", b"know", b"take",
-        b"people", b"into", b"year", b"your", b"good", b"some", b"could", b"them", b"see", b"other", b"than", b"then", b"now", b"look", b"only", b"come", b"its",
-        b"over", b"think", b"also", b"back", b"after", b"use", b"two", b"how", b"our", b"work", b"first", b"well", b"way", b"even", b"new", b"want", b"any", b"these",
-        b"give", b"day", b"most", b"us", b"is", b"was", b"are", b"were", b"been", b"has", b"had", b"did", b"does", b"here", b"more", b"very", b"still", b"should",
-        b"through", b"where", b"before", b"because", b"while", b"around", b"small", b"large", b"open", b"close", b"begin", b"end", b"stand", b"walk", b"run", b"write",
-        b"read", b"speak", b"house", b"world", b"school", b"night", b"light", b"water", b"fire", b"earth", b"hand", b"eye", b"face", b"door", b"room", b"place", b"name",
-        b"word", b"book", b"thing", b"part", b"life", b"story", b"idea", b"case", b"fact", b"point", b"group", b"state", b"family", b"number", b"side", b"child",
-        b"mother", b"father", b"friend", b"woman", b"man", b"body", b"head", b"heart", b"mind", b"tree", b"river", b"road", b"field", b"city", b"street", b"country",
-        b"hill", b"sea", b"sky", b"old", b"young", b"long", b"short", b"high", b"low", b"right", b"left", b"far", b"near", b"hot", b"cold", b"dark", b"bright", b"red",
-        b"green", b"blue", b"white", b"black", b"gold",
+        b"the", b"be", b"to", b"of", b"and", b"a", b"in", b"that", b"have", b"it", b"for", b"not",
+        b"on", b"with", b"he", b"as", b"you", b"do", b"at", b"this", b"but", b"his", b"by",
+        b"from", b"they", b"we", b"say", b"her", b"she", b"or", b"an", b"will", b"my", b"one",
+        b"all", b"would", b"there", b"their", b"what", b"so", b"up", b"out", b"if", b"about",
+        b"who", b"get", b"which", b"go", b"me", b"when", b"make", b"can", b"like", b"time", b"no",
+        b"just", b"him", b"know", b"take", b"people", b"into", b"year", b"your", b"good", b"some",
+        b"could", b"them", b"see", b"other", b"than", b"then", b"now", b"look", b"only", b"come",
+        b"its", b"over", b"think", b"also", b"back", b"after", b"use", b"two", b"how", b"our",
+        b"work", b"first", b"well", b"way", b"even", b"new", b"want", b"any", b"these", b"give",
+        b"day", b"most", b"us", b"is", b"was", b"are", b"were", b"been", b"has", b"had", b"did",
+        b"does", b"here", b"more", b"very", b"still", b"should", b"through", b"where", b"before",
+        b"because", b"while", b"around", b"small", b"large", b"open", b"close", b"begin", b"end",
+        b"stand", b"walk", b"run", b"write", b"read", b"speak", b"house", b"world", b"school",
+        b"night", b"light", b"water", b"fire", b"earth", b"hand", b"eye", b"face", b"door",
+        b"room", b"place", b"name", b"word", b"book", b"thing", b"part", b"life", b"story",
+        b"idea", b"case", b"fact", b"point", b"group", b"state", b"family", b"number", b"side",
+        b"child", b"mother", b"father", b"friend", b"woman", b"man", b"body", b"head", b"heart",
+        b"mind", b"tree", b"river", b"road", b"field", b"city", b"street", b"country", b"hill",
+        b"sea", b"sky", b"old", b"young", b"long", b"short", b"high", b"low", b"right", b"left",
+        b"far", b"near", b"hot", b"cold", b"dark", b"bright", b"red", b"green", b"blue", b"white",
+        b"black", b"gold",
     ];
     let mut out = Vec::with_capacity(len);
     let mut state = seed;
@@ -115,9 +127,11 @@ fn generate_structured(len: usize) -> Vec<u8> {
     out.resize(quarter, 0);
 
     let template: [u8; 64] = [
-        0x48, 0x89, 0xE5, 0x48, 0x83, 0xEC, 0x20, 0xC7, 0x45, 0xFC, 0x00, 0x00, 0x00, 0x00, 0xE8, 0x00, 0x00, 0x00, 0x00, 0x48, 0x8B, 0x45, 0xF8, 0x48, 0x83, 0xC4, 0x20,
-        0x5D, 0xC3, 0x90, 0x90, 0x90, 0x66, 0x90, 0x0F, 0x1F, 0x44, 0x00, 0x00, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0x55, 0x48, 0x89, 0xE5, 0x41, 0x57,
-        0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83, 0xEC,
+        0x48, 0x89, 0xE5, 0x48, 0x83, 0xEC, 0x20, 0xC7, 0x45, 0xFC, 0x00, 0x00, 0x00, 0x00, 0xE8,
+        0x00, 0x00, 0x00, 0x00, 0x48, 0x8B, 0x45, 0xF8, 0x48, 0x83, 0xC4, 0x20, 0x5D, 0xC3, 0x90,
+        0x90, 0x90, 0x66, 0x90, 0x0F, 0x1F, 0x44, 0x00, 0x00, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC,
+        0xCC, 0xCC, 0xCC, 0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54,
+        0x53, 0x48, 0x83, 0xEC,
     ];
     while out.len() < 2 * quarter {
         let take = template.len().min(2 * quarter - out.len());
@@ -155,10 +169,19 @@ fn generate_random(len: usize, seed: u32) -> Vec<u8> {
 /// Compress `input` chunk-by-chunk and return the total compressed byte count.
 fn compress_total(input: &[u8], strategy: Strategy, window: WindowSize) -> usize {
     let mut enc = Encoder::new(window).with_strategy(strategy);
-    input.chunks(MAX_CHUNK_SIZE).map(|c| enc.encode_chunk(c).len()).sum()
+    input
+        .chunks(MAX_CHUNK_SIZE)
+        .map(|c| enc.encode_chunk(c).len())
+        .sum()
 }
 
-fn bench_at(c: &mut Criterion, strategy: Strategy, window: WindowSize, group_name: &str, label_suffix: &str) {
+fn bench_at(
+    c: &mut Criterion,
+    strategy: Strategy,
+    window: WindowSize,
+    group_name: &str,
+    label_suffix: &str,
+) {
     let mut group = c.benchmark_group(group_name);
     for (label, input) in corpus() {
         let param = format!("{}-{}", label, label_suffix);
@@ -173,7 +196,15 @@ fn bench_at(c: &mut Criterion, strategy: Strategy, window: WindowSize, group_nam
         });
         let compressed = compress_total(input, strategy, window);
         let ratio = input.len() as f64 / compressed.max(1) as f64;
-        let _ = writeln!(std::io::stderr(), "ratio: {:>20} / {:<20} {:>9} -> {:>9}  ({:.2}x)", group_name, param, input.len(), compressed, ratio);
+        let _ = writeln!(
+            std::io::stderr(),
+            "ratio: {:>20} / {:<20} {:>9} -> {:>9}  ({:.2}x)",
+            group_name,
+            param,
+            input.len(),
+            compressed,
+            ratio
+        );
     }
     group.finish();
 }
@@ -199,12 +230,30 @@ fn greedy_window_sweep(c: &mut Criterion) {
 }
 
 fn literal_only(c: &mut Criterion) {
-    bench_at(c, Strategy::LiteralOnly, WindowSize::KB64, "literal-only", "kb64");
+    bench_at(
+        c,
+        Strategy::LiteralOnly,
+        WindowSize::KB64,
+        "literal-only",
+        "kb64",
+    );
 }
 
 fn uncompressed(c: &mut Criterion) {
-    bench_at(c, Strategy::Uncompressed, WindowSize::KB64, "uncompressed", "kb64");
+    bench_at(
+        c,
+        Strategy::Uncompressed,
+        WindowSize::KB64,
+        "uncompressed",
+        "kb64",
+    );
 }
 
-criterion_group!(benches, greedy_kb64, greedy_window_sweep, literal_only, uncompressed);
+criterion_group!(
+    benches,
+    greedy_kb64,
+    greedy_window_sweep,
+    literal_only,
+    uncompressed
+);
 criterion_main!(benches);

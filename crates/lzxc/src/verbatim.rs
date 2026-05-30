@@ -15,14 +15,16 @@ use crate::pretree;
 /// Position-slot footer bits, from LZX spec and mirrored from lzxd. Indexed
 /// by position_slot.
 const FOOTER_BITS: [u8; 51] = [
-    0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14, 14, 15, 15, 16, 16, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17,
-    17, 17, 17, 17,
+    0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13,
+    13, 14, 14, 15, 15, 16, 16, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17,
 ];
 
 /// Base position for each position_slot.
 const BASE_POSITION: [u32; 52] = [
-    0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576, 32768, 49152, 65536,
-    98304, 131072, 196608, 262144, 393216, 524288, 655360, 786432, 917504, 1048576, 1179648, 1310720, 1441792, 1572864, 1703936, 1835008, 1966080, 2097152, 2228224,
+    0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536,
+    2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576, 32768, 49152, 65536, 98304, 131072, 196608,
+    262144, 393216, 524288, 655360, 786432, 917504, 1048576, 1179648, 1310720, 1441792, 1572864,
+    1703936, 1835008, 1966080, 2097152, 2228224,
 ];
 
 pub const MIN_MATCH_LEN: usize = 2;
@@ -40,7 +42,10 @@ pub const LENGTH_SYM_COUNT: usize = 249;
 #[derive(Debug, Clone, Copy)]
 pub enum Token {
     Literal(u8),
-    Match { offset: u32, length: core::num::NonZeroU32 },
+    Match {
+        offset: u32,
+        length: core::num::NonZeroU32,
+    },
 }
 
 /// Encoder-side repeated-offset queue. Mirror of the decoder's logic.
@@ -132,7 +137,12 @@ fn encode_match(offset: u32, length: u32, r: &mut RepeatOffsets) -> MatchEncodin
 
     let main_symbol = 256 + slot * 8 + length_header;
 
-    MatchEncoding { main_symbol: main_symbol as u16, length_tree_symbol, verbatim_value, num_verbatim_bits }
+    MatchEncoding {
+        main_symbol: main_symbol as u16,
+        length_tree_symbol,
+        verbatim_value,
+        num_verbatim_bits,
+    }
 }
 
 struct MatchEncoding {
@@ -183,7 +193,9 @@ pub fn main_tree_is_nondegenerate(tokens: &[Token], initial_r: RepeatOffsets) ->
     for &tok in tokens {
         let sym = match tok {
             Token::Literal(b) => b as u16,
-            Token::Match { offset, length } => encode_match(offset, length.get(), &mut r).main_symbol,
+            Token::Match { offset, length } => {
+                encode_match(offset, length.get(), &mut r).main_symbol
+            }
         };
         match seen {
             None => seen = Some(sym),
@@ -252,8 +264,12 @@ fn avoid_single_symbol_length_tree(tokens: &[Token]) -> std::borrow::Cow<'_, [To
         match tok {
             Token::Match { offset, length } if length.get() >= 9 => {
                 for part in split_length(length.get()) {
-                    let part_nz = core::num::NonZeroU32::new(part).expect("split_length parts are in 2..=8");
-                    out.push(Token::Match { offset, length: part_nz });
+                    let part_nz =
+                        core::num::NonZeroU32::new(part).expect("split_length parts are in 2..=8");
+                    out.push(Token::Match {
+                        offset,
+                        length: part_nz,
+                    });
                 }
             }
             t => out.push(t),
@@ -264,7 +280,13 @@ fn avoid_single_symbol_length_tree(tokens: &[Token]) -> std::borrow::Cow<'_, [To
 
 /// Emit a verbatim block for `tokens`. `block_uncompressed_size` is the total
 /// uncompressed byte count this block represents (literals + match lengths).
-pub fn emit_verbatim_block(out: &mut BitWriter, state: &mut VerbatimState, tokens: &[Token], block_uncompressed_size: u32, window: WindowSize) {
+pub fn emit_verbatim_block(
+    out: &mut BitWriter,
+    state: &mut VerbatimState,
+    tokens: &[Token],
+    block_uncompressed_size: u32,
+    window: WindowSize,
+) {
     // Ensure we never produce a single-symbol length tree. Zero-copy when
     // no recoding is needed (the overwhelmingly common case).
     let tokens = avoid_single_symbol_length_tree(tokens);
@@ -302,8 +324,14 @@ pub fn emit_verbatim_block(out: &mut BitWriter, state: &mut VerbatimState, token
     // Guards: main tree and length tree must have 0 or 2+ non-zero symbols.
     // If these fire, the upstream recoding passes have a bug. Count without
     // allocating -- we just need "is there exactly one non-zero symbol?".
-    debug_assert!(state.main_freq.iter().filter(|&&f| f > 0).take(2).count() != 1, "main tree degenerate after recoding: single non-zero symbol");
-    debug_assert!(state.length_freq.iter().filter(|&&f| f > 0).take(2).count() != 1, "length tree degenerate: single non-zero symbol");
+    debug_assert!(
+        state.main_freq.iter().filter(|&&f| f > 0).take(2).count() != 1,
+        "main tree degenerate after recoding: single non-zero symbol"
+    );
+    debug_assert!(
+        state.length_freq.iter().filter(|&&f| f > 0).take(2).count() != 1,
+        "length tree degenerate: single non-zero symbol"
+    );
 
     let main_lengths = huffman::build_path_lengths(&state.main_freq);
     let length_lengths = huffman::build_path_lengths(&state.length_freq);

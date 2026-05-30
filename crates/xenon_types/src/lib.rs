@@ -164,7 +164,9 @@ pub struct VirtualAddress(pub u32);
 
 /// An absolute offset into an on-disk file (XEX, STFS, etc.). Distinguishes
 /// file positions from in-memory sizes/indices, and from virtual addresses.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Default, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 pub struct FileOffset(pub u64);
 
 impl FileOffset {
@@ -246,7 +248,11 @@ pub struct Version {
 
 impl std::fmt::Display for Version {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}.{}.{}", self.major, self.minor, self.build, self.revision)
+        write!(
+            f,
+            "{}.{}.{}.{}",
+            self.major, self.minor, self.build, self.revision
+        )
     }
 }
 
@@ -263,7 +269,10 @@ impl From<u32> for Version {
 
 impl From<Version> for u32 {
     fn from(v: Version) -> Self {
-        ((v.major as u32) << 28) | ((v.minor as u32) << 24) | ((v.build as u32) << 8) | (v.revision as u32)
+        ((v.major as u32) << 28)
+            | ((v.minor as u32) << 24)
+            | ((v.build as u32) << 8)
+            | (v.revision as u32)
     }
 }
 
@@ -339,7 +348,8 @@ pub fn filetime_from_xe_bytes(bytes: &[u8; 8]) -> u64 {
 
 /// Convert a Windows FILETIME to a Unix timestamp in seconds.
 pub fn filetime_to_unix_secs(ft: u64) -> Option<i64> {
-    ft.checked_sub(FILETIME_UNIX_EPOCH_DELTA).map(|v| (v / 10_000_000) as i64)
+    ft.checked_sub(FILETIME_UNIX_EPOCH_DELTA)
+        .map(|v| (v / 10_000_000) as i64)
 }
 
 /// Convert a Windows FILETIME to a `jiff::Timestamp`.
@@ -361,7 +371,9 @@ pub fn timestamp_to_filetime(ts: jiff::Timestamp) -> Option<u64> {
     }
     let ticks_from_unix = (unix_secs as u64).checked_mul(10_000_000)?;
     let ticks_subsec = (subsec_nanos as u64) / 100;
-    FILETIME_UNIX_EPOCH_DELTA.checked_add(ticks_from_unix)?.checked_add(ticks_subsec)
+    FILETIME_UNIX_EPOCH_DELTA
+        .checked_add(ticks_from_unix)?
+        .checked_add(ticks_subsec)
 }
 
 macro_rules! impl_u32_hex_display {

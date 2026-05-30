@@ -24,7 +24,11 @@ use crate::huffman;
 /// the first tree in a stream). After this call, the caller should update
 /// its stored `prev_lengths` to `new_lengths`.
 pub fn encode(out: &mut BitWriter, prev_lengths: &[u8], new_lengths: &[u8]) {
-    assert_eq!(prev_lengths.len(), new_lengths.len(), "prev/new must be equal-length slices");
+    assert_eq!(
+        prev_lengths.len(),
+        new_lengths.len(),
+        "prev/new must be equal-length slices"
+    );
 
     let mut symbols = plan_symbols(prev_lengths, new_lengths);
     // The pretree is itself Huffman-coded; LZX forbids single-symbol trees,
@@ -94,14 +98,22 @@ fn plan_symbols(prev: &[u8], new: &[u8]) -> Vec<Op> {
             while remaining >= 20 {
                 let count = remaining.min(20 + 31);
                 let extra = (count - 20) as u32;
-                ops.push(Op { symbol: 18, extra, extra2: 0 });
+                ops.push(Op {
+                    symbol: 18,
+                    extra,
+                    extra2: 0,
+                });
                 remaining -= count;
                 i += count;
             }
             while remaining >= 4 {
                 let count = remaining.min(4 + 15);
                 let extra = (count - 4) as u32;
-                ops.push(Op { symbol: 17, extra, extra2: 0 });
+                ops.push(Op {
+                    symbol: 17,
+                    extra,
+                    extra2: 0,
+                });
                 remaining -= count;
                 i += count;
             }
@@ -110,7 +122,11 @@ fn plan_symbols(prev: &[u8], new: &[u8]) -> Vec<Op> {
             // so we need `code = p % 17`.
             for _ in 0..remaining {
                 let delta = modsub(prev[i], 0);
-                ops.push(Op { symbol: delta, extra: 0, extra2: 0 });
+                ops.push(Op {
+                    symbol: delta,
+                    extra: 0,
+                    extra2: 0,
+                });
                 i += 1;
             }
         } else {
@@ -126,15 +142,27 @@ fn plan_symbols(prev: &[u8], new: &[u8]) -> Vec<Op> {
             }
             let cover = cover_same_run(run);
             for _ in 0..cover.fives {
-                ops.push(Op { symbol: 19, extra: 1, extra2: modsub(prev[i], value) });
+                ops.push(Op {
+                    symbol: 19,
+                    extra: 1,
+                    extra2: modsub(prev[i], value),
+                });
                 i += 5;
             }
             for _ in 0..cover.fours {
-                ops.push(Op { symbol: 19, extra: 0, extra2: modsub(prev[i], value) });
+                ops.push(Op {
+                    symbol: 19,
+                    extra: 0,
+                    extra2: modsub(prev[i], value),
+                });
                 i += 4;
             }
             for _ in 0..cover.literals {
-                ops.push(Op { symbol: modsub(prev[i], value), extra: 0, extra2: 0 });
+                ops.push(Op {
+                    symbol: modsub(prev[i], value),
+                    extra: 0,
+                    extra2: 0,
+                });
                 i += 1;
             }
         }
@@ -177,7 +205,11 @@ fn cover_same_run(run: usize) -> CoverPlan {
             _ => unreachable!(),
         },
     };
-    CoverPlan { fours, fives, literals }
+    CoverPlan {
+        fours,
+        fives,
+        literals,
+    }
 }
 
 /// `(17 + prev - new) mod 17` as a u8.
@@ -213,7 +245,14 @@ fn ensure_multi_symbol(ops: &mut Vec<Op>, prev_lengths: &[u8]) {
             ops[idx].extra -= 1;
             let stolen = end_position_after_ops(ops, idx);
             let literal_sym = prev_lengths.get(stolen).map_or(0, |&p| p % 17);
-            ops.insert(idx + 1, Op { symbol: literal_sym, extra: 0, extra2: 0 });
+            ops.insert(
+                idx + 1,
+                Op {
+                    symbol: literal_sym,
+                    extra: 0,
+                    extra2: 0,
+                },
+            );
             return;
         }
     }
@@ -229,7 +268,11 @@ fn ensure_multi_symbol(ops: &mut Vec<Op>, prev_lengths: &[u8]) {
         ops.pop();
         for p in start_pos..end_pos {
             let literal_sym = prev_lengths.get(p).map_or(0, |&v| v % 17);
-            ops.push(Op { symbol: literal_sym, extra: 0, extra2: 0 });
+            ops.push(Op {
+                symbol: literal_sym,
+                extra: 0,
+                extra2: 0,
+            });
         }
         if ops.iter().any(|o| o.symbol != first) {
             return;
@@ -240,7 +283,11 @@ fn ensure_multi_symbol(ops: &mut Vec<Op>, prev_lengths: &[u8]) {
     // them with one sym-19 (same-run) whose follow-up is X. This introduces
     // sym-19 into the histogram while preserving the encoded path lengths.
     if first <= 16 && ops.len() >= 4 {
-        let new_op = Op { symbol: 19, extra: 0, extra2: first };
+        let new_op = Op {
+            symbol: 19,
+            extra: 0,
+            extra2: first,
+        };
         ops.drain(0..4);
         ops.insert(0, new_op);
     }

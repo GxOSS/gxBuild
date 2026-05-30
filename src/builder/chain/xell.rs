@@ -86,7 +86,10 @@ impl Xell {
         }
 
         let lower_payload: Vec<u8> = data.iter().map(|b| b.to_ascii_lowercase()).collect();
-        if lower_payload.windows(b"xellous".len()).any(|w| w == b"xellous") {
+        if lower_payload
+            .windows(b"xellous".len())
+            .any(|w| w == b"xellous")
+        {
             return Err(XellError::XellousUnsupported);
         }
 
@@ -107,16 +110,23 @@ impl Xell {
         }
 
         // check magic byte and size
-        if (xell_type == XellType::XellUnknown || xell_type == XellType::XellReloaded) && data.len() >= 4 {
+        if (xell_type == XellType::XellUnknown || xell_type == XellType::XellReloaded)
+            && data.len() >= 4
+        {
             let magic = &data[0..4];
             let len = data.len();
 
-            if magic == constants::MAGIC_XELL_UPPER && (len == constants::SIZE_RELOADED || len == constants::SIZE_LEGACY_GG) {
+            if magic == constants::MAGIC_XELL_UPPER
+                && (len == constants::SIZE_RELOADED || len == constants::SIZE_LEGACY_GG)
+            {
                 xell_type = XellType::XellReloaded;
             }
         }
 
-        Ok(Self { data: data.to_vec(), xell_type })
+        Ok(Self {
+            data: data.to_vec(),
+            xell_type,
+        })
     }
 
     #[inline]
@@ -134,7 +144,10 @@ impl Xell {
         patch_slot_size: u32,
     ) -> Result<u32, XellError> {
         let profile = image_profile.to_ascii_lowercase();
-        let is_rgloader = profile.contains("rgloader") || profile.contains("glitchr") || profile.contains("glitch2r") || profile.contains("rgl");
+        let is_rgloader = profile.contains("rgloader")
+            || profile.contains("glitchr")
+            || profile.contains("glitch2r")
+            || profile.contains("rgl");
 
         match self.xell_type {
             XellType::Xell1f => Ok(constants::OFFSET_XELL_1F),

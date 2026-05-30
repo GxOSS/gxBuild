@@ -6,13 +6,18 @@
 
 use crate::builder::filesystem::flashfs::FileSystemRoot;
 use crate::builder::filesystem::flashfs::FsSpareData;
-use crate::core::images::blocks::{detect_bb_physical_format, get_page_spare_fmt, BbPhysicalFormat, FsSpareInfo, NandLayout};
+use crate::core::images::blocks::{
+    detect_bb_physical_format, get_page_spare_fmt, BbPhysicalFormat, FsSpareInfo, NandLayout,
+};
 use log::{error, info, warn};
 use std::collections::HashMap;
 use std::path::Path;
 
 /// Mobile partition slot names (B=0 .. J=8).
-pub const MOBILE_SLOT_NAMES: [&str; 9] = ["MobileB", "MobileC", "MobileD", "MobileE", "MobileF", "MobileG", "MobileH", "MobileI", "MobileJ"];
+pub const MOBILE_SLOT_NAMES: [&str; 9] = [
+    "MobileB", "MobileC", "MobileD", "MobileE", "MobileF", "MobileG", "MobileH", "MobileI",
+    "MobileJ",
+];
 
 pub fn is_mobile_type(block_type: u8) -> bool {
     (0x31..0x3A).contains(&block_type)
@@ -80,7 +85,9 @@ impl MobileStore {
     }
 
     pub fn latest_entry(&self, slot: usize) -> Option<&MobileData> {
-        self.latest.get(slot).and_then(|&idx| idx.map(|i| &self.entries[i]))
+        self.latest
+            .get(slot)
+            .and_then(|&idx| idx.map(|i| &self.entries[i]))
     }
 
     pub fn latest_mut(&mut self, slot: usize) -> Option<&mut MobileData> {
@@ -171,7 +178,12 @@ impl MobileStore {
                 continue;
             }
 
-            if page.checked_add(pagecount).map(|end| end <= total_pages).unwrap_or(false) == false {
+            if page
+                .checked_add(pagecount)
+                .map(|end| end <= total_pages)
+                .unwrap_or(false)
+                == false
+            {
                 page += 1;
                 continue;
             }
@@ -196,7 +208,10 @@ impl MobileStore {
                     break;
                 }
                 let parsed = FsSpareData::parse(&spare, layout);
-                if parsed.block_id != (block as u16) || (parsed.fs_block_type & 0x3F) != data_type || parsed.fs_sequence != sequence || parsed.fs_size as usize != fssize
+                if parsed.block_id != (block as u16)
+                    || (parsed.fs_block_type & 0x3F) != data_type
+                    || parsed.fs_sequence != sequence
+                    || parsed.fs_size as usize != fssize
                 {
                     ok = false;
                     break;
@@ -208,7 +223,12 @@ impl MobileStore {
             }
 
             let logical_offset = page * page_size;
-            if logical_offset.checked_add(fssize).map(|end| end <= logical.len()).unwrap_or(false) == false {
+            if logical_offset
+                .checked_add(fssize)
+                .map(|end| end <= logical.len())
+                .unwrap_or(false)
+                == false
+            {
                 page += 1;
                 continue;
             }
@@ -217,12 +237,23 @@ impl MobileStore {
             if let Some(slot) = slot_index(data_type) {
                 if let Some(existing_idx) = store.latest[slot] {
                     let existing = &store.entries[existing_idx];
-                    let replace = existing.sequence < sequence || (existing.sequence == sequence && existing.start_page < page);
+                    let replace = existing.sequence < sequence
+                        || (existing.sequence == sequence && existing.start_page < page);
                     if replace {
-                        store.entries[existing_idx] = MobileData { data_type, sequence, start_page: page, data };
+                        store.entries[existing_idx] = MobileData {
+                            data_type,
+                            sequence,
+                            start_page: page,
+                            data,
+                        };
                     }
                 } else {
-                    store.entries.push(MobileData { data_type, sequence, start_page: page, data });
+                    store.entries.push(MobileData {
+                        data_type,
+                        sequence,
+                        start_page: page,
+                        data,
+                    });
                     let entry_idx = store.entries.len() - 1;
                     store.latest[slot] = Some(entry_idx);
                 }
@@ -235,7 +266,13 @@ impl MobileStore {
                 continue;
             };
             let e = &store.entries[idx];
-            info!("[mobile] Found type 0x{:02X} @ page 0x{:X}, seq {}, size 0x{:X}", e.data_type, e.start_page, e.sequence, e.data.len());
+            info!(
+                "[mobile] Found type 0x{:02X} @ page 0x{:X}, seq {}, size 0x{:X}",
+                e.data_type,
+                e.start_page,
+                e.sequence,
+                e.data.len()
+            );
         }
 
         store
@@ -249,20 +286,38 @@ impl MobileStore {
         let slot = slot_index(data_type).unwrap();
         let sequence = self.latest_entry(slot).map(|e| e.sequence + 1).unwrap_or(1);
         let idx = self.entries.len();
-        self.entries.push(MobileData { data_type, sequence, start_page: 0, data });
+        self.entries.push(MobileData {
+            data_type,
+            sequence,
+            start_page: 0,
+            data,
+        });
         self.latest[slot] = Some(idx);
-        info!("[mobile] Queued {} (type 0x{:02X}, seq {}, size 0x{:X})", Self::slot_display_name(slot), data_type, sequence, self.entries[idx].data.len());
+        info!(
+            "[mobile] Queued {} (type 0x{:02X}, seq {}, size 0x{:X})",
+            Self::slot_display_name(slot),
+            data_type,
+            sequence,
+            self.entries[idx].data.len()
+        );
         Ok(())
     }
 
     pub fn add_from_path(&mut self, slot: usize, path: &Path) -> Result<(), String> {
-        let data_type = type_for_slot(slot).ok_or_else(|| format!("Invalid mobile slot index {}", slot))?;
-        let data = std::fs::read(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+        let data_type =
+            type_for_slot(slot).ok_or_else(|| format!("Invalid mobile slot index {}", slot))?;
+        let data =
+            std::fs::read(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
         self.add_entry(data_type, data)
     }
 
     /// Writes all latest mobile blobs into the logical image and returns per-page spare metadata.
-    pub fn write_logical(&mut self, image: &mut [u8], layout: &NandLayout, fs_root: &mut FileSystemRoot) -> HashMap<usize, FsSpareInfo> {
+    pub fn write_logical(
+        &mut self,
+        image: &mut [u8],
+        layout: &NandLayout,
+        fs_root: &mut FileSystemRoot,
+    ) -> HashMap<usize, FsSpareInfo> {
         let mut page_meta = HashMap::new();
         if *layout == NandLayout::Emmc {
             warn!("[mobile] eMMC mobile write not supported (no spare metadata)");
@@ -284,7 +339,10 @@ impl MobileStore {
             if entry.start_page == 0 {
                 let block = fs_root.allocate_new_block(image, layout, 1, 0);
                 if block == 0 {
-                    error!("[mobile] Could not allocate block for {}", Self::slot_display_name(slot));
+                    error!(
+                        "[mobile] Could not allocate block for {}",
+                        Self::slot_display_name(slot)
+                    );
                     continue;
                 }
                 let map_idx = block as usize;
@@ -298,7 +356,12 @@ impl MobileStore {
             let write_len = pagecount * page_size;
             let offset = entry.start_page * page_size;
             if offset + write_len > image.len() {
-                error!("[mobile] {} write out of bounds (page 0x{:X}, len 0x{:X})", Self::slot_display_name(slot), entry.start_page, write_len);
+                error!(
+                    "[mobile] {} write out of bounds (page 0x{:X}, len 0x{:X})",
+                    Self::slot_display_name(slot),
+                    entry.start_page,
+                    write_len
+                );
                 continue;
             }
 
@@ -306,14 +369,32 @@ impl MobileStore {
             padded.resize(write_len, 0);
             image[offset..offset + write_len].copy_from_slice(&padded);
 
-            let base = if *layout == NandLayout::Bb { 0x40u8 } else { 0x20u8 };
+            let base = if *layout == NandLayout::Bb {
+                0x40u8
+            } else {
+                0x20u8
+            };
             let encoded_pgcount = base.saturating_sub(pagecount as u8);
             for z in 0..pagecount {
                 let page = entry.start_page + z;
-                page_meta.insert(page, FsSpareInfo { sequence: entry.sequence, size: write_len as u16, page_count: encoded_pgcount, block_type: entry.data_type });
+                page_meta.insert(
+                    page,
+                    FsSpareInfo {
+                        sequence: entry.sequence,
+                        size: write_len as u16,
+                        page_count: encoded_pgcount,
+                        block_type: entry.data_type,
+                    },
+                );
             }
 
-            info!("[mobile] Wrote {} at page 0x{:X} ({} pages, seq {})", Self::slot_display_name(slot), entry.start_page, pagecount, entry.sequence);
+            info!(
+                "[mobile] Wrote {} at page 0x{:X} ({} pages, seq {})",
+                Self::slot_display_name(slot),
+                entry.start_page,
+                pagecount,
+                entry.sequence
+            );
         }
 
         page_meta
@@ -337,7 +418,11 @@ impl MobileStore {
                 Ok(data) => {
                     if let Some(data_type) = type_for_slot(slot) {
                         let _ = self.add_entry(data_type, data);
-                        info!("[mobile] Loaded {} from data folder: {}", name, path.display());
+                        info!(
+                            "[mobile] Loaded {} from data folder: {}",
+                            name,
+                            path.display()
+                        );
                     }
                 }
                 Err(e) => {
@@ -359,13 +444,22 @@ impl MobileStore {
                 continue;
             }
             let pagecount = entry.data.len().ceil_div(page_size).max(1);
-            let base = if *layout == NandLayout::Bb { 0x40u8 } else { 0x20u8 };
+            let base = if *layout == NandLayout::Bb {
+                0x40u8
+            } else {
+                0x20u8
+            };
             let encoded_pgcount = base.saturating_sub(pagecount as u8);
             let write_len = pagecount * page_size;
             for z in 0..pagecount {
                 page_meta.insert(
                     entry.start_page + z,
-                    FsSpareInfo { sequence: entry.sequence, size: write_len as u16, page_count: encoded_pgcount, block_type: entry.data_type },
+                    FsSpareInfo {
+                        sequence: entry.sequence,
+                        size: write_len as u16,
+                        page_count: encoded_pgcount,
+                        block_type: entry.data_type,
+                    },
                 );
             }
         }

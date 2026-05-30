@@ -15,26 +15,36 @@ pub mod fixed {
     use base64::engine::general_purpose::STANDARD;
 
     #[cfg(feature = "base64-serde")]
-    pub fn serialize<const N: usize, S: Serializer>(bytes: &[u8; N], s: S) -> Result<S::Ok, S::Error> {
+    pub fn serialize<const N: usize, S: Serializer>(
+        bytes: &[u8; N],
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
         s.serialize_str(&STANDARD.encode(bytes))
     }
 
     #[cfg(not(feature = "base64-serde"))]
-    pub fn serialize<const N: usize, S: Serializer>(bytes: &[u8; N], s: S) -> Result<S::Ok, S::Error> {
+    pub fn serialize<const N: usize, S: Serializer>(
+        bytes: &[u8; N],
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
         s.serialize_bytes(bytes)
     }
 
     #[cfg(feature = "base64-serde")]
-    pub fn deserialize<'de, const N: usize, D: Deserializer<'de>>(d: D) -> Result<[u8; N], D::Error> {
+    pub fn deserialize<'de, const N: usize, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<[u8; N], D::Error> {
         let s: &str = de::Deserialize::deserialize(d)?;
         let bytes = STANDARD.decode(s).map_err(de::Error::custom)?;
-        bytes
-            .try_into()
-            .map_err(|v: Vec<u8>| de::Error::custom(format!("expected {} bytes, got {}", N, v.len())))
+        bytes.try_into().map_err(|v: Vec<u8>| {
+            de::Error::custom(format!("expected {} bytes, got {}", N, v.len()))
+        })
     }
 
     #[cfg(not(feature = "base64-serde"))]
-    pub fn deserialize<'de, const N: usize, D: Deserializer<'de>>(d: D) -> Result<[u8; N], D::Error> {
+    pub fn deserialize<'de, const N: usize, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<[u8; N], D::Error> {
         use de::Visitor;
 
         struct ByteArrayVisitor<const M: usize>;
@@ -47,13 +57,17 @@ pub mod fixed {
             }
 
             fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<[u8; M], E> {
-                v.try_into().map_err(|_| de::Error::custom(format!("expected {} bytes, got {}", M, v.len())))
+                v.try_into().map_err(|_| {
+                    de::Error::custom(format!("expected {} bytes, got {}", M, v.len()))
+                })
             }
 
             fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<[u8; M], A::Error> {
                 let mut arr = [0u8; M];
                 for (i, byte) in arr.iter_mut().enumerate() {
-                    *byte = seq.next_element()?.ok_or_else(|| de::Error::invalid_length(i, &self))?;
+                    *byte = seq
+                        .next_element()?
+                        .ok_or_else(|| de::Error::invalid_length(i, &self))?;
                 }
                 Ok(arr)
             }
@@ -69,14 +83,19 @@ pub mod fixed_opt {
     use serde::Serializer;
     use serde::de;
 
-    pub fn serialize<const N: usize, S: Serializer>(bytes: &Option<[u8; N]>, s: S) -> Result<S::Ok, S::Error> {
+    pub fn serialize<const N: usize, S: Serializer>(
+        bytes: &Option<[u8; N]>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
         match bytes {
             Some(b) => super::fixed::serialize(b, s),
             None => s.serialize_none(),
         }
     }
 
-    pub fn deserialize<'de, const N: usize, D: Deserializer<'de>>(d: D) -> Result<Option<[u8; N]>, D::Error> {
+    pub fn deserialize<'de, const N: usize, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Option<[u8; N]>, D::Error> {
         let opt: Option<HelperProxy<N>> = Deserialize::deserialize(d)?;
         Ok(opt.map(|h| h.0))
     }

@@ -239,15 +239,20 @@ fn parse_certificate(cursor: &mut Cursor<&[u8]>) -> Result<Certificate, StfsErro
     let owner_console_id = ConsoleId(read_array(cursor)?);
 
     let part_number_bytes: [u8; 0x11] = read_array(cursor)?;
-    let end = part_number_bytes.iter().position(|b| *b == 0x0).unwrap_or(part_number_bytes.len());
-    let owner_console_part_number = String::from_utf8(part_number_bytes[..end].to_vec()).unwrap_or_else(|_| INVALID_STR.into());
+    let end = part_number_bytes
+        .iter()
+        .position(|b| *b == 0x0)
+        .unwrap_or(part_number_bytes.len());
+    let owner_console_part_number =
+        String::from_utf8(part_number_bytes[..end].to_vec()).unwrap_or_else(|_| INVALID_STR.into());
 
     let owner_console_type_raw = cursor.read_u32::<BigEndian>()?;
     let console_type_flags = ConsoleTypeFlags::from_bits(owner_console_type_raw & 0xFFFFFFFC);
     let owner_console_type = ConsoleType::try_from((owner_console_type_raw & 0x3) as u8).ok();
 
     let date_generation_bytes: [u8; 0x8] = read_array(cursor)?;
-    let date_generation = String::from_utf8(date_generation_bytes.to_vec()).unwrap_or_else(|_| INVALID_STR.into());
+    let date_generation =
+        String::from_utf8(date_generation_bytes.to_vec()).unwrap_or_else(|_| INVALID_STR.into());
 
     let public_exponent = cursor.read_u32::<BigEndian>()?;
     let public_modulus: [u8; 0x80] = read_array(cursor)?;
@@ -268,13 +273,22 @@ fn parse_certificate(cursor: &mut Cursor<&[u8]>) -> Result<Certificate, StfsErro
     })
 }
 
-fn parse_avatar_asset_info(cursor: &mut Cursor<&[u8]>) -> Result<AvatarAssetInformation, StfsError> {
-    let subcategory = AssetSubcategory::try_from(cursor.read_u32::<LittleEndian>()?).expect("invalid avatar asset subcategory");
+fn parse_avatar_asset_info(
+    cursor: &mut Cursor<&[u8]>,
+) -> Result<AvatarAssetInformation, StfsError> {
+    let subcategory = AssetSubcategory::try_from(cursor.read_u32::<LittleEndian>()?)
+        .expect("invalid avatar asset subcategory");
     let colorizable = cursor.read_u32::<LittleEndian>()?;
     let guid: [u8; 0x10] = read_array(cursor)?;
-    let skeleton_version = SkeletonVersion::try_from(cursor.read_u8()?).expect("invalid skeleton version");
+    let skeleton_version =
+        SkeletonVersion::try_from(cursor.read_u8()?).expect("invalid skeleton version");
 
-    Ok(AvatarAssetInformation { subcategory, colorizable, guid, skeleton_version })
+    Ok(AvatarAssetInformation {
+        subcategory,
+        colorizable,
+        guid,
+        skeleton_version,
+    })
 }
 
 fn parse_media_info(cursor: &mut Cursor<&[u8]>) -> Result<MediaInformation, StfsError> {
@@ -283,10 +297,17 @@ fn parse_media_info(cursor: &mut Cursor<&[u8]>) -> Result<MediaInformation, Stfs
     let season_number = cursor.read_u16::<BigEndian>()?;
     let episode_number = cursor.read_u16::<BigEndian>()?;
 
-    Ok(MediaInformation { series_id, season_id, season_number, episode_number })
+    Ok(MediaInformation {
+        series_id,
+        season_id,
+        season_number,
+        episode_number,
+    })
 }
 
-fn parse_stfs_volume_descriptor(cursor: &mut Cursor<&[u8]>) -> Result<StfsVolumeDescriptor, StfsError> {
+fn parse_stfs_volume_descriptor(
+    cursor: &mut Cursor<&[u8]>,
+) -> Result<StfsVolumeDescriptor, StfsError> {
     Ok(StfsVolumeDescriptor {
         size: cursor.read_u8()?,
         reserved: cursor.read_u8()?,
@@ -299,7 +320,9 @@ fn parse_stfs_volume_descriptor(cursor: &mut Cursor<&[u8]>) -> Result<StfsVolume
     })
 }
 
-fn parse_svod_volume_descriptor(cursor: &mut Cursor<&[u8]>) -> Result<SvodVolumeDescriptor, StfsError> {
+fn parse_svod_volume_descriptor(
+    cursor: &mut Cursor<&[u8]>,
+) -> Result<SvodVolumeDescriptor, StfsError> {
     Ok(SvodVolumeDescriptor {
         size: cursor.read_u8()?,
         block_cache_element_count: cursor.read_u8()?,
@@ -339,7 +362,10 @@ fn parse_header_inner(input: &[u8]) -> Result<XContentHeader, StfsError> {
     let mut license_data = [LicenseEntry::default(); 16];
     for entry in &mut license_data {
         let license = cursor.read_u64::<BigEndian>()?;
-        entry.ty = LicenseType::try_from(u16::try_from(license >> 48).expect("failed to convert license type to u16")).expect("invalid LicenseType");
+        entry.ty = LicenseType::try_from(
+            u16::try_from(license >> 48).expect("failed to convert license type to u16"),
+        )
+        .expect("invalid LicenseType");
         entry.data = license & 0xFFFFFFFFFFFF;
         entry.bits = cursor.read_u32::<BigEndian>()?;
         entry.flags = cursor.read_u32::<BigEndian>()?;
@@ -347,7 +373,8 @@ fn parse_header_inner(input: &[u8]) -> Result<XContentHeader, StfsError> {
 
     let header_hash = Sha1Digest(read_array(&mut cursor)?);
     let header_size = cursor.read_u32::<BigEndian>()?;
-    let content_type = ContentType::try_from(cursor.read_u32::<BigEndian>()?).expect("invalid content type");
+    let content_type =
+        ContentType::try_from(cursor.read_u32::<BigEndian>()?).expect("invalid content type");
     let metadata_version = cursor.read_u32::<BigEndian>()?;
     let content_size = cursor.read_u64::<BigEndian>()?;
     let media_id = MediaId(cursor.read_u32::<BigEndian>()?);
@@ -365,7 +392,8 @@ fn parse_header_inner(input: &[u8]) -> Result<XContentHeader, StfsError> {
 
     // Read filesystem type
     cursor.set_position(0x3a9);
-    let filesystem_type = FileSystemType::try_from(cursor.read_u32::<BigEndian>()?).expect("invalid filesystem type");
+    let filesystem_type =
+        FileSystemType::try_from(cursor.read_u32::<BigEndian>()?).expect("invalid filesystem type");
 
     let volume_descriptor = match filesystem_type {
         FileSystemType::STFS => {
@@ -382,7 +410,9 @@ fn parse_header_inner(input: &[u8]) -> Result<XContentHeader, StfsError> {
     let content_metadata = match content_type {
         ContentType::AvatarItem => {
             cursor.set_position(0x3d9);
-            Some(ContentMetadata::AvatarItem(parse_avatar_asset_info(&mut cursor)?))
+            Some(ContentMetadata::AvatarItem(parse_avatar_asset_info(
+                &mut cursor,
+            )?))
         }
         ContentType::Video => {
             cursor.set_position(0x3d9);
@@ -420,15 +450,25 @@ fn parse_header_inner(input: &[u8]) -> Result<XContentHeader, StfsError> {
     let mut installer_type = None;
     let mut installer_meta = None;
     if ((header_size + 0xFFF) & 0xFFFFF000) - 0x971A > 0x15F4 {
-        installer_type = Some(InstallerType::try_from(cursor.read_u32::<BigEndian>()?).expect("invalid InstallerType"));
+        installer_type = Some(
+            InstallerType::try_from(cursor.read_u32::<BigEndian>()?)
+                .expect("invalid InstallerType"),
+        );
         installer_meta = match *installer_type.as_ref().unwrap() {
             InstallerType::SystemUpdate | InstallerType::TitleUpdate => {
                 let installer_base_version = Version::from(cursor.read_u32::<BigEndian>()?);
                 let installer_version = Version::from(cursor.read_u32::<BigEndian>()?);
-                Some(InstallerMeta::FullInstaller(FullInstallerMeta { installer_base_version, installer_version }))
+                Some(InstallerMeta::FullInstaller(FullInstallerMeta {
+                    installer_base_version,
+                    installer_version,
+                }))
             }
-            InstallerType::SystemUpdateProgressCache | InstallerType::TitleUpdateProgressCache | InstallerType::TitleContentProgressCache => {
-                let resume_state = OnlineContentResumeState::try_from(cursor.read_u32::<BigEndian>()?).expect("invalid resume state");
+            InstallerType::SystemUpdateProgressCache
+            | InstallerType::TitleUpdateProgressCache
+            | InstallerType::TitleContentProgressCache => {
+                let resume_state =
+                    OnlineContentResumeState::try_from(cursor.read_u32::<BigEndian>()?)
+                        .expect("invalid resume state");
                 let current_file_index = cursor.read_u32::<BigEndian>()?;
                 let current_file_offset = cursor.read_u64::<BigEndian>()?;
                 let bytes_processed = cursor.read_u64::<BigEndian>()?;
@@ -436,14 +476,16 @@ fn parse_header_inner(input: &[u8]) -> Result<XContentHeader, StfsError> {
                 let last_modified_high = cursor.read_u32::<BigEndian>()?;
                 let last_modified_low = cursor.read_u32::<BigEndian>()?;
 
-                Some(InstallerMeta::InstallerProgressCache(InstallerProgressCache {
-                    resume_state,
-                    current_file_index,
-                    current_file_offset,
-                    bytes_processed,
-                    last_modified_high,
-                    last_modified_low,
-                }))
+                Some(InstallerMeta::InstallerProgressCache(
+                    InstallerProgressCache {
+                        resume_state,
+                        current_file_index,
+                        current_file_offset,
+                        bytes_processed,
+                        last_modified_high,
+                        last_modified_low,
+                    },
+                ))
             }
             _ => None,
         }

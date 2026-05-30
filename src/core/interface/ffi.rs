@@ -56,7 +56,9 @@ pub struct GxSession {
 #[ffi_function]
 #[no_mangle]
 pub extern "C" fn gx_session_new() -> GxSession {
-    GxSession { inner: Arc::new(Mutex::new(Session::new())) }
+    GxSession {
+        inner: Arc::new(Mutex::new(Session::new())),
+    }
 }
 
 /// Frees the session and all associated memory.
@@ -68,7 +70,10 @@ pub extern "C" fn gx_session_destroy(_session: GxSession) -> FFIError {
 
 #[ffi_function]
 #[no_mangle]
-pub extern "C" fn gx_session_set_build_type(session: &GxSession, build_type: AsciiPointer) -> FFIError {
+pub extern "C" fn gx_session_set_build_type(
+    session: &GxSession,
+    build_type: AsciiPointer,
+) -> FFIError {
     if let Ok(mut s) = session.inner.lock() {
         if let Ok(bt) = build_type.as_str() {
             s.set_build_type(bt.to_string());
@@ -158,7 +163,11 @@ pub extern "C" fn gx_session_set_output_path(session: &GxSession, path: AsciiPoi
 
 #[ffi_function]
 #[no_mangle]
-pub extern "C" fn gx_session_enqueue_build(session: &GxSession, output: AsciiPointer, target: u8) -> FFIError {
+pub extern "C" fn gx_session_enqueue_build(
+    session: &GxSession,
+    output: AsciiPointer,
+    target: u8,
+) -> FFIError {
     if let Ok(mut s) = session.inner.lock() {
         if let Ok(o) = output.as_str() {
             s.build(PathBuf::from(o), target);

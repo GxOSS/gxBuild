@@ -54,7 +54,12 @@ pub fn build_path_lengths(freqs: &[u32]) -> Vec<u8> {
 
     let mut nodes: Vec<Node> = non_zero
         .iter()
-        .map(|&i| Node { weight: freqs[i] as u64, leaf_symbol: Some(i), left: None, right: None })
+        .map(|&i| Node {
+            weight: freqs[i] as u64,
+            leaf_symbol: Some(i),
+            left: None,
+            right: None,
+        })
         .collect();
 
     // Two-queue Huffman (van Leeuwen 1976): sort leaves by weight once, then
@@ -74,7 +79,12 @@ pub fn build_path_lengths(freqs: &[u32]) -> Vec<u8> {
 
     // Pop the smaller of `leaves_sorted[li]` / `merges[mi]`, advancing the
     // corresponding cursor. Returns node id.
-    let pop_smallest = |nodes: &[Node], leaves_sorted: &[u32], merges: &[u32], li: &mut usize, mi: &mut usize| -> u32 {
+    let pop_smallest = |nodes: &[Node],
+                        leaves_sorted: &[u32],
+                        merges: &[u32],
+                        li: &mut usize,
+                        mi: &mut usize|
+     -> u32 {
         let l = leaves_sorted.get(*li).copied();
         let m = merges.get(*mi).copied();
         match (l, m) {
@@ -104,7 +114,12 @@ pub fn build_path_lengths(freqs: &[u32]) -> Vec<u8> {
         let b = pop_smallest(&nodes, &leaves_sorted, &merges, &mut li, &mut mi);
         let wa = nodes[a as usize].weight;
         let wb = nodes[b as usize].weight;
-        nodes.push(Node { weight: wa + wb, leaf_symbol: None, left: Some(a), right: Some(b) });
+        nodes.push(Node {
+            weight: wa + wb,
+            leaf_symbol: None,
+            left: Some(a),
+            right: Some(b),
+        });
         merges.push((nodes.len() - 1) as u32);
     }
 
@@ -162,7 +177,10 @@ fn package_merge_lengths(freqs: &[u32], max_len: u8) -> Vec<u8> {
         .map(|k| {
             let mut c = vec![0u16; n];
             c[k] = 1;
-            Item { weight: freqs[nz[k]] as u64, counts: c }
+            Item {
+                weight: freqs[nz[k]] as u64,
+                counts: c,
+            }
         })
         .collect();
 
@@ -180,7 +198,10 @@ fn package_merge_lengths(freqs: &[u32], max_len: u8) -> Vec<u8> {
             for (m, &bc) in merged.iter_mut().zip(b.counts.iter()) {
                 *m += bc;
             }
-            packages.push(Item { weight: a.weight + b.weight, counts: merged });
+            packages.push(Item {
+                weight: a.weight + b.weight,
+                counts: merged,
+            });
             i += 2;
         }
 
@@ -213,7 +234,11 @@ fn package_merge_lengths(freqs: &[u32], max_len: u8) -> Vec<u8> {
         lengths[sym] = counts[k] as u8;
     }
     debug_assert_eq!(
-        lengths.iter().filter(|&&l| l > 0).map(|&l| 1u64 << (max_len - l)).sum::<u64>(),
+        lengths
+            .iter()
+            .filter(|&&l| l > 0)
+            .map(|&l| 1u64 << (max_len - l))
+            .sum::<u64>(),
         1u64 << max_len,
         "package-merge produced non-Kraft lengths: {:?}",
         lengths
@@ -249,7 +274,10 @@ pub fn build_codes(lengths: &[u8]) -> Vec<Code> {
     for bit in 1..=max_len {
         for (sym, &l) in lengths.iter().enumerate() {
             if l == bit {
-                codes[sym] = Code { value: next_code, len: l };
+                codes[sym] = Code {
+                    value: next_code,
+                    len: l,
+                };
                 next_code += 1;
             }
         }

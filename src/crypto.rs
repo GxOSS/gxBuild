@@ -20,30 +20,15 @@
   3. This notice may not be removed or altered from any source distribution.
 */
 
-// Re-export everything from gxcrypt
 pub use gxcrypt::*;
 
 /// Compatibility wrapper for verify_signature with the old 4-argument API.
-/// The salt parameter is now ignored (the new implementation handles PKCS1v1.5 internally).
-///
-/// # Arguments
-/// * `signature` - The RSA signature (256 bytes)
-/// * `hash` - The 20-byte SHA1 hash
-/// * `_salt` - The salt string (unused, kept for compatibility)
-/// * `key` - The RSA public key (ExCryptRsa, which is the first field of ExCryptRsaPub1024)
-///
-/// # Safety
-/// This function assumes the passed `key` pointer is actually a pointer to an `ExCryptRsaPub1024`
-/// structure (since `ExCryptRsa` is the first field). This is how the original C/FFI code worked.
 pub fn verify_signature(
     signature: &[u8; 256],
     hash: &[u8; 20],
     _salt: &[u8],
     key: &rsa::ExCryptRsa,
 ) -> Option<bool> {
-    // Safety: ExCryptRsa is #[repr(C)] and is the first field of ExCryptRsaPub1024.
-    // The callers always pass a pointer to an ExCryptRsaPub1024 structure but cast it to &ExCryptRsa.
-    // This matches the original C behavior where ExCryptRsa* was used to access the full key.
     let full_key = unsafe { &*(key as *const rsa::ExCryptRsa as *const rsa::ExCryptRsaPub1024) };
     Some(gxcrypt::keys::verify_signature(hash, signature, full_key))
 }

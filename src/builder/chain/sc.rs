@@ -24,7 +24,14 @@ use crate::crypto::rsa::ExCryptRsa;
 use crate::crypto::{hmac_sha, rot_sum_sha, verify_signature, Rc4};
 use zerocopy::{FromBytes, IntoBytes};
 
-#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
+#[derive(
+    zerocopy::FromBytes,
+    zerocopy::IntoBytes,
+    zerocopy::KnownLayout,
+    zerocopy::Immutable,
+    Clone,
+    Copy,
+)]
 #[repr(C)]
 pub struct BootloaderScHeader {
     pub header: BootloaderHeader,
@@ -39,8 +46,12 @@ pub struct BootloaderSc {
 
 impl BootloaderSc {
     pub fn parse(data: &[u8]) -> Result<Self, String> {
-        let (header, payload) = BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse SC header")?;
-        Ok(Self { header: header.clone(), data: payload.to_vec() })
+        let (header, payload) =
+            BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse SC header")?;
+        Ok(Self {
+            header: header.clone(),
+            data: payload.to_vec(),
+        })
     }
 
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
@@ -52,7 +63,10 @@ impl BootloaderSc {
             return;
         }
 
-        if let Ok(hash) = rot_sum_sha(&IntoBytes::as_bytes(&self.header)[..0x10], &self.data[0x110..payload_len]) {
+        if let Ok(hash) = rot_sum_sha(
+            &IntoBytes::as_bytes(&self.header)[..0x10],
+            &self.data[0x110..payload_len],
+        ) {
             sha_out.copy_from_slice(&hash);
         }
     }

@@ -16,9 +16,18 @@ use crate::crypto::rsa::ExCryptRsa;
 use crate::crypto::{calculate_smc_hash, hmac_sha, rot_sum_sha, verify_signature, Rc4};
 use log::info;
 
-pub const ONEBL_KEY: [u8; 16] = [0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA];
+pub const ONEBL_KEY: [u8; 16] = [
+    0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA,
+];
 
-#[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable, Clone, Copy)]
+#[derive(
+    zerocopy::FromBytes,
+    zerocopy::IntoBytes,
+    zerocopy::KnownLayout,
+    zerocopy::Immutable,
+    Clone,
+    Copy,
+)]
 #[repr(C)]
 pub struct BootloaderHeader {
     pub magic: U16<ZBigEndian>,
@@ -95,7 +104,10 @@ impl BootloaderGeneric {
             return;
         }
 
-        if let Ok(hash) = rot_sum_sha(&zerocopy::IntoBytes::as_bytes(&self.header.header)[..0x10], &self.data[0x110..payload_len]) {
+        if let Ok(hash) = rot_sum_sha(
+            &zerocopy::IntoBytes::as_bytes(&self.header.header)[..0x10],
+            &self.data[0x110..payload_len],
+        ) {
             sha_out.copy_from_slice(&hash);
         }
     }
@@ -107,7 +119,9 @@ impl BootloaderGeneric {
         if self.data.len() < 0x110 {
             return false;
         }
-        let signature: &[u8; 256] = self.data[0x10..0x110].try_into().expect("Slice to array conversion failed");
+        let signature: &[u8; 256] = self.data[0x10..0x110]
+            .try_into()
+            .expect("Slice to array conversion failed");
 
         verify_signature(signature, &bl_hash, salt, pubkey).unwrap_or(false)
     }
@@ -132,7 +146,13 @@ impl BootloaderGeneric {
     }
 }
 
-pub fn fix_per_box_digest(smc_data: &[u8], _cb_header: &BootloaderHeader, cb_payload: &[u8], cb_key: &[u8; 16], cpukey: &[u8; 16]) -> Result<[u8; 16], String> {
+pub fn fix_per_box_digest(
+    smc_data: &[u8],
+    _cb_header: &BootloaderHeader,
+    cb_payload: &[u8],
+    cb_key: &[u8; 16],
+    cpukey: &[u8; 16],
+) -> Result<[u8; 16], String> {
     let mut digest = [0u8; 0x30];
 
     if cb_payload.len() < 0x20 {
@@ -147,11 +167,15 @@ pub fn fix_per_box_digest(smc_data: &[u8], _cb_header: &BootloaderHeader, cb_pay
     digest[0x14..0x20].copy_from_slice(&cb_payload[0x14..0x20]);
     digest[0x20..0x30].copy_from_slice(&smc_hash);
 
-    let res = hmac_sha(cpukey, &[&digest]).map_err(|e| format!("FixPerBoxDigest HMAC failed: {}", e))?;
+    let res =
+        hmac_sha(cpukey, &[&digest]).map_err(|e| format!("FixPerBoxDigest HMAC failed: {}", e))?;
 
     let mut final_digest = [0u8; 16];
     final_digest.copy_from_slice(&res[..16]);
-    info!("[builder] Calculated FixPerBoxDigest: {:02x?}", final_digest);
+    info!(
+        "[builder] Calculated FixPerBoxDigest: {:02x?}",
+        final_digest
+    );
     Ok(final_digest)
 }
 
@@ -180,10 +204,13 @@ pub fn decrypt_chain(
     if cb.verify_decrypted() {
         info!("[builder] CB decryption verified successfully (zero-region check passed).");
     } else {
-        log::warn!("[builder] CB decryption verification failed - decrypted data may be corrupted.");
+        log::warn!(
+            "[builder] CB decryption verification failed - decrypted data may be corrupted."
+        );
     }
 
-    let derived = hmac_sha(&ONEBL_KEY, &[&cb_nonce]).map_err(|e| format!("CB key derivation failed: {}", e))?;
+    let derived = hmac_sha(&ONEBL_KEY, &[&cb_nonce])
+        .map_err(|e| format!("CB key derivation failed: {}", e))?;
     let mut cb_key = [0u8; 16];
     cb_key.copy_from_slice(&derived[..16]);
 
@@ -203,9 +230,18 @@ pub fn decrypt_chain(
         }
         // Debug: Print first 0x30 bytes of decrypted CB_B to find LDV
         if cb_b_bl.data.len() >= 0x30 {
-            info!("[builder] CB_B decrypted data[0x00..0x10]: {:02x?}", &cb_b_bl.data[0x00..0x10]);
-            info!("[builder] CB_B decrypted data[0x10..0x20]: {:02x?}", &cb_b_bl.data[0x10..0x20]);
-            info!("[builder] CB_B decrypted data[0x20..0x30]: {:02x?}", &cb_b_bl.data[0x20..0x30]);
+            info!(
+                "[builder] CB_B decrypted data[0x00..0x10]: {:02x?}",
+                &cb_b_bl.data[0x00..0x10]
+            );
+            info!(
+                "[builder] CB_B decrypted data[0x10..0x20]: {:02x?}",
+                &cb_b_bl.data[0x10..0x20]
+            );
+            info!(
+                "[builder] CB_B decrypted data[0x20..0x30]: {:02x?}",
+                &cb_b_bl.data[0x20..0x30]
+            );
             info!(
                 "[builder] CB_B byte at 0x03: {}, 0x13: {}, 0x23: {}",
                 cb_b_bl.data.get(0x03).copied().unwrap_or(0),
@@ -216,19 +252,30 @@ pub fn decrypt_chain(
         cb_b_bl.populate_metadata_unchecked();
         // Override CB_B's LDV with CB_A's LDV if CB_A has valid metadata
         // Unsure if this is correct
-        if let (Some(ref mut cb_b_meta), Some(ref cb_a_meta)) = (&mut cb_b_bl.metadata, &cb.metadata) {
+        if let (Some(ref mut cb_b_meta), Some(ref cb_a_meta)) =
+            (&mut cb_b_bl.metadata, &cb.metadata)
+        {
             let cb_a_ldv = cb_a_meta.lockdown_value;
             if cb_a_ldv != cb_b_meta.lockdown_value {
-                info!("[builder] CB_B LDV override: {} -> {} (from CB_A)", cb_b_meta.lockdown_value, cb_a_ldv);
+                info!(
+                    "[builder] CB_B LDV override: {} -> {} (from CB_A)",
+                    cb_b_meta.lockdown_value, cb_a_ldv
+                );
                 cb_b_meta.lockdown_value = cb_a_ldv;
             }
         }
         if let Some(ref meta) = cb_b_bl.metadata {
-            info!("[builder] CB_B metadata populated: LDV={}, PD={:02x?}", meta.lockdown_value, meta.pairing_data);
+            info!(
+                "[builder] CB_B metadata populated: LDV={}, PD={:02x?}",
+                meta.lockdown_value, meta.pairing_data
+            );
         } else {
             log::warn!("[builder] CB_B metadata is None after populate_metadata_unchecked!");
         }
-        cb_b_bl.derived_key()
+        cb_b_bl.derived_key().unwrap_or_else(|| {
+            log::warn!("[builder] CB_B has no derived key after decryption, using cb_key");
+            cb_key
+        })
     } else {
         cb_key
     };
@@ -304,10 +351,14 @@ pub fn encrypt_chain(
         cb_nonce.copy_from_slice(&cb.data[0..16]);
     }
 
-    let derived = hmac_sha(&ONEBL_KEY, &[&cb_nonce]).map_err(|e| format!("CB key derivation failed: {}", e))?;
+    let derived = hmac_sha(&ONEBL_KEY, &[&cb_nonce])
+        .map_err(|e| format!("CB key derivation failed: {}", e))?;
     let mut cb_key = [0u8; 16];
     cb_key.copy_from_slice(&derived[..16]);
-    info!("[builder] Derived CB Key for re-encryption: {:02x?}", cb_key);
+    info!(
+        "[builder] Derived CB Key for re-encryption: {:02x?}",
+        cb_key
+    );
 
     cb.sync_metadata();
     if let Some(ref mut cb_x_bl) = cb_x {
@@ -362,7 +413,14 @@ pub fn encrypt_chain(
         info!("[builder] CF/CG slot 0 re-encrypted.");
     }
 
-    let cd_key: [u8; 16] = if let Some(ref b) = cb_b { b.derived_key() } else { cb_key };
+    let cd_key: [u8; 16] = if let Some(ref b) = cb_b {
+        b.derived_key().unwrap_or_else(|| {
+            log::warn!("[builder] CB_B has no derived key, using cb_key");
+            cb_key
+        })
+    } else {
+        cb_key
+    };
 
     if ce.is_decrypted() {
         ce.decrypt(&cd_key);
@@ -388,7 +446,10 @@ pub fn encrypt_chain(
     }
     let mut cb_rotsum = [0u8; 0x14];
     cb.calculate_rotsum(&mut cb_rotsum);
-    info!("[builder] CB_A rotsum hash (pre-encrypt): {:02x?}", cb_rotsum);
+    info!(
+        "[builder] CB_A rotsum hash (pre-encrypt): {:02x?}",
+        cb_rotsum
+    );
     cb.decrypt(&ONEBL_KEY);
     info!("[builder] CB re-encrypted.");
 
@@ -401,7 +462,12 @@ pub fn encrypt_rebooter_chain(
     cb1: &mut cb::BootloaderCb,
     cd1: &mut cd::BootloaderCd,
     ce1: &mut ce::BootloaderCe,
-    update: &mut (Option<&mut cf::BootloaderCf>, Option<&mut cg::BootloaderCg>, Option<&mut cf::BootloaderCf>, Option<&mut cg::BootloaderCg>),
+    update: &mut (
+        Option<&mut cf::BootloaderCf>,
+        Option<&mut cg::BootloaderCg>,
+        Option<&mut cf::BootloaderCf>,
+        Option<&mut cg::BootloaderCg>,
+    ),
     smc: &mut RawSmc,
     cpukey: &[u8; 16],
 ) -> Result<(), String> {
@@ -414,7 +480,8 @@ pub fn encrypt_rebooter_chain(
     if cb0.data.len() >= 16 {
         cb0_nonce.copy_from_slice(&cb0.data[0..16]);
     }
-    let derived0 = hmac_sha(&ONEBL_KEY, &[&cb0_nonce]).map_err(|e| format!("Base CB key derivation failed: {}", e))?;
+    let derived0 = hmac_sha(&ONEBL_KEY, &[&cb0_nonce])
+        .map_err(|e| format!("Base CB key derivation failed: {}", e))?;
     let mut cb0_key = [0u8; 16];
     cb0_key.copy_from_slice(&derived0[..16]);
 
@@ -449,7 +516,8 @@ pub fn encrypt_rebooter_chain(
     if cb1.data.len() >= 16 {
         cb1_nonce.copy_from_slice(&cb1.data[0..16]);
     }
-    let derived1 = hmac_sha(&ONEBL_KEY, &[&cb1_nonce]).map_err(|e| format!("Rebooter CB key derivation failed: {}", e))?;
+    let derived1 = hmac_sha(&ONEBL_KEY, &[&cb1_nonce])
+        .map_err(|e| format!("Rebooter CB key derivation failed: {}", e))?;
     let mut cb1_key = [0u8; 16];
     cb1_key.copy_from_slice(&derived1[..16]);
 

@@ -37,11 +37,19 @@ pub struct BitWriter {
 
 impl BitWriter {
     pub fn new() -> Self {
-        Self { buffer: Vec::new(), cur: 0, bits_used: 0 }
+        Self {
+            buffer: Vec::new(),
+            cur: 0,
+            bits_used: 0,
+        }
     }
 
     pub fn with_capacity(cap: usize) -> Self {
-        Self { buffer: Vec::with_capacity(cap), cur: 0, bits_used: 0 }
+        Self {
+            buffer: Vec::with_capacity(cap),
+            cur: 0,
+            bits_used: 0,
+        }
     }
 
     /// Write `n_bits` from `value` (low-order bits). Accepts up to 32 bits.
@@ -62,7 +70,11 @@ impl BitWriter {
             debug_assert!(self.bits_used + n_bits <= 64);
         }
         let shift = 64 - self.bits_used - n_bits;
-        let mask = if n_bits == 32 { u32::MAX as u64 } else { (1u64 << n_bits) - 1 };
+        let mask = if n_bits == 32 {
+            u32::MAX as u64
+        } else {
+            (1u64 << n_bits) - 1
+        };
         self.cur |= (value as u64 & mask) << shift;
         self.bits_used += n_bits;
         if self.bits_used >= 16 {
