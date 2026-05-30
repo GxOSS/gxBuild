@@ -1798,12 +1798,14 @@ impl Session {
                     let _ = LayoutCalculator::calculate(sb_type, chain_profile, layout);
 
                     let meta_type = match nand.options.motherboard {
-                        crate::builder::builder::MotherboardType::Xenon
-                        | crate::builder::builder::MotherboardType::Zephyr
-                        | crate::builder::builder::MotherboardType::Falcon => {
+                        crate::builder::types::MotherboardType::Xenon
+                        | crate::builder::types::MotherboardType::Zephyr
+                        | crate::builder::types::MotherboardType::Falcon => {
                             crate::core::images::blocks::SpareMetaType::MetaType0
                         }
-                        _ => crate::core::images::blocks::SpareMetaType::MetaType1,
+                        _ => {
+                            
+                        }
                     };
 
                     if let Some(parent) = output.parent() {
@@ -2185,7 +2187,7 @@ impl Session {
                             )
                         }
                         _ => {
-                            let sb: crate::builder::builder::SouthbridgeType =
+                            let sb: crate::builder::types::SouthbridgeType =
                                 nand.options.motherboard.into();
                             let chain_profile = if nand.bootloaders.cb_b.is_some() {
                                 "split"
@@ -2193,7 +2195,7 @@ impl Session {
                                 "single"
                             };
                             let (_, _, phys_fs_block) =
-                                crate::builder::builder::LayoutCalculator::calculate(
+                                crate::builder::types::LayoutCalculator::calculate(
                                     sb,
                                     chain_profile,
                                     nand.layout,
@@ -2286,7 +2288,7 @@ impl Session {
                 if let Some(nand) = &mut self.active_nand {
                     let target = if is_rebooter {
                         if nand.rebooter.is_none() {
-                            nand.rebooter = Some(crate::builder::builder::NandBootloaders::new());
+                            nand.rebooter = Some(crate::builder::types::NandBootloaders::new());
                         }
                         nand.rebooter.as_mut().unwrap()
                     } else {
@@ -2547,7 +2549,7 @@ impl Session {
                             )
                         }
                         _ => {
-                            let sb: crate::builder::builder::SouthbridgeType =
+                            let sb: crate::builder::types::SouthbridgeType =
                                 nand.options.motherboard.into();
                             let chain_profile = if nand.bootloaders.cb_b.is_some() {
                                 "split"

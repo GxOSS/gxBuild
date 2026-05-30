@@ -24,7 +24,32 @@ use zerocopy::{FromBytes, IntoBytes};
 use super::BootloaderHeader;
 use crate::crypto::rsa::ExCryptRsa;
 use crate::crypto::{hmac_sha, rot_sum_sha, verify_signature, Rc4};
-use log::info;
+use log::{info, warn};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum CdError {
+    #[error("CD data too short: got {got}, need {need}")]
+    DataTooShort { got: usize, need: usize },
+    #[error("Failed to parse CD header")]
+    ParseError,
+    #[error("HMAC-SHA key derivation failed: {0}")]
+    KeyDerivation(String),
+    #[error("RC4 initialization failed: {0}")]
+    Rc4Init(String),
+    #[error("RC4 operation failed: {0}")]
+    Rc4Crypt(String),
+    #[error("Signature verification failed")]
+    SignatureVerification,
+}
+
+pub type Result<T> = std::result::Result<T, CdError>;
+
+impl From<CdError> for String {
+    fn from(e: CdError) -> Self {
+        e.to_string()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct CdMetadata {
@@ -44,9 +69,9 @@ pub struct BootloaderCd {
 }
 
 impl BootloaderCd {
-    pub fn parse(data: &[u8]) -> Result<Self, String> {
+    pub fn parse(data: &[u8]) -> Result<Self> {
         let (header, payload) =
-            BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CD header")?;
+            BootloaderHeader::read_from_prefix(data).map_err(|_| CdError::ParseError)?;
         let mut cd = Self {
             header: header.clone(),
             data: payload.to_vec(),
@@ -58,7 +83,11 @@ impl BootloaderCd {
     }
 
     pub fn populate_metadata(&mut self) {
-        if !self.is_decrypted() || self.data.len() < 0x250 {
+        if !self.is_decrypted() {
+            return;
+        }
+        if self.data.len() < 0x250 {
+            warn!("[builder] CD data too short for metadata: got 0x{:x}, need 0x250", self.data.len());
             return;
         }
 
@@ -89,6 +118,7 @@ impl BootloaderCd {
     pub fn sync_metadata(&mut self) {
         if let Some(ref meta) = self.metadata {
             if self.data.len() < 0x250 {
+                warn!("[builder] CD data too short for sync_metadata: got 0x{:x}, need 0x250", self.data.len());
                 return;
             }
 
@@ -107,21 +137,25 @@ impl BootloaderCd {
         self.data[0x110] == 0x00
     }
 
-    pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
+    pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) -> Result<()> {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = (size_aligned - 0x10) as usize;
 
         if self.data.len() < payload_len {
-            return;
+            return Err(CdError::DataTooShort {
+                got: self.data.len(),
+                need: payload_len,
+            });
         }
 
-        if let Ok(hash) = rot_sum_sha(
+        let hash = rot_sum_sha(
             &IntoBytes::as_bytes(&self.header)[..0x10],
             &self.data[0x110..payload_len],
-        ) {
-            sha_out.copy_from_slice(&hash);
-        }
+        )
+        .map_err(|e| CdError::KeyDerivation(e.to_string()))?;
+        sha_out.copy_from_slice(&hash);
+        Ok(())
     }
 
     pub fn print_info(&self) {
@@ -159,31 +193,37 @@ impl BootloaderCd {
         }
     }
 
-    pub fn decrypt(&mut self, cbb_key: &[u8; 16], cpu_key: Option<&[u8; 16]>) {
+    pub fn decrypt(&mut self, cbb_key: &[u8; 16], cpu_key: Option<&[u8; 16]>) -> Result<()> {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_size = (size_aligned - 0x10) as usize;
 
         if self.data.len() < payload_size {
-            return;
+            return Err(CdError::DataTooShort {
+                got: self.data.len(),
+                need: payload_size,
+            });
         }
 
-        if let Ok(derived_key) = hmac_sha(cbb_key, &[&self.data[0..16]]) {
-            let mut final_key = [0u8; 16];
-            final_key.copy_from_slice(&derived_key[..16]);
-            info!("[builder] CD Decryption Key Derived: {:02x?}", final_key);
+        let derived_key = hmac_sha(cbb_key, &[&self.data[0..16]])
+            .map_err(|e| CdError::KeyDerivation(e.to_string()))?;
+        let mut final_key = [0u8; 16];
+        final_key.copy_from_slice(&derived_key[..16]);
+        info!("[builder] CD Decryption Key Derived: {:02x?}", final_key);
 
-            if let Some(key) = cpu_key {
-                if let Ok(derived_key_cpu) = hmac_sha(key, &[&final_key]) {
-                    final_key.copy_from_slice(&derived_key_cpu[..16]);
-                }
-            }
-
-            self.derived_key = Some(final_key);
-            if let Ok(mut rc4) = Rc4::new(&final_key) {
-                let _ = rc4.crypt(&mut self.data[0x10..payload_size]);
+        if let Some(key) = cpu_key {
+            if let Ok(derived_key_cpu) = hmac_sha(key, &[&final_key]) {
+                final_key.copy_from_slice(&derived_key_cpu[..16]);
+            } else {
+                warn!("[builder] CPU key HMAC derivation failed, continuing with CBB-derived key");
             }
         }
+
+        self.derived_key = Some(final_key);
+        let mut rc4 = Rc4::new(&final_key).map_err(|e| CdError::Rc4Init(e.to_string()))?;
+        rc4.crypt(&mut self.data[0x10..payload_size])
+            .map_err(|e| CdError::Rc4Crypt(e.to_string()))?;
+        Ok(())
     }
 
     pub fn derived_key(&self) -> [u8; 16] {
@@ -197,17 +237,26 @@ impl BootloaderCd {
         }
     }
 
-    pub fn verify_signature_devkit(&self, pubkey: &ExCryptRsa) -> bool {
+    pub fn verify_signature_devkit(&self, pubkey: &ExCryptRsa) -> Result<()> {
         let mut cd_hash = [0u8; 0x14];
-        self.calculate_rotsum(&mut cd_hash);
+        self.calculate_rotsum(&mut cd_hash)?;
 
         if self.data.len() < 0x110 {
-            return false;
+            return Err(CdError::DataTooShort {
+                got: self.data.len(),
+                need: 0x110,
+            });
         }
-        let signature: &[u8; 256] = self.data[0x10..0x110].try_into().unwrap(); // Absolute 0x20
+        let signature: &[u8; 256] = self.data[0x10..0x110]
+            .try_into()
+            .map_err(|_| CdError::ParseError)?;
 
         let expected_salt = b"XBOX_ROM_4\0";
-        verify_signature(signature, &cd_hash, expected_salt, pubkey).unwrap_or(false)
+        if verify_signature(signature, &cd_hash, expected_salt, pubkey).unwrap_or(false) {
+            Ok(())
+        } else {
+            Err(CdError::SignatureVerification)
+        }
     }
 
     pub fn serialize(&self) -> Vec<u8> {

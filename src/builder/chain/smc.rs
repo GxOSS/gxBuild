@@ -24,8 +24,29 @@ use super::BootloaderHeader;
 use crate::core::images::blocks::NandLayout;
 use crate::crypto::rsa::ExCryptRsa;
 use crate::crypto::{rot_sum_sha, verify_signature};
-use log::info;
+use log::{info, warn};
+use thiserror::Error;
 use zerocopy::{FromBytes, IntoBytes};
+
+#[derive(Error, Debug)]
+pub enum SmcError {
+    #[error("SMC data too short: got {got}, need {need}")]
+    DataTooShort { got: usize, need: usize },
+    #[error("Invalid SMC size in header")]
+    InvalidSize,
+    #[error("Failed to parse SMC header")]
+    ParseError,
+    #[error("Signature verification failed")]
+    SignatureVerification,
+}
+
+pub type Result<T> = std::result::Result<T, SmcError>;
+
+impl From<SmcError> for String {
+    fn from(e: SmcError) -> Self {
+        e.to_string()
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SmcType {
@@ -70,9 +91,9 @@ pub struct Smc {
 }
 
 impl Smc {
-    pub fn parse(data: &[u8]) -> Result<Self, String> {
+    pub fn parse(data: &[u8]) -> Result<Self> {
         let (header, payload) =
-            SmcHeader::read_from_prefix(data).map_err(|_| "Failed to parse SMC header")?;
+            SmcHeader::read_from_prefix(data).map_err(|_| SmcError::ParseError)?;
         let mut smc = Self {
             header: header.clone(),
             data: payload.to_vec(),
@@ -84,6 +105,7 @@ impl Smc {
 
     pub fn populate_metadata(&mut self) {
         if self.data.len() < 0x103 {
+            warn!("[smc] SMC data too short for metadata: got 0x{:x}, need 0x103", self.data.len());
             return;
         }
 
@@ -175,23 +197,36 @@ impl Smc {
         identified
     }
 
-    pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
+    pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) -> Result<()> {
         let size = self.header.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
+        let payload_len = size_aligned as usize - std::mem::size_of::<SmcHeader>();
 
-        if let Ok(hash) = rot_sum_sha(
-            &IntoBytes::as_bytes(&self.header.header)[..0x10],
-            &self.data[..(size_aligned as usize - std::mem::size_of::<SmcHeader>())],
-        ) {
-            sha_out.copy_from_slice(&hash);
+        if self.data.len() < payload_len {
+            return Err(SmcError::DataTooShort {
+                got: self.data.len(),
+                need: payload_len,
+            });
         }
+
+        let hash = rot_sum_sha(
+            &IntoBytes::as_bytes(&self.header.header)[..0x10],
+            &self.data[..payload_len],
+        )
+        .map_err(|_| SmcError::InvalidSize)?;
+        sha_out.copy_from_slice(&hash);
+        Ok(())
     }
 
-    pub fn verify_sig(&self, pubkey: &ExCryptRsa) -> bool {
+    pub fn verify_sig(&self, pubkey: &ExCryptRsa) -> Result<()> {
         let mut bl_hash = [0u8; 0x14];
-        self.calculate_rotsum(&mut bl_hash);
+        self.calculate_rotsum(&mut bl_hash)?;
         let expected_salt = b"XBOX_ROM_S\0";
-        verify_signature(&self.header.signature, &bl_hash, expected_salt, pubkey).unwrap_or(false)
+        if verify_signature(&self.header.signature, &bl_hash, expected_salt, pubkey).unwrap_or(false) {
+            Ok(())
+        } else {
+            Err(SmcError::SignatureVerification)
+        }
     }
 
     pub fn decrypt(&mut self) -> &mut Self {
@@ -440,6 +475,18 @@ pub struct SmcConfig {
     pub data: Box<[u8; 0x10000]>,
 }
 
+#[derive(Error, Debug)]
+pub enum SmcConfigError {
+    #[error("Invalid SMC Config size: got {got}, expected {expected}")]
+    InvalidSize { got: usize, expected: usize },
+}
+
+impl From<SmcConfigError> for String {
+    fn from(e: SmcConfigError) -> Self {
+        e.to_string()
+    }
+}
+
 impl SmcConfig {
     pub const SIZE: usize = 0x10000;
     pub const SETTINGS_SIZE: usize = 0x100;
@@ -466,9 +513,12 @@ impl SmcConfig {
         }
     }
 
-    pub fn parse(data: &[u8]) -> Result<Self, String> {
+    pub fn parse(data: &[u8]) -> std::result::Result<Self, SmcConfigError> {
         if data.len() != Self::SIZE {
-            return Err(format!("Invalid SMC Config size"));
+            return Err(SmcConfigError::InvalidSize {
+                got: data.len(),
+                expected: Self::SIZE,
+            });
         }
         let mut config = Self {
             data: Box::new([0; Self::SIZE]),

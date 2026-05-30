@@ -23,13 +23,33 @@ use super::BootloaderHeader;
 // use crate::builder::chain::cf::BootloaderCf;
 // use crate::builder::chain::cg::BootloaderCg;
 use crate::crypto::{hmac_sha, rot_sum_sha, Rc4};
-// use crate::builder::deps::xenia;
 use byteorder::{BigEndian as RealBigEndian, ByteOrder};
-use log::info;
-
-// U16 removed as not used since decompression disabled
+use log::{info, warn};
+use thiserror::Error;
 use zerocopy::byteorder::{BigEndian, U32, U64};
 use zerocopy::{FromBytes, IntoBytes};
+
+#[derive(Error, Debug)]
+pub enum CeError {
+    #[error("CE data too short: got {got}, need {need}")]
+    DataTooShort { got: usize, need: usize },
+    #[error("Failed to parse CE header")]
+    ParseError,
+    #[error("HMAC-SHA key derivation failed: {0}")]
+    KeyDerivation(String),
+    #[error("RC4 initialization failed: {0}")]
+    Rc4Init(String),
+    #[error("RC4 operation failed: {0}")]
+    Rc4Crypt(String),
+}
+
+pub type Result<T> = std::result::Result<T, CeError>;
+
+impl From<CeError> for String {
+    fn from(e: CeError) -> Self {
+        e.to_string()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct CeMetadata {
@@ -53,23 +73,6 @@ pub struct BootloaderCeHeader {
     pub unknown: U32<BigEndian>,
 }
 
-/*
-#[derive(
-    zerocopy::FromBytes,
-    zerocopy::IntoBytes,
-    zerocopy::KnownLayout,
-    zerocopy::Immutable,
-    Clone,
-    Copy,
-    Debug,
-)]
-#[repr(C)]
-struct BootloaderCompressionBlock {
-    pub compressed_size: U16<BigEndian>,
-    pub decompressed_size: U16<BigEndian>,
-}
-*/
-
 #[derive(Clone)]
 pub struct BootloaderCe {
     pub header: BootloaderHeader,
@@ -81,13 +84,14 @@ pub struct BootloaderCe {
 }
 
 impl BootloaderCe {
-    pub fn parse(data: &[u8]) -> Result<Self, String> {
+    pub fn parse(data: &[u8]) -> Result<Self> {
         let (header, payload) =
-            BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CE header")?;
+            BootloaderHeader::read_from_prefix(data).map_err(|_| CeError::ParseError)?;
 
         let mut data_vec = payload.to_vec();
         let expected_payload_size = ((header.size.get() as usize + 0xF) & 0xFFFFFFF0) - 0x10;
         if data_vec.len() < expected_payload_size {
+            warn!("[builder] CE data resized from {} to {} bytes", data_vec.len(), expected_payload_size);
             data_vec.resize(expected_payload_size, 0);
         }
 
@@ -102,7 +106,11 @@ impl BootloaderCe {
     }
 
     pub fn populate_metadata(&mut self) {
-        if !self.is_decrypted() || self.data.len() < 0x20 {
+        if !self.is_decrypted() {
+            return;
+        }
+        if self.data.len() < 0x20 {
+            warn!("[builder] CE data too short for metadata: got 0x{:x}, need 0x20", self.data.len());
             return;
         }
 
@@ -116,7 +124,11 @@ impl BootloaderCe {
     }
 
     pub fn sync_metadata(&mut self) {
-        if !self.is_decrypted() || self.data.len() < 0x20 {
+        if !self.is_decrypted() {
+            return;
+        }
+        if self.data.len() < 0x20 {
+            warn!("[builder] CE data too short for sync_metadata: got 0x{:x}, need 0x20", self.data.len());
             return;
         }
         if let Some(meta) = &self.metadata {
@@ -132,21 +144,25 @@ impl BootloaderCe {
         &self.data[0x1C..0x20] == &[0, 0, 0, 0]
     }
 
-    pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
+    pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) -> Result<()> {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = (size_aligned - 0x10) as usize;
 
         if self.data.len() < payload_len {
-            return;
+            return Err(CeError::DataTooShort {
+                got: self.data.len(),
+                need: payload_len,
+            });
         }
 
-        if let Ok(hash) = rot_sum_sha(
+        let hash = rot_sum_sha(
             &IntoBytes::as_bytes(&self.header)[..0x10],
             &self.data[0x10..payload_len],
-        ) {
-            sha_out.copy_from_slice(&hash);
-        }
+        )
+        .map_err(|e| CeError::KeyDerivation(e.to_string()))?;
+        sha_out.copy_from_slice(&hash);
+        Ok(())
     }
 
     pub fn print_info(&self) {
@@ -183,131 +199,35 @@ impl BootloaderCe {
         }
     }
 
-    pub fn decrypt(&mut self, cd_key: &[u8; 16]) {
+    pub fn decrypt(&mut self, cd_key: &[u8; 16]) -> Result<()> {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_size = (size_aligned - 0x10) as usize;
 
         if self.data.len() < payload_size {
-            return;
+            return Err(CeError::DataTooShort {
+                got: self.data.len(),
+                need: payload_size,
+            });
         }
 
-        if let Ok(derived_key) = hmac_sha(cd_key, &[&self.data[0..16]]) {
-            let mut final_key = [0u8; 16];
-            final_key.copy_from_slice(&derived_key[..16]);
-            info!("[builder] CE Decryption Key Derived: {:02x?}", final_key);
+        let derived_key = hmac_sha(cd_key, &[&self.data[0..16]])
+            .map_err(|e| CeError::KeyDerivation(e.to_string()))?;
+        let mut final_key = [0u8; 16];
+        final_key.copy_from_slice(&derived_key[..16]);
+        info!("[builder] CE Decryption Key Derived: {:02x?}", final_key);
 
-            if let Ok(mut rc4) = Rc4::new(&final_key) {
-                let _ = rc4.crypt(&mut self.data[0x10..payload_size]);
-            }
-        }
+        let mut rc4 = Rc4::new(&final_key).map_err(|e| CeError::Rc4Init(e.to_string()))?;
+        rc4.crypt(&mut self.data[0x10..payload_size])
+            .map_err(|e| CeError::Rc4Crypt(e.to_string()))?;
 
-        // After decryption, the payload after the CE header metadata is the LZX compressed buffer
         if self.data.len() >= 0x20 {
             self.data_ce = Some(self.data[0x20..payload_size].to_vec());
         }
 
         self.populate_metadata();
+        Ok(())
     }
-
-    /*
-    fn get_full_compressed_buffer(
-        &self,
-        in_buf: &[u8],
-        expected_decompressed_size: u32,
-    ) -> Result<Vec<u8>, &'static str> {
-        let mut decompressed_size_parsed = 0u32;
-        let mut parsed_bytes = 0usize;
-        let mut out_buf = Vec::new();
-
-        while decompressed_size_parsed < expected_decompressed_size {
-            if in_buf.len() < parsed_bytes + std::mem::size_of::<BootloaderCompressionBlock>() {
-                return Err("Buffer underflow reading compression block header");
-            }
-
-            let block_ptr = &in_buf[parsed_bytes] as *const _ as *const BootloaderCompressionBlock;
-            let block = unsafe { std::ptr::read_unaligned(block_ptr) };
-
-            let c_size = block.compressed_size.get() as u32;
-            let d_size = block.decompressed_size.get() as u32;
-
-            decompressed_size_parsed += d_size;
-
-            let block_header_size = std::mem::size_of::<BootloaderCompressionBlock>();
-            let block_data_start = parsed_bytes + block_header_size;
-            let block_data_end = block_data_start + c_size as usize;
-
-            if block_data_end > in_buf.len() {
-                return Err("Compressed size extends past input buffer limits");
-            }
-
-            // Copy the data segment
-            out_buf.extend_from_slice(&in_buf[block_data_start..block_data_end]);
-
-            parsed_bytes = block_data_end;
-        }
-
-        if decompressed_size_parsed > expected_decompressed_size {
-            return Err("Decompressed size parsed is larger than expected");
-        }
-
-        Ok(out_buf)
-    }
-    */
-
-    /*
-        pub fn decompress(&self) -> Result<Vec<u8>, String> {
-            let _size = self.header.size.get();
-            if self.data.len() < 0x1C {
-                return Err("Payload too small to read decompression size".to_string());
-            }
-            let uncompressed_size = RealBigEndian::read_u32(&self.data[0x18..0x1C]);
-
-            let data = self.data_ce.as_ref().ok_or("No CE data available")?;
-
-            let consolidated_compressed = self
-                .get_full_compressed_buffer(data, uncompressed_size)
-                .map_err(|e| format!("Decompression structuring failed: {}", e))?;
-
-            let mut decompressed = vec![0u8; uncompressed_size as usize];
-            info!("[builder] Decompressing CE Kernel (LZX)...");
-            xenia::decompress(&consolidated_compressed, &mut decompressed, 0x20000, None)
-                .map_err(|e| format!("lzx_decompress returned error code {}", e))?;
-
-            Ok(decompressed)
-        }
-    */
-
-    /*
-        pub fn apply_update(&mut self, cf: &BootloaderCf, cg: &BootloaderCg) -> Result<(), String> {
-            let cf_meta = cf.metadata.as_ref().ok_or("CF metadata missing")?;
-            if cf_meta.source_version != self.header.version.get() {
-                return Err(format!(
-                    "Mismatching base kernel version (CE is {}, CF expects {})",
-                    self.header.version.get(),
-                    cf_meta.source_version
-                ));
-            }
-
-            info!("[builder] Applying CG kernel delta patch to CE base kernel (base v{} -> target patch)...", self.header.version.get());
-
-            let base_kernel = self
-                .data_kernel
-                .as_ref()
-                .ok_or("CE Base Kernel has not been decompressed yet. Cannot apply patch.")?;
-
-            let patched_kernel = cg.apply_patch(base_kernel)?;
-
-            self.data_kernel = Some(patched_kernel);
-
-            Ok(())
-        }
-
-        pub fn split_into_stages(&self) -> Result<(), String> {
-            // TODO: Implement
-            Ok(())
-        }
-    */
 
     pub fn serialize(&self) -> Vec<u8> {
         let mut out = IntoBytes::as_bytes(&self.header).to_vec();

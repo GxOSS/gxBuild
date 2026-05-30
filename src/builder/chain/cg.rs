@@ -21,10 +21,32 @@
 
 use super::BootloaderHeader;
 use crate::crypto::{hmac_sha, rot_sum_sha, Rc4};
-// use crate::builder::deps::xenia;
 use byteorder::{BigEndian, ByteOrder};
-use log::info;
+use log::{info, warn};
+use thiserror::Error;
 use zerocopy::{FromBytes, IntoBytes};
+
+#[derive(Error, Debug)]
+pub enum CgError {
+    #[error("CG data too short: got {got}, need {need}")]
+    DataTooShort { got: usize, need: usize },
+    #[error("Failed to parse CG header")]
+    ParseError,
+    #[error("HMAC-SHA key derivation failed: {0}")]
+    KeyDerivation(String),
+    #[error("RC4 initialization failed: {0}")]
+    Rc4Init(String),
+    #[error("RC4 operation failed: {0}")]
+    Rc4Crypt(String),
+}
+
+pub type Result<T> = std::result::Result<T, CgError>;
+
+impl From<CgError> for String {
+    fn from(e: CgError) -> Self {
+        e.to_string()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct CgMetadata {
@@ -42,9 +64,9 @@ pub struct BootloaderCg {
 }
 
 impl BootloaderCg {
-    pub fn parse(data: &[u8]) -> Result<Self, String> {
+    pub fn parse(data: &[u8]) -> Result<Self> {
         let (header, payload): (BootloaderHeader, &[u8]) =
-            BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CG header")?;
+            BootloaderHeader::read_from_prefix(data).map_err(|_| CgError::ParseError)?;
         let mut cg = Self {
             header,
             data: payload.to_vec(),
@@ -56,6 +78,7 @@ impl BootloaderCg {
 
     pub fn populate_metadata(&mut self) {
         if self.data.len() < 0x40 {
+            warn!("[builder] CG data too short for metadata: got 0x{:x}, need 0x40", self.data.len());
             return;
         }
 
@@ -78,6 +101,7 @@ impl BootloaderCg {
     pub fn sync_metadata(&mut self) {
         if let Some(ref meta) = self.metadata {
             if self.data.len() < 0x40 {
+                warn!("[builder] CG data too short for sync_metadata: got 0x{:x}, need 0x40", self.data.len());
                 return;
             }
 
@@ -147,41 +171,49 @@ impl BootloaderCg {
         }
     }
 
-    pub fn decrypt(&mut self, cg_hmac: &[u8; 16]) {
+    pub fn decrypt(&mut self, cg_hmac: &[u8; 16]) -> Result<()> {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_size = (size_aligned - 0x10) as usize;
 
         if self.data.len() < payload_size {
-            return;
+            return Err(CgError::DataTooShort {
+                got: self.data.len(),
+                need: payload_size,
+            });
         }
 
-        if let Ok(cg_key) = hmac_sha(cg_hmac, &[&self.data[0..16]]) {
-            let mut final_key = [0u8; 16];
-            final_key.copy_from_slice(&cg_key[..16]);
-            info!("[builder] CG Decryption Key Derived: {:02x?}", final_key);
+        let cg_key = hmac_sha(cg_hmac, &[&self.data[0..16]])
+            .map_err(|e| CgError::KeyDerivation(e.to_string()))?;
+        let mut final_key = [0u8; 16];
+        final_key.copy_from_slice(&cg_key[..16]);
+        info!("[builder] CG Decryption Key Derived: {:02x?}", final_key);
 
-            if let Ok(mut rc4) = Rc4::new(&final_key) {
-                let _ = rc4.crypt(&mut self.data[0x10..payload_size]);
-            }
-        }
+        let mut rc4 = Rc4::new(&final_key).map_err(|e| CgError::Rc4Init(e.to_string()))?;
+        rc4.crypt(&mut self.data[0x10..payload_size])
+            .map_err(|e| CgError::Rc4Crypt(e.to_string()))?;
+        Ok(())
     }
 
-    pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
+    pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) -> Result<()> {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = (size_aligned - 0x10) as usize;
 
         if self.data.len() < payload_len {
-            return;
+            return Err(CgError::DataTooShort {
+                got: self.data.len(),
+                need: payload_len,
+            });
         }
 
-        if let Ok(hash) = rot_sum_sha(
+        let hash = rot_sum_sha(
             &IntoBytes::as_bytes(&self.header)[..0x10],
             &self.data[0x10..payload_len],
-        ) {
-            sha_out.copy_from_slice(&hash);
-        }
+        )
+        .map_err(|e| CgError::KeyDerivation(e.to_string()))?;
+        sha_out.copy_from_slice(&hash);
+        Ok(())
     }
 
     /*

@@ -289,7 +289,9 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
     let mut cf = BootloaderCf::parse(&xboxupd_bytes[..cf_size])?;
 
     if !cf.is_decrypted() {
-        cf.decrypt(&ONE_BL_KEY);
+        if let Err(e) = cf.decrypt(&ONE_BL_KEY) {
+            return Err(format!("CF decryption failed: {}", e));
+        }
     }
     if !cf.is_decrypted() {
         return Err("Failed to decrypt CF header.".to_string());
@@ -314,7 +316,9 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
     let mut cg = BootloaderCg::parse(&xboxupd_bytes[cf_size..])?;
 
     if !cg.is_decrypted() {
-        cg.decrypt(&meta.cg_nonce);
+        if let Err(e) = cg.decrypt(&meta.cg_nonce) {
+            return Err(format!("CG decryption failed: {}", e));
+        }
     }
     if !cg.is_decrypted() {
         return Err("Failed to decrypt CG header.".to_string());
@@ -324,7 +328,9 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
 
     // 3. Compare RotSum
     let mut cg_rotsum = [0u8; 0x14];
-    cg.calculate_rotsum(&mut cg_rotsum);
+    if let Err(e) = cg.calculate_rotsum(&mut cg_rotsum) {
+        return Err(format!("CG rotsum calculation failed: {}", e));
+    }
 
     if cg_rotsum != meta.cg_digest {
         return Err("CG checking hash mismatch against CF signature metadata".to_string());

@@ -23,8 +23,35 @@ use super::BootloaderHeader;
 use crate::crypto::rsa::ExCryptRsa;
 use crate::crypto::{hmac_sha, rot_sum_sha, verify_signature, Rc4};
 use byteorder::{BigEndian, ByteOrder};
-use log::info;
+use log::{info, warn};
+use thiserror::Error;
 use zerocopy::{FromBytes, IntoBytes};
+
+#[derive(Error, Debug)]
+pub enum CfError {
+    #[error("CF data too short: got {got}, need {need}")]
+    DataTooShort { got: usize, need: usize },
+    #[error("Invalid CF size in header")]
+    InvalidSize,
+    #[error("Failed to parse CF header")]
+    ParseError,
+    #[error("HMAC-SHA key derivation failed: {0}")]
+    KeyDerivation(String),
+    #[error("RC4 initialization failed: {0}")]
+    Rc4Init(String),
+    #[error("RC4 operation failed: {0}")]
+    Rc4Crypt(String),
+    #[error("Signature verification failed")]
+    SignatureVerification,
+}
+
+pub type Result<T> = std::result::Result<T, CfError>;
+
+impl From<CfError> for String {
+    fn from(e: CfError) -> Self {
+        e.to_string()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct CfMetadata {
@@ -60,19 +87,18 @@ pub struct BootloaderCf {
 }
 
 impl BootloaderCf {
-    pub fn parse(data: &[u8]) -> Result<Self, String> {
+    pub fn parse(data: &[u8]) -> Result<Self> {
         let (header, payload) =
-            BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CF header")?;
+            BootloaderHeader::read_from_prefix(data).map_err(|_| CfError::ParseError)?;
         let total_size = ((header.size.get() as usize) + 0xF) & !0xF;
         if total_size < core::mem::size_of::<BootloaderHeader>() {
-            return Err("Invalid CF size in header".to_string());
+            return Err(CfError::InvalidSize);
         }
         if data.len() < total_size {
-            return Err(format!(
-                "CF buffer too small: need 0x{:X}, have 0x{:X}",
-                total_size,
-                data.len()
-            ));
+            return Err(CfError::DataTooShort {
+                got: data.len(),
+                need: total_size,
+            });
         }
         let payload_len = total_size - core::mem::size_of::<BootloaderHeader>();
         let mut cf = Self {
@@ -85,7 +111,11 @@ impl BootloaderCf {
     }
 
     pub fn populate_metadata(&mut self) {
-        if !self.is_decrypted() || self.data.len() < 0x344 {
+        if !self.is_decrypted() {
+            return;
+        }
+        if self.data.len() < 0x344 {
+            warn!("[builder] CF data too short for metadata: got 0x{:x}, need 0x344", self.data.len());
             return;
         }
         self.populate_metadata_unchecked();
@@ -93,6 +123,7 @@ impl BootloaderCf {
 
     pub fn populate_metadata_unchecked(&mut self) {
         if self.data.len() < 0x344 {
+            warn!("[builder] CF data too short for populate_metadata_unchecked: got 0x{:x}, need 0x344", self.data.len());
             return;
         }
 
@@ -153,6 +184,7 @@ impl BootloaderCf {
     pub fn sync_metadata(&mut self) {
         if let Some(ref meta) = self.metadata {
             if self.data.len() < 0x344 {
+                warn!("[builder] CF data too short for sync_metadata: got 0x{:x}, need 0x344", self.data.len());
                 return;
             }
 
@@ -192,35 +224,48 @@ impl BootloaderCf {
         self.verify_decrypted()
     }
 
-    pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
+    pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) -> Result<()> {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = size_aligned as usize - 0x10;
 
         if self.data.len() < payload_len {
-            return;
+            return Err(CfError::DataTooShort {
+                got: self.data.len(),
+                need: payload_len,
+            });
         }
 
         let mut combined_header = [0u8; 0x20];
         combined_header[..0x10].copy_from_slice(&IntoBytes::as_bytes(&self.header)[..0x10]);
         combined_header[0x10..].copy_from_slice(&self.data[0x0..0x10]);
 
-        if let Ok(hash) = rot_sum_sha(&combined_header, &self.data[0x320..payload_len]) {
-            sha_out.copy_from_slice(&hash);
-        }
+        let hash = rot_sum_sha(&combined_header, &self.data[0x320..payload_len])
+            .map_err(|e| CfError::KeyDerivation(e.to_string()))?;
+        sha_out.copy_from_slice(&hash);
+        Ok(())
     }
 
-    pub fn verify_signature(&self, rsa_1bl: &ExCryptRsa) -> bool {
+    pub fn verify_signature(&self, rsa_1bl: &ExCryptRsa) -> Result<()> {
         let mut cf_hash = [0u8; 0x14];
-        self.calculate_rotsum(&mut cf_hash);
+        self.calculate_rotsum(&mut cf_hash)?;
 
         if self.data.len() < 0x320 {
-            return false;
+            return Err(CfError::DataTooShort {
+                got: self.data.len(),
+                need: 0x320,
+            });
         }
-        let signature: &[u8; 256] = self.data[0x220..0x320].try_into().unwrap();
+        let signature: &[u8; 256] = self.data[0x220..0x320]
+            .try_into()
+            .map_err(|_| CfError::ParseError)?;
 
         let expected_salt = b"XBOX_ROM_6\0";
-        verify_signature(signature, &cf_hash, expected_salt, rsa_1bl).unwrap_or(false)
+        if verify_signature(signature, &cf_hash, expected_salt, rsa_1bl).unwrap_or(false) {
+            Ok(())
+        } else {
+            Err(CfError::SignatureVerification)
+        }
     }
 
     pub fn print_info(&self) {
@@ -290,24 +335,28 @@ impl BootloaderCf {
         }
     }
 
-    pub fn decrypt(&mut self, onebl_key: &[u8; 16]) {
+    pub fn decrypt(&mut self, onebl_key: &[u8; 16]) -> Result<()> {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_size = (size_aligned - 0x10) as usize;
 
         if self.data.len() < payload_size {
-            return;
+            return Err(CfError::DataTooShort {
+                got: self.data.len(),
+                need: payload_size,
+            });
         }
 
-        if let Ok(derived_key) = hmac_sha(onebl_key, &[&self.data[0x10..0x20]]) {
-            let mut final_key = [0u8; 16];
-            final_key.copy_from_slice(&derived_key[..16]);
-            info!("[builder] CF Decryption Key Derived: {:02x?}", final_key);
+        let derived_key = hmac_sha(onebl_key, &[&self.data[0x10..0x20]])
+            .map_err(|e| CfError::KeyDerivation(e.to_string()))?;
+        let mut final_key = [0u8; 16];
+        final_key.copy_from_slice(&derived_key[..16]);
+        info!("[builder] CF Decryption Key Derived: {:02x?}", final_key);
 
-            if let Ok(mut rc4) = Rc4::new(&final_key) {
-                let _ = rc4.crypt(&mut self.data[0x20..payload_size]);
-            }
-        }
+        let mut rc4 = Rc4::new(&final_key).map_err(|e| CfError::Rc4Init(e.to_string()))?;
+        rc4.crypt(&mut self.data[0x20..payload_size])
+            .map_err(|e| CfError::Rc4Crypt(e.to_string()))?;
+        Ok(())
     }
 
     pub fn verify_decrypted(&self) -> bool {

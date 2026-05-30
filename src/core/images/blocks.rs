@@ -21,13 +21,6 @@
 */
 use log::{info, warn};
 
-#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum NandLayout {
-    Xsb,
-    Sb,
-    Bb,
-    Emmc,
-}
 
 pub const EMMC_ANCHOR_OFFSETS: [usize; 4] = [0x2fe0000, 0x2fe4000, 0x2fe8000, 0x2fec000];
 
@@ -55,6 +48,14 @@ pub enum SpareProfile {
 pub struct BadBlock {
     pub block: usize,
     pub target: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum NandLayout {
+    Xsb,
+    Sb,
+    Bb,
+    Emmc,
 }
 
 impl NandLayout {
@@ -111,6 +112,47 @@ impl NandLayout {
             }
             NandLayout::Bb => ((logical_page / 2048) * 2112 + (logical_page % 2048)) as u64,
         }
+    }
+
+    pub fn marker_offset(&self) -> usize {
+        match self {
+            NandLayout::Xsb | NandLayout::Sb => 0x205,
+            NandLayout::Bb => 0x200,
+            NandLayout::Emmc => 0, // No marker
+        }
+    }
+
+    pub fn id_offset(&self) -> usize {
+        match self {
+            // Xsb/Sb: block ID LSB is at spare[0]
+            NandLayout::Xsb | NandLayout::Sb => 0x200,
+            // Bb: spare[0] is the bad-block marker (0xFF = good), block ID LSB is at spare[1]
+            NandLayout::Bb => 0x201,
+            NandLayout::Emmc => 0,
+        }
+    }
+
+    pub fn reserve_start(&self, _image_len: usize) -> usize {
+        match self {
+            NandLayout::Xsb | NandLayout::Sb => 0x3E0,
+            NandLayout::Bb => {
+                let total = self.total_blocks(_image_len);
+                total.saturating_sub(0x20)
+            }
+            NandLayout::Emmc => 0,
+        }
+    }
+
+    pub fn max_blocks(&self) -> usize {
+        match self {
+            NandLayout::Xsb | NandLayout::Sb => 0x400,
+            NandLayout::Bb => 0x200,
+            NandLayout::Emmc => 0,
+        }
+    }
+
+    pub fn physical_block_size(&self) -> usize {
+        self.block_size()
     }
 }
 
@@ -326,46 +368,7 @@ pub fn write_logical_data(
 }
 
 impl NandLayout {
-    pub fn marker_offset(&self) -> usize {
-        match self {
-            NandLayout::Xsb | NandLayout::Sb => 0x205,
-            NandLayout::Bb => 0x200,
-            NandLayout::Emmc => 0, // No marker
-        }
-    }
 
-    pub fn id_offset(&self) -> usize {
-        match self {
-            // Xsb/Sb: block ID LSB is at spare[0]
-            NandLayout::Xsb | NandLayout::Sb => 0x200,
-            // Bb: spare[0] is the bad-block marker (0xFF = good), block ID LSB is at spare[1]
-            NandLayout::Bb => 0x201,
-            NandLayout::Emmc => 0,
-        }
-    }
-
-    pub fn reserve_start(&self, _image_len: usize) -> usize {
-        match self {
-            NandLayout::Xsb | NandLayout::Sb => 0x3E0,
-            NandLayout::Bb => {
-                let total = self.total_blocks(_image_len);
-                total.saturating_sub(0x20)
-            }
-            NandLayout::Emmc => 0,
-        }
-    }
-
-    pub fn max_blocks(&self) -> usize {
-        match self {
-            NandLayout::Xsb | NandLayout::Sb => 0x400,
-            NandLayout::Bb => 0x200,
-            NandLayout::Emmc => 0,
-        }
-    }
-
-    pub fn physical_block_size(&self) -> usize {
-        self.block_size()
-    }
 
     pub fn detect(image: &[u8]) -> Result<Self, String> {
         let len = image.len();

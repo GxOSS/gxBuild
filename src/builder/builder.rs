@@ -32,17 +32,8 @@ use crate::builder::filesystem::mobile::MobileStore;
 use crate::core::images::blocks::*;
 use crate::core::images::gxp::{apply_records, GxpBinary, GxpPatchType, PatchRecord};
 use crate::crypto::{calculate_smc_hash, hmac_sha, Rc4};
+use crate::builder::types::*;
 
-const NAND_RETAIL_1BL_KEY: [u8; 16] = [
-    0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA,
-];
-
-struct BlDiscovery {
-    magic: String,
-    version: u16,
-    size: u32,
-    key_source: String,
-}
 
 fn bl_is_valid_magic(magic: u16) -> bool {
     matches!(
@@ -63,6 +54,23 @@ fn bl_magic_to_str(magic: u16) -> String {
         _ => "??",
     }
     .to_string()
+}
+
+pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
+    if hex.len() % 2 != 0 {
+        return Err(format!(
+            "Hex string has odd length ({}): '{}'",
+            hex.len(),
+            hex
+        ));
+    }
+    (0..hex.len())
+        .step_by(2)
+        .map(|i| {
+            u8::from_str_radix(&hex[i..i + 2], 16)
+                .map_err(|e| format!("Invalid hex byte '{}': {}", &hex[i..i + 2], e))
+        })
+        .collect()
 }
 
 fn bl_try_identify(data: &[u8], parent_key: &[u8; 16]) -> Option<BlDiscovery> {
@@ -147,434 +155,6 @@ where
         }
     }
     None
-}
-
-pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
-    if hex.len() % 2 != 0 {
-        return Err(format!(
-            "Hex string has odd length ({}): '{}'",
-            hex.len(),
-            hex
-        ));
-    }
-    (0..hex.len())
-        .step_by(2)
-        .map(|i| {
-            u8::from_str_radix(&hex[i..i + 2], 16)
-                .map_err(|e| format!("Invalid hex byte '{}': {}", &hex[i..i + 2], e))
-        })
-        .collect()
-}
-
-#[derive(FromBytes, IntoBytes, KnownLayout, Immutable, Clone, Copy)]
-#[repr(C)]
-pub struct NandHeaderPrefix {
-    pub magic: U16<BigEndian>,
-    pub version: U16<BigEndian>,
-    pub pairing: U16<BigEndian>,
-    pub flags: U16<BigEndian>,
-    pub entrypoint: U32<BigEndian>, // CB
-    pub size: U32<BigEndian>,
-}
-
-#[derive(FromBytes, IntoBytes, KnownLayout, Immutable, Clone, Copy)]
-#[repr(C)]
-pub struct NandHeader {
-    pub prefix: NandHeaderPrefix,
-    pub copyright: [u8; 0x40],
-    pub payload_indicator: U16<BigEndian>,
-    pub unused: [u8; 0x0E],
-    pub kv_size: U32<BigEndian>,
-    pub cf_offset: U32<BigEndian>,
-    pub patch_slots: I16<BigEndian>,
-    pub kv_version: U16<BigEndian>,
-    pub kv_addr: U32<BigEndian>,
-    pub fs_addr: U32<BigEndian>,
-    pub smc_config_offset: U32<BigEndian>,
-    pub smc_boot_size: U32<BigEndian>,
-    pub smc_boot_offset: U32<BigEndian>,
-}
-
-#[derive(Debug, Clone)]
-pub struct PayloadEntry {
-    pub address: u32,
-    pub size: u32,
-    pub description: String,
-    pub data: Vec<u8>,
-    pub fixed_address: Option<u32>,
-}
-
-impl PayloadEntry {
-    pub fn serialize(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
-        buf.extend_from_slice(&self.address.to_be_bytes());
-        buf.extend_from_slice(&self.size.to_be_bytes());
-        let desc_bytes = self.description.as_bytes();
-        let desc_len = (desc_bytes.len() as u8).min(0xFF);
-        buf.push(desc_len);
-        buf.extend_from_slice(&desc_bytes[..desc_len as usize]);
-        buf
-    }
-}
-
-pub struct PayloadList {
-    pub entries: Vec<PayloadEntry>,
-}
-
-impl PayloadList {
-    pub fn new() -> Self {
-        PayloadList {
-            entries: Vec::new(),
-        }
-    }
-
-    pub fn serialize(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
-        for entry in &self.entries {
-            buf.extend_from_slice(&entry.serialize());
-        }
-        buf.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]); // Table terminator
-        buf
-    }
-}
-
-impl NandHeader {
-    pub const MAGIC: u16 = 0xFF4F;
-    const XEBUILD_FLAG_OFFSET: usize = 0x3B;
-    const XEBUILD_DUALBOOT_OFFSET: usize = 0x3C;
-    const XEBUILD_UART_OFFSET: usize = 0x3D;
-    const XEBUILD_XELL_ALT_POC_OFFSET: usize = 0x3E;
-    const XEBUILD_XELL_POC_OFFSET: usize = 0x3F;
-
-    pub fn validate(&self) -> Result<(), String> {
-        if self.prefix.magic.get() != Self::MAGIC {
-            return Err(format!(
-                "Invalid NAND magic: 0x{:04X}",
-                self.prefix.magic.get()
-            ));
-        }
-        Ok(())
-    }
-
-    pub fn cb_offset(&self) -> u32 {
-        self.prefix.entrypoint.get()
-    }
-
-    pub fn print_info(&self) {
-        info!(
-            "[builder] NAND magic:       0x{:04X}",
-            self.prefix.magic.get()
-        );
-        info!("[builder] NAND build:       {}", self.prefix.version.get());
-        info!("[builder] CB offset:        0x{:X}", self.cb_offset());
-        info!("[builder] CF offset:        0x{:X}", self.cf_offset.get());
-        let copyright = String::from_utf8_lossy(&self.copyright);
-        info!(
-            "[builder] Copyright:        {}",
-            copyright.trim_matches(char::from(0))
-        );
-        info!("[builder] KV offset:        0x{:X}", self.kv_addr.get());
-        info!("[builder] KV size:          0x{:X}", self.kv_size.get());
-        info!(
-            "[builder] SMC boot size:    0x{:X}",
-            self.smc_boot_size.get()
-        );
-        info!(
-            "[builder] SMC boot offset:  0x{:X}",
-            self.smc_boot_offset.get()
-        );
-    }
-
-    fn apply_xebuild_header_flags(&mut self, options: &BuildOptions, extra: &NandExtra) {
-        let profile = options.image_profile.as_str();
-        let is_devkit = profile == "devkit" || matches!(options.build_mode, BuildMode::Devkit);
-        let is_retail = profile == "retail";
-        let is_hacked = profile == "jtag"
-            || profile == "devgl"
-            || profile == "xdkbuild"
-            || profile.contains("glitch");
-
-        if is_retail || is_devkit {
-            self.copyright[Self::XEBUILD_FLAG_OFFSET] = 0;
-            return;
-        }
-
-        if is_hacked {
-            self.copyright[Self::XEBUILD_FLAG_OFFSET] = 1;
-
-            let alt = extra.power_on_cause_a;
-            let primary = extra.power_on_cause_b;
-
-            self.copyright[Self::XEBUILD_XELL_ALT_POC_OFFSET] = if alt != 0 { alt } else { 0x00 };
-            self.copyright[Self::XEBUILD_XELL_POC_OFFSET] =
-                if primary != 0 { primary } else { 0x12 };
-
-            if options.demon {
-                self.copyright[Self::XEBUILD_UART_OFFSET] = 2;
-            } else if options.cygnos {
-                self.copyright[Self::XEBUILD_UART_OFFSET] = 1;
-            }
-
-            let _ = Self::XEBUILD_DUALBOOT_OFFSET;
-        }
-    }
-}
-
-use crate::builder::chain::cb::BootloaderCb;
-use crate::builder::chain::cd::BootloaderCd;
-use crate::builder::chain::ce::BootloaderCe;
-use crate::builder::chain::cf::BootloaderCf;
-use crate::builder::chain::cg::BootloaderCg;
-use crate::builder::chain::sc::BootloaderSc;
-
-#[derive(Clone)]
-pub struct NandBootloaders {
-    pub cb: Option<BootloaderCb>,
-    pub cb_a: Option<BootloaderCb>,
-    pub cb_x: Option<BootloaderCb>,
-    pub cb_b: Option<BootloaderCb>,
-    pub sc: Option<BootloaderSc>,
-    pub cd: Option<BootloaderCd>,
-    pub ce: Option<BootloaderCe>,
-    pub khvpatch: Option<Vec<PatchRecord>>,
-    pub xell: Option<crate::builder::chain::xell::Xell>,
-}
-
-impl NandBootloaders {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn clear(&mut self) {
-        self.cb = None;
-        self.cb_a = None;
-        self.cb_x = None;
-        self.cb_b = None;
-        self.sc = None;
-        self.cd = None;
-        self.ce = None;
-        self.khvpatch = None;
-        self.xell = None;
-    }
-}
-
-impl Default for NandBootloaders {
-    fn default() -> Self {
-        NandBootloaders {
-            cb: None,
-            cb_a: None,
-            cb_x: None,
-            cb_b: None,
-            sc: None,
-            cd: None,
-            ce: None,
-            khvpatch: None,
-            xell: None,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct NandUpdate {
-    pub cf_0: Option<BootloaderCf>,
-    pub cg_0: Option<BootloaderCg>,
-    pub cf_1: Option<BootloaderCf>,
-    pub cg_1: Option<BootloaderCg>,
-}
-
-impl NandUpdate {
-    pub fn clear(&mut self) {
-        self.cf_0 = None;
-        self.cg_0 = None;
-        self.cf_1 = None;
-        self.cg_1 = None;
-    }
-}
-
-impl Default for NandUpdate {
-    fn default() -> Self {
-        NandUpdate {
-            cf_0: None,
-            cg_0: None,
-            cf_1: None,
-            cg_1: None,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct NandExtra {
-    pub smc: Vec<u8>,
-    pub smc_metadata: Option<crate::builder::chain::smc::SmcMetadata>,
-    pub smc_config: Vec<u8>,
-    pub keyvault: Vec<u8>,
-    pub fcrt: Option<Vec<u8>>,
-    pub power_on_cause_a: u8,
-    pub power_on_cause_b: u8,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum MotherboardType {
-    Xenon = 1,
-    Zephyr = 2,
-    Falcon = 3,
-    Jasper = 4,
-    Trinity = 5,
-    Corona = 6,
-    Winchester = 7,
-    Unknown = 0xF,
-}
-
-impl MotherboardType {
-    pub fn from_smc(smc_byte: u8) -> Self {
-        match (smc_byte >> 4) & 0xF {
-            1 => MotherboardType::Xenon,
-            2 => MotherboardType::Zephyr,
-            3 => MotherboardType::Falcon,
-            4 => MotherboardType::Jasper,
-            5 => MotherboardType::Trinity,
-            6 => MotherboardType::Corona,
-            7 => MotherboardType::Winchester,
-            _ => MotherboardType::Unknown,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum SouthbridgeType {
-    Xsb,
-    Psb,
-    Ksb,
-    Unknown,
-}
-
-impl From<MotherboardType> for SouthbridgeType {
-    fn from(m: MotherboardType) -> Self {
-        match m {
-            MotherboardType::Xenon | MotherboardType::Zephyr | MotherboardType::Falcon => {
-                SouthbridgeType::Xsb
-            }
-            MotherboardType::Jasper | MotherboardType::Trinity => SouthbridgeType::Psb,
-            MotherboardType::Corona | MotherboardType::Winchester => SouthbridgeType::Ksb,
-            MotherboardType::Unknown => SouthbridgeType::Unknown,
-        }
-    }
-}
-
-pub struct LayoutCalculator;
-
-impl LayoutCalculator {
-    pub fn calculate(
-        sb: SouthbridgeType,
-        image_profile: &str,
-        layout: NandLayout,
-    ) -> (u32, u32, u32) {
-        // Returns (header.fs_addr, header.smc_config_offset, physical_fs_block)
-        let smc_config = match layout {
-            NandLayout::Xsb | NandLayout::Sb => 0xF70000,
-            NandLayout::Bb => 0x3DF0000,
-            NandLayout::Emmc => 0x0,
-        };
-
-        if matches!(layout, NandLayout::Bb | NandLayout::Emmc) {
-            return (0, smc_config, 0);
-        }
-
-        // SmallBlock FlashFS relocation based on SB and profile
-        let is_split = match image_profile {
-            "split" | "devgl" | "devkit" | "xdkbuild" | "glitch2m" | "glitchr" | "glitch2r" => true,
-            _ => false,
-        };
-
-        match sb {
-            SouthbridgeType::Xsb => {
-                if is_split {
-                    (0xE44000, smc_config, 0x391)
-                } else {
-                    (0xD84000, smc_config, 0x361)
-                }
-            }
-            SouthbridgeType::Psb => {
-                if is_split {
-                    (0xDF4000, smc_config, 0x37D)
-                } else {
-                    (0xD84000, smc_config, 0x361)
-                }
-            }
-            SouthbridgeType::Ksb => {
-                // Corona is always split in modern builds (RGH2/3) or handles it same as Split PSB
-                (0xE44000, smc_config, 0x391)
-            }
-            _ => (0, smc_config, 0),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum BuildMode {
-    Normal,
-    Xell,
-    Shadowboot,
-    Devkit,
-}
-
-#[derive(Clone)]
-pub struct BuildOptions {
-    pub layout: NandLayout,
-    pub lba_map: LbaMap,
-    pub image_profile: String,
-    pub build_mode: BuildMode,
-    pub motherboard: MotherboardType,
-    pub bigonsmall: bool,
-    pub shadowboot: bool,
-    pub mfg: bool,
-    pub noremap: bool,
-    pub khv_apply: bool,
-    pub khv_header_size: u32,
-    pub jtag_syscall: Option<u16>,
-    pub jtag_pairing_2bl: Option<[u8; 3]>,
-    pub gxunsafe: bool,
-    pub verbose: bool,
-    pub cba: Option<String>,
-    pub cbb: Option<String>,
-    pub full_image: bool,
-    pub xsb: bool,
-    pub nomobile: bool,
-    pub nofcrt: bool,
-    pub dualpatchslots: bool,
-    pub cygnos: bool,
-    pub demon: bool,
-}
-
-impl Default for BuildOptions {
-    fn default() -> Self {
-        BuildOptions {
-            layout: NandLayout::Sb,
-            lba_map: LbaMap::new(0x400),
-            image_profile: "retail".to_string(),
-            build_mode: BuildMode::Normal,
-            motherboard: MotherboardType::Unknown,
-            bigonsmall: false,
-            shadowboot: false,
-            mfg: false,
-            full_image: false,
-            xsb: false,
-            noremap: false,
-            khv_apply: false,
-            khv_header_size: 0x4000,
-            jtag_syscall: None,
-            jtag_pairing_2bl: None,
-            gxunsafe: false,
-            verbose: false,
-            cba: None,
-            cbb: None,
-            nomobile: false,
-            nofcrt: false,
-            dualpatchslots: false,
-            cygnos: false,
-            demon: false,
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -748,9 +328,13 @@ impl NandSkeleton {
                             let cb_a_key: [u8; 16] = cb_a_key_slice.try_into().unwrap();
                             let uses_new_crypto = (cb_a.header.flags.get() & 0x1000) != 0;
                             if uses_new_crypto {
-                                cb_b.decrypt_v2(&cb_a.header, &cb_a_key, &cpukey);
+                                if let Err(e) = cb_b.decrypt_v2(&cb_a.header, &cb_a_key, &cpukey) {
+                                    warn!("[pfa] CB_B v2 decryption failed: {}", e);
+                                }
                             } else {
-                                cb_b.decrypt_v1(&cb_a_key, &cpukey);
+                                if let Err(e) = cb_b.decrypt_v1(&cb_a_key, &cpukey) {
+                                    warn!("[pfa] CB_B v1 decryption failed: {}", e);
+                                }
                             }
                             cb_b.populate_metadata_unchecked();
                             if self.options.verbose {
@@ -773,7 +357,9 @@ impl NandSkeleton {
             if let Some(cb) = self.bootloaders.cb.as_mut() {
                 if cb.metadata.is_none() {
                     info!("[pfa] CB (single) has no metadata — decrypting with 1BL key");
-                    cb.decrypt(&ONEBL_KEY);
+                    if let Err(e) = cb.decrypt(&ONEBL_KEY) {
+                        warn!("[pfa] CB decryption failed: {}", e);
+                    }
                     cb.populate_metadata_unchecked();
                     info!(
                         "[pfa] CB decrypted, meta: {:?}",
@@ -787,7 +373,9 @@ impl NandSkeleton {
             if let Some(cf) = self.update.cf_0.as_mut() {
                 if cf.metadata.is_none() {
                     info!("[pfa] CF_0 has no metadata — decrypting with 1BL key");
-                    cf.decrypt(&ONEBL_KEY);
+                    if let Err(e) = cf.decrypt(&ONEBL_KEY) {
+                        log::warn!("[pfa] CF_0 decryption failed: {}", e);
+                    }
                     cf.populate_metadata_unchecked();
                     info!(
                         "[pfa] CF_0 decrypted, meta: {:?}",
@@ -801,7 +389,9 @@ impl NandSkeleton {
             if let Some(cf) = self.update.cf_1.as_mut() {
                 if cf.metadata.is_none() {
                     info!("[pfa] CF_1 has no metadata — decrypting with 1BL key");
-                    cf.decrypt(&ONEBL_KEY);
+                    if let Err(e) = cf.decrypt(&ONEBL_KEY) {
+                        log::warn!("[pfa] CF_1 decryption failed: {}", e);
+                    }
                     cf.populate_metadata_unchecked();
                     info!(
                         "[pfa] CF_1 decrypted, meta: {:?}",

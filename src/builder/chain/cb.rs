@@ -23,7 +23,30 @@ use super::BootloaderHeader;
 use crate::crypto::rsa::ExCryptRsa;
 use crate::crypto::{hmac_sha, rot_sum_sha, verify_signature, Rc4};
 use log::info;
+use thiserror::Error;
 use zerocopy::{FromBytes, IntoBytes};
+
+#[derive(Error, Debug)]
+pub enum CbError {
+    #[error("CB data too short: got {got}, need {need}")]
+    DataTooShort { got: usize, need: usize },
+    #[error("Failed to parse CB header")]
+    ParseError,
+    #[error("HMAC-SHA key derivation failed: {0}")]
+    KeyDerivation(String),
+    #[error("RC4 initialization failed: {0}")]
+    Rc4Init(String),
+    #[error("RC4 decryption failed: {0}")]
+    Rc4Crypt(String),
+}
+
+pub type Result<T> = std::result::Result<T, CbError>;
+
+impl From<CbError> for String {
+    fn from(e: CbError) -> Self {
+        e.to_string()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct CbMetadata {
@@ -88,9 +111,9 @@ impl BootloaderCb {
         cb
     }
 
-    pub fn parse(data: &[u8]) -> Result<Self, String> {
+    pub fn parse(data: &[u8]) -> Result<Self> {
         let (header, payload) =
-            BootloaderHeader::read_from_prefix(data).map_err(|_| "Failed to parse CB header")?;
+            BootloaderHeader::read_from_prefix(data).map_err(|_| CbError::ParseError)?;
         let mut cb = Self {
             header: header.clone(),
             data: payload.to_vec(),
@@ -298,7 +321,6 @@ impl BootloaderCb {
         }
 
         if self.data.len() >= 0x30 && self.data[0x30] == 0 {
-            // absolute 0x40
             indicator = "CB_B";
         }
 
@@ -366,39 +388,44 @@ impl BootloaderCb {
         }
     }
 
-    pub fn decrypt(&mut self, onebl_key: &[u8; 16]) {
+    pub fn decrypt(&mut self, onebl_key: &[u8; 16]) -> Result<()> {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = size_aligned as usize - 0x10;
 
         if self.data.len() < payload_len {
-            return;
+            return Err(CbError::DataTooShort {
+                got: self.data.len(),
+                need: payload_len,
+            });
         }
 
         // Derive RC4 key from 1BL key and the bootloader's key field.
-        if let Ok(derived_key) = hmac_sha(onebl_key, &[&self.data[0..16]]) {
-            let mut decrypt_key = [0u8; 16];
-            decrypt_key.copy_from_slice(&derived_key[..16]);
-            self.derived_key = Some(decrypt_key);
-            info!(
-                "[builder] Decrypting CB using derived key: {:02x?}",
-                decrypt_key
-            );
-            if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
-                let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
-            }
-        }
+        let derived_key = hmac_sha(onebl_key, &[&self.data[0..16]])
+            .map_err(|e| CbError::KeyDerivation(e.to_string()))?;
+        let mut decrypt_key = [0u8; 16];
+        decrypt_key.copy_from_slice(&derived_key[..16]);
+        self.derived_key = Some(decrypt_key);
+        info!("[builder] Decrypting CB using derived key: {:02x?}", decrypt_key);
+
+        let mut rc4 = Rc4::new(&decrypt_key).map_err(|e| CbError::Rc4Init(e.to_string()))?;
+        rc4.crypt(&mut self.data[0x10..payload_len])
+            .map_err(|e| CbError::Rc4Crypt(e.to_string()))?;
+
         self.populate_metadata();
+        Ok(())
     }
 
-    /// Decrypts a CB_B using MFG key
-    pub fn decrypt_mfg(&mut self, cb_a_key: &[u8; 16]) {
+    pub fn decrypt_mfg(&mut self, cb_a_key: &[u8; 16]) -> Result<()> {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = size_aligned as usize - 0x10;
 
         if self.data.len() < payload_len {
-            return;
+            return Err(CbError::DataTooShort {
+                got: self.data.len(),
+                need: payload_len,
+            });
         }
 
         // MFG key is all zeros
@@ -409,19 +436,19 @@ impl BootloaderCb {
         hmac_input[..0x10].copy_from_slice(&self.data[0..0x10]); // cb_b_hdr.key
         hmac_input[0x10..0x20].copy_from_slice(cb_a_key); // cb_a derived key
 
-        if let Ok(derived_key) = hmac_sha(&zero_key, &[&hmac_input]) {
-            let mut decrypt_key = [0u8; 16];
-            decrypt_key.copy_from_slice(&derived_key[..16]);
-            self.derived_key = Some(decrypt_key);
-            info!(
-                "[builder] Decrypting CB (MFG zero-key) using derived key: {:02x?}",
-                decrypt_key
-            );
-            if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
-                let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
-            }
-        }
+        let derived_key = hmac_sha(&zero_key, &[&hmac_input])
+            .map_err(|e| CbError::KeyDerivation(e.to_string()))?;
+        let mut decrypt_key = [0u8; 16];
+        decrypt_key.copy_from_slice(&derived_key[..16]);
+        self.derived_key = Some(decrypt_key);
+        info!("[builder] Decrypting CB (MFG zero-key) using derived key: {:02x?}", decrypt_key);
+
+        let mut rc4 = Rc4::new(&decrypt_key).map_err(|e| CbError::Rc4Init(e.to_string()))?;
+        rc4.crypt(&mut self.data[0x10..payload_len])
+            .map_err(|e| CbError::Rc4Crypt(e.to_string()))?;
+
         self.populate_metadata();
+        Ok(())
     }
 
     pub fn verify_decrypted(&self) -> bool {
@@ -431,24 +458,30 @@ impl BootloaderCb {
         self.data[0x260..0x380].iter().all(|&b| b == 0)
     }
 
-    pub fn decrypt_v1(&mut self, cb_a_key: &[u8; 16], cpu_key: &[u8; 16]) {
+    pub fn decrypt_v1(&mut self, cb_a_key: &[u8; 16], cpu_key: &[u8; 16]) -> Result<()> {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = size_aligned as usize - 0x10;
 
         if self.data.len() < payload_len {
-            return;
+            return Err(CbError::DataTooShort {
+                got: self.data.len(),
+                need: payload_len,
+            });
         }
 
         // C: ExCryptHmacSha(cb_a_key, cb_b_key, cpu_key, ..., cb_b_key) - writes back in-place.
-        if let Ok(derived_key) = hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key]) {
-            let mut decrypt_key = [0u8; 16];
-            decrypt_key.copy_from_slice(&derived_key[..16]);
-            self.derived_key = Some(decrypt_key);
-            if let Ok(mut rc4) = Rc4::new(&decrypt_key) {
-                let _ = rc4.crypt(&mut self.data[0x10..payload_len]);
-            }
-        }
+        let derived_key = hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key])
+            .map_err(|e| CbError::KeyDerivation(e.to_string()))?;
+        let mut decrypt_key = [0u8; 16];
+        decrypt_key.copy_from_slice(&derived_key[..16]);
+        self.derived_key = Some(decrypt_key);
+
+        let mut rc4 = Rc4::new(&decrypt_key).map_err(|e| CbError::Rc4Init(e.to_string()))?;
+        rc4.crypt(&mut self.data[0x10..payload_len])
+            .map_err(|e| CbError::Rc4Crypt(e.to_string()))?;
+
+        Ok(())
     }
 
     pub fn decrypt_v2(
@@ -456,13 +489,16 @@ impl BootloaderCb {
         cb_a_hdr: &BootloaderHeader,
         cb_a_key: &[u8; 16],
         cpu_key: &[u8; 16],
-    ) {
+    ) -> Result<()> {
         let size = self.header.size.get();
         let size_aligned = (size + 0xF) & 0xFFFFFFF0;
         let payload_len = size_aligned as usize - 0x10;
 
         if self.data.len() < payload_len {
-            return;
+            return Err(CbError::DataTooShort {
+                got: self.data.len(),
+                need: payload_len,
+            });
         }
 
         // Build HMAC input for v2 crypto
@@ -471,23 +507,19 @@ impl BootloaderCb {
         cb_a_hdr_copy[0x6] = 0; // Clear wFlags low byte
         cb_a_hdr_copy[0x7] = 0; // Clear wFlags high byte
 
-        match hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key, &cb_a_hdr_copy]) {
-            Ok(derived_key) => {
-                let mut decrypt_key = [0u8; 16];
-                decrypt_key.copy_from_slice(&derived_key[..16]);
-                self.derived_key = Some(decrypt_key);
-                info!("[cb] CB_B v2 key derived successfully");
+        let derived_key = hmac_sha(cb_a_key, &[&self.data[0..16], cpu_key, &cb_a_hdr_copy])
+            .map_err(|e| CbError::KeyDerivation(e.to_string()))?;
+        let mut decrypt_key = [0u8; 16];
+        decrypt_key.copy_from_slice(&derived_key[..16]);
+        self.derived_key = Some(decrypt_key);
+        info!("[cb] CB_B v2 key derived successfully");
 
-                match Rc4::new(&decrypt_key) {
-                    Ok(mut rc4) => match rc4.crypt(&mut self.data[0x10..payload_len]) {
-                        Ok(_) => info!("[cb] CB_B v2 RC4 decryption successful"),
-                        Err(e) => log::warn!("[cb] CB_B v2 RC4 decryption failed: {}", e),
-                    },
-                    Err(e) => log::warn!("[cb] CB_B v2 RC4 init failed: {}", e),
-                }
-            }
-            Err(e) => log::warn!("[cb] CB_B v2 key derivation failed: {}", e),
-        }
+        let mut rc4 = Rc4::new(&decrypt_key).map_err(|e| CbError::Rc4Init(e.to_string()))?;
+        rc4.crypt(&mut self.data[0x10..payload_len])
+            .map_err(|e| CbError::Rc4Crypt(e.to_string()))?;
+        info!("[cb] CB_B v2 RC4 decryption successful");
+
+        Ok(())
     }
     /// Returns the derived RC4 key if decryption has been performed.
     pub fn derived_key(&self) -> Option<[u8; 16]> {

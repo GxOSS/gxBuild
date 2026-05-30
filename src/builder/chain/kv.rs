@@ -22,6 +22,7 @@
 
 use crate::crypto::{hmac_sha, Rc4};
 use log::info;
+use thiserror::Error;
 use zerocopy::byteorder::{BigEndian, U16};
 use zerocopy::FromBytes;
 
@@ -74,18 +75,45 @@ pub const OFFSET_CONSOLE_ID: usize = 0x9CA;
 pub const OFFSET_MF_DATE: usize = 0x9E4;
 pub const OFFSET_DRIVE_INQUIRY: usize = 0xC8A;
 pub const OFFSET_OSIG_STR: usize = 0xC92;
+#[derive(Error, Debug)]
+pub enum KeyvaultError {
+    #[error("Keyvault data too small: got {got}, expected {expected}")]
+    DataTooSmall { got: usize, expected: usize },
+    #[error("Keyvault too small for decryption: got {got}")]
+    TooSmallForDecryption { got: usize },
+    #[error("Key derivation failed: {0}")]
+    KeyDerivation(String),
+    #[error("RC4 initialization failed: {0}")]
+    Rc4Init(String),
+    #[error("RC4 operation failed: {0}")]
+    Rc4Crypt(String),
+    #[error("Decryption failed: invalid signatures for both KV1 and KV2")]
+    DecryptionFailed,
+    #[error("Failed to map KeyvaultRecord")]
+    RecordMapFailed,
+    #[error("{0}")]
+    Other(String),
+}
+
+pub type Result<T> = std::result::Result<T, KeyvaultError>;
+
+impl From<KeyvaultError> for String {
+    fn from(e: KeyvaultError) -> Self {
+        e.to_string()
+    }
+}
+
 pub const OFFSET_FCRT_FLAG: usize = 0x1C;
 
 impl Keyvault {
     pub const SIZE: usize = 0x4000;
 
-    pub fn parse(data: &[u8]) -> Result<Self, String> {
+    pub fn parse(data: &[u8]) -> Result<Self> {
         if data.len() < Self::SIZE {
-            return Err(format!(
-                "Keyvault data too small: {} bytes (expected {})",
-                data.len(),
-                Self::SIZE
-            ));
+            return Err(KeyvaultError::DataTooSmall {
+                got: data.len(),
+                expected: Self::SIZE,
+            });
         }
         let mut kv = Self {
             data: data[..Self::SIZE].to_vec(),
@@ -103,13 +131,15 @@ impl Keyvault {
         Ok(kv)
     }
 
-    pub fn refresh_metadata(&mut self) -> Result<(), String> {
+    pub fn refresh_metadata(&mut self) -> Result<()> {
         if !self.is_decrypted {
             self.metadata = None;
-            return Err("Cannot refresh metadata on encrypted Keyvault".to_string());
+            return Err(KeyvaultError::Other(
+                "Cannot refresh metadata on encrypted Keyvault".to_string(),
+            ));
         }
 
-        let record = self.get_record()?;
+        let record = self.get_record().map_err(|e| KeyvaultError::Other(e))?;
 
         let flags = u16::from_be_bytes(self.data[0x1C..0x1E].try_into().unwrap());
 
@@ -156,13 +186,15 @@ impl Keyvault {
         false
     }
 
-    pub fn decrypt(&mut self, cpukey: &[u8; 16]) -> Result<(), String> {
+    pub fn decrypt(&mut self, cpukey: &[u8; 16]) -> Result<()> {
         if self.is_decrypted {
             return Ok(());
         }
 
         if self.data.len() < 0x10 {
-            return Err("Keyvault too small for decryption".to_string());
+            return Err(KeyvaultError::TooSmallForDecryption {
+                got: self.data.len(),
+            });
         }
 
         let original_data = self.data.clone();
@@ -172,15 +204,15 @@ impl Keyvault {
 
         let mut nonce = [0u8; 16];
         nonce.copy_from_slice(&kv1_data[..0x10]);
-        let hmac_res =
-            hmac_sha(cpukey, &[&nonce]).map_err(|e| format!("KV key derivation failed: {}", e))?;
+        let hmac_res = hmac_sha(cpukey, &[&nonce])
+            .map_err(|e| KeyvaultError::KeyDerivation(format!("KV1: {}", e)))?;
 
         let mut decrypt_key = [0u8; 16];
         decrypt_key.copy_from_slice(&hmac_res[..16]);
 
-        let mut rc4 = Rc4::new(&decrypt_key).map_err(|e| format!("RC4 init failed: {}", e))?;
+        let mut rc4 = Rc4::new(&decrypt_key).map_err(|e| KeyvaultError::Rc4Init(e.to_string()))?;
         rc4.crypt(&mut kv1_data[0x10..])
-            .map_err(|e| format!("Decryption failed: {}", e))?;
+            .map_err(|e| KeyvaultError::Rc4Crypt(e.to_string()))?;
 
         let kv1_valid = {
             let temp_kv = Keyvault {
@@ -205,15 +237,15 @@ impl Keyvault {
         }
 
         let hmac_res_v2 = hmac_sha(cpukey, &[&hmac_res[..16]])
-            .map_err(|e| format!("KV2 double-HMAC failed: {}", e))?;
+            .map_err(|e| KeyvaultError::KeyDerivation(format!("KV2: {}", e)))?;
         let mut fallback_key = [0u8; 16];
         fallback_key.copy_from_slice(&hmac_res_v2[..16]);
 
         let mut kv2_data = original_data;
-        let mut rc4_v2 = Rc4::new(&fallback_key).map_err(|e| format!("RC4 init failed: {}", e))?;
+        let mut rc4_v2 = Rc4::new(&fallback_key).map_err(|e| KeyvaultError::Rc4Init(e.to_string()))?;
         rc4_v2
             .crypt(&mut kv2_data[0x10..])
-            .map_err(|e| format!("Decryption failed: {}", e))?;
+            .map_err(|e| KeyvaultError::Rc4Crypt(e.to_string()))?;
 
         if {
             let temp_kv = Keyvault {
@@ -230,10 +262,10 @@ impl Keyvault {
             return Ok(());
         }
 
-        Err("Keyvault decryption failed: Invalid signatures for both KV1 and KV2".to_string())
+        Err(KeyvaultError::DecryptionFailed)
     }
 
-    pub fn encrypt(&mut self, cpukey: &[u8; 16]) -> Result<(), String> {
+    pub fn encrypt(&mut self, cpukey: &[u8; 16]) -> Result<()> {
         if !self.is_decrypted {
             return Ok(());
         }
@@ -243,27 +275,27 @@ impl Keyvault {
             message.extend_from_slice(&[0x07, 0x12]);
 
             let salt = hmac_sha(cpukey, &[&message])
-                .map_err(|e| format!("KV2 salt derivation failed: {}", e))?;
+                .map_err(|e| KeyvaultError::KeyDerivation(format!("KV2 salt: {}", e)))?;
 
             let final_key = hmac_sha(cpukey, &[&salt[..16]])
-                .map_err(|e| format!("KV2 key derivation failed: {}", e))?;
+                .map_err(|e| KeyvaultError::KeyDerivation(format!("KV2 key: {}", e)))?;
 
-            let mut rc4 =
-                Rc4::new(&final_key[..16]).map_err(|e| format!("RC4 init failed: {}", e))?;
+            let mut rc4 = Rc4::new(&final_key[..16])
+                .map_err(|e| KeyvaultError::Rc4Init(e.to_string()))?;
 
             rc4.crypt(&mut self.data[0x10..])
-                .map_err(|e| format!("Encryption failed: {}", e))?;
+                .map_err(|e| KeyvaultError::Rc4Crypt(e.to_string()))?;
 
             self.data[..16].copy_from_slice(&salt[..16]);
         } else {
             let mut nonce = [0u8; 16];
             nonce.copy_from_slice(&self.data[..0x10]);
-            let hmac_res =
-                hmac_sha(cpukey, &[&nonce]).map_err(|e| format!("Key derivation failed: {}", e))?;
-            let mut rc4 =
-                Rc4::new(&hmac_res[..16]).map_err(|e| format!("RC4 init failed: {}", e))?;
+            let hmac_res = hmac_sha(cpukey, &[&nonce])
+                .map_err(|e| KeyvaultError::KeyDerivation(e.to_string()))?;
+            let mut rc4 = Rc4::new(&hmac_res[..16])
+                .map_err(|e| KeyvaultError::Rc4Init(e.to_string()))?;
             rc4.crypt(&mut self.data[0x10..])
-                .map_err(|e| format!("Encryption failed: {}", e))?;
+                .map_err(|e| KeyvaultError::Rc4Crypt(e.to_string()))?;
         }
 
         self.is_decrypted = false;
@@ -271,7 +303,7 @@ impl Keyvault {
         Ok(())
     }
 
-    pub fn get_record(&self) -> Result<KeyvaultRecord, String> {
+    pub fn get_record(&self) -> std::result::Result<KeyvaultRecord, String> {
         KeyvaultRecord::read_from_prefix(&self.data)
             .map(|(r, _)| r)
             .map_err(|_| "Failed to map KeyvaultRecord".to_string())
@@ -343,25 +375,25 @@ impl Keyvault {
         }
     }
 
-    fn ensure_decrypted(&self) -> Result<(), String> {
+    fn ensure_decrypted(&self) -> Result<()> {
         if !self.is_decrypted {
-            return Err(
+            return Err(KeyvaultError::Other(
                 "Keyvault patching requires decrypted data. Call decrypt() first.".to_string(),
-            );
+            ));
         }
         Ok(())
     }
 
-    pub fn set_region(&mut self, region_code: u16) -> Result<(), String> {
-        self.ensure_decrypted()?;
+    pub fn set_region(&mut self, region_code: u16) -> std::result::Result<(), String> {
+        self.ensure_decrypted().map_err(|e| e.to_string())?;
         let bytes = region_code.to_be_bytes();
         self.data[OFFSET_REGION..OFFSET_REGION + 2].copy_from_slice(&bytes);
         let _ = self.refresh_metadata();
         Ok(())
     }
 
-    pub fn set_serial(&mut self, serial: &str) -> Result<(), String> {
-        self.ensure_decrypted()?;
+    pub fn set_serial(&mut self, serial: &str) -> std::result::Result<(), String> {
+        self.ensure_decrypted().map_err(|e| e.to_string())?;
         let bytes = serial.as_bytes();
         let len = bytes.len().min(12);
         self.data[OFFSET_SERIAL..OFFSET_SERIAL + 12].fill(0);
@@ -370,8 +402,8 @@ impl Keyvault {
         Ok(())
     }
 
-    pub fn set_mf_date(&mut self, date: &str) -> Result<(), String> {
-        self.ensure_decrypted()?;
+    pub fn set_mf_date(&mut self, date: &str) -> std::result::Result<(), String> {
+        self.ensure_decrypted().map_err(|e| e.to_string())?;
         let bytes = date.as_bytes();
         let len = bytes.len().min(8);
         self.data[OFFSET_MF_DATE..OFFSET_MF_DATE + 8].fill(0);
@@ -380,8 +412,8 @@ impl Keyvault {
         Ok(())
     }
 
-    pub fn set_osig(&mut self, osig: &str) -> Result<(), String> {
-        self.ensure_decrypted()?;
+    pub fn set_osig(&mut self, osig: &str) -> std::result::Result<(), String> {
+        self.ensure_decrypted().map_err(|e| e.to_string())?;
         if osig.len() != 32 {
             return Err(format!(
                 "OSIG string must be exactly 32 characters (got {})",
@@ -393,22 +425,22 @@ impl Keyvault {
         Ok(())
     }
 
-    pub fn set_console_id(&mut self, id: &[u8; 5]) -> Result<(), String> {
-        self.ensure_decrypted()?;
+    pub fn set_console_id(&mut self, id: &[u8; 5]) -> std::result::Result<(), String> {
+        self.ensure_decrypted().map_err(|e| e.to_string())?;
         self.data[OFFSET_CONSOLE_ID..OFFSET_CONSOLE_ID + 5].copy_from_slice(id);
         let _ = self.refresh_metadata();
         Ok(())
     }
 
-    pub fn set_dvd_key(&mut self, key: &[u8; 16]) -> Result<(), String> {
-        self.ensure_decrypted()?;
+    pub fn set_dvd_key(&mut self, key: &[u8; 16]) -> std::result::Result<(), String> {
+        self.ensure_decrypted().map_err(|e| e.to_string())?;
         self.data[OFFSET_DVD_KEY..OFFSET_DVD_KEY + 16].copy_from_slice(key);
         let _ = self.refresh_metadata();
         Ok(())
     }
 
-    pub fn apply_fcrt_patch(&mut self, enabled: bool) -> Result<(), String> {
-        self.ensure_decrypted()?;
+    pub fn apply_fcrt_patch(&mut self, enabled: bool) -> std::result::Result<(), String> {
+        self.ensure_decrypted().map_err(|e| e.to_string())?;
         let mut flags = u16::from_be_bytes(
             self.data[OFFSET_FCRT_FLAG..OFFSET_FCRT_FLAG + 2]
                 .try_into()
