@@ -22,7 +22,7 @@ jiff = "0.2"
 
 [package]
 name = "gxbuild"
-version = "1.22.80"
+version = "1.22.90"
 edition = "2021"
 
 [lib]
@@ -58,7 +58,4 @@ cli = ["dep:clap"]
 ffi = ["dep:interoptopus", "dep:interoptopus_backend_c", "dep:interoptopus_backend_csharp"]
 # Rhai scripting engine + rustyline REPL (--script <file>, --shell).
 rhai = ["dep:rhai", "dep:rustyline"]
-
-[patch."https://github.com/GxOSS/GxCrypt"]
-gxcrypt = { path = "../GxCrypt" }
 
