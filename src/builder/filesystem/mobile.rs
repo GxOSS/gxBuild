@@ -6,6 +6,7 @@
 
 use crate::builder::filesystem::flashfs::FileSystemRoot;
 use crate::builder::filesystem::flashfs::FsSpareData;
+use crate::builder::filesystem::{FsError, Result};
 use crate::core::images::blocks::{
     detect_bb_physical_format, get_page_spare_fmt, BbPhysicalFormat, FsSpareInfo, NandLayout,
 };
@@ -279,9 +280,9 @@ impl MobileStore {
     }
 
     /// Adds a new mobile blob, bumping the sequence for that slot (RGBuild `MobileAddFile`).
-    pub fn add_entry(&mut self, data_type: u8, data: Vec<u8>) -> Result<(), String> {
+    pub fn add_entry(&mut self, data_type: u8, data: Vec<u8>) -> Result<()> {
         if !is_mobile_type(data_type) {
-            return Err(format!("Invalid mobile type 0x{:02X}", data_type));
+            return Err(FsError::InvalidMobileType(data_type));
         }
         let slot = slot_index(data_type).unwrap();
         let sequence = self.latest_entry(slot).map(|e| e.sequence + 1).unwrap_or(1);
@@ -303,11 +304,10 @@ impl MobileStore {
         Ok(())
     }
 
-    pub fn add_from_path(&mut self, slot: usize, path: &Path) -> Result<(), String> {
+    pub fn add_from_path(&mut self, slot: usize, path: &Path) -> Result<()> {
         let data_type =
-            type_for_slot(slot).ok_or_else(|| format!("Invalid mobile slot index {}", slot))?;
-        let data =
-            std::fs::read(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+            type_for_slot(slot).ok_or_else(|| FsError::InvalidMobileSlot(slot))?;
+        let data = std::fs::read(path)?;
         self.add_entry(data_type, data)
     }
 
