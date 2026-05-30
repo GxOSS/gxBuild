@@ -26,6 +26,7 @@ use crate::builder::chain::{
     cf::BootloaderCf, cg::BootloaderCg,
 };
 use crate::builder::types::{NandBootloaders, NandUpdate, NandExtra, NandHeader};
+use crate::builder::builder::{BuilderError, Result};
 use crate::core::images::blocks::NandLayout;
 use crate::core::images::blocks::ecc_verify_and_correct;
 use log::{info, warn};
@@ -103,9 +104,8 @@ impl EccSkeleton {
     }
 
     /// Parse and extract components from an ECC image.
-    pub fn from_ecc<P: AsRef<Path>>(ecc_path: P) -> anyhow::Result<Self> {
-        let ecc_raw = std::fs::read(ecc_path.as_ref())
-            .map_err(|e| anyhow::anyhow!("Failed to read ECC file: {}", e))?;
+    pub fn from_ecc<P: AsRef<Path>>(ecc_path: P) -> Result<Self> {
+        let ecc_raw = std::fs::read(ecc_path.as_ref())?;
         
         let clean = strip_ecc(&ecc_raw);
         let layout = NandLayout::detect(&ecc_raw)
@@ -166,7 +166,7 @@ impl EccSkeleton {
     }
 
     /// Walk the bootloader chain and extract components.
-    fn walk_chain(&mut self, clean: &[u8], start_off: usize, cf_ptr: usize) -> anyhow::Result<()> {
+    fn walk_chain(&mut self, clean: &[u8], start_off: usize, cf_ptr: usize) -> Result<()> {
         let mut off = start_off;
         let mut cf_count = 0usize;
         let mut cg_count = 0usize;
@@ -203,38 +203,38 @@ impl EccSkeleton {
                         && (blh.version.get() == 0x3C48 || bl_size == 0x400);
 
                     if is_single {
-                        self.bootloaders.cb = Some(BootloaderCb::parse(data)?);
+                        self.bootloaders.cb = Some(BootloaderCb::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                     } else if is_cba {
-                        self.bootloaders.cb_a = Some(BootloaderCb::parse(data)?);
+                        self.bootloaders.cb_a = Some(BootloaderCb::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                     } else if is_cbx {
-                        self.bootloaders.cb_x = Some(BootloaderCb::parse(data)?);
+                        self.bootloaders.cb_x = Some(BootloaderCb::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                         cbx_written = true;
                     } else {
-                        self.bootloaders.cb_b = Some(BootloaderCb::parse(data)?);
+                        self.bootloaders.cb_b = Some(BootloaderCb::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                     }
                 }
                 XenonBlType::SC => {
-                    self.bootloaders.sc = Some(BootloaderSc::parse(data)?);
+                    self.bootloaders.sc = Some(BootloaderSc::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                 }
                 XenonBlType::CD => {
-                    self.bootloaders.cd = Some(BootloaderCd::parse(data)?);
+                    self.bootloaders.cd = Some(BootloaderCd::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                 }
                 XenonBlType::CE => {
-                    self.bootloaders.ce = Some(BootloaderCe::parse(data)?);
+                    self.bootloaders.ce = Some(BootloaderCe::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                 }
                 XenonBlType::CF => {
                     if cf_count == 0 {
-                        self.update.cf_0 = Some(BootloaderCf::parse(data)?);
+                        self.update.cf_0 = Some(BootloaderCf::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                     } else {
-                        self.update.cf_1 = Some(BootloaderCf::parse(data)?);
+                        self.update.cf_1 = Some(BootloaderCf::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                     }
                     cf_count += 1;
                 }
                 XenonBlType::CG => {
                     if cg_count == 0 {
-                        self.update.cg_0 = Some(BootloaderCg::parse(data)?);
+                        self.update.cg_0 = Some(BootloaderCg::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                     } else {
-                        self.update.cg_1 = Some(BootloaderCg::parse(data)?);
+                        self.update.cg_1 = Some(BootloaderCg::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                     }
                     cg_count += 1;
                 }
@@ -258,7 +258,7 @@ impl EccSkeleton {
     }
 
     /// Scan for CBX bootloader in the 0x8000-0x20000 range.
-    fn scan_cbx(&mut self, clean: &[u8]) -> anyhow::Result<()> {
+    fn scan_cbx(&mut self, clean: &[u8]) -> Result<()> {
         let scan_end = std::cmp::min(clean.len().saturating_sub(0x10), 0x20000);
         let mut scan_off = 0x8000usize;
         
@@ -276,7 +276,7 @@ impl EccSkeleton {
                         && (blh.version.get() == 0x3C48 || bl_size == 0x400)
                     {
                         let data = &clean[scan_off..scan_off + bl_size];
-                        self.bootloaders.cb_x = Some(BootloaderCb::parse(data)?);
+                        self.bootloaders.cb_x = Some(BootloaderCb::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                         break;
                     }
                 }
@@ -294,7 +294,7 @@ impl EccSkeleton {
         mut scan_off: usize,
         cf_count: &mut usize,
         cg_count: &mut usize,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         for _ in 0..8 {
             if scan_off.saturating_add(0x10) > clean.len() {
                 break;
@@ -315,17 +315,17 @@ impl EccSkeleton {
             match blh.get_type() {
                 XenonBlType::CF => {
                     if *cf_count == 0 {
-                        self.update.cf_0 = Some(BootloaderCf::parse(data)?);
+                        self.update.cf_0 = Some(BootloaderCf::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                     } else {
-                        self.update.cf_1 = Some(BootloaderCf::parse(data)?);
+                        self.update.cf_1 = Some(BootloaderCf::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                     }
                     *cf_count += 1;
                 }
                 XenonBlType::CG => {
                     if *cg_count == 0 {
-                        self.update.cg_0 = Some(BootloaderCg::parse(data)?);
+                        self.update.cg_0 = Some(BootloaderCg::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                     } else {
-                        self.update.cg_1 = Some(BootloaderCg::parse(data)?);
+                        self.update.cg_1 = Some(BootloaderCg::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
                     }
                     *cg_count += 1;
                 }
@@ -369,23 +369,21 @@ impl EccSkeleton {
     }
 
     /// Write all extracted components to the specified directory.
-    pub fn write_to_dir<P: AsRef<Path>>(&self, output_dir: P) -> anyhow::Result<usize> {
+    pub fn write_to_dir<P: AsRef<Path>>(&self, output_dir: P) -> Result<usize> {
         let _ = std::fs::create_dir_all(output_dir.as_ref());
         let mut wrote = 0usize;
 
         // Write header
         if let Some(ref h) = self.header {
             let path = output_dir.as_ref().join("NandHeader.bin");
-            std::fs::write(&path, zerocopy::IntoBytes::as_bytes(h))
-                .map_err(|e| anyhow::anyhow!("Failed to write header: {}", e))?;
+            std::fs::write(&path, zerocopy::IntoBytes::as_bytes(h))?;
             wrote += 1;
         }
 
         // Write SMC
         if !self.extra.smc.is_empty() {
             let enc_path = output_dir.as_ref().join("SMC_en.bin");
-            std::fs::write(&enc_path, &self.extra.smc)
-                .map_err(|e| anyhow::anyhow!("Failed to write SMC: {}", e))?;
+            std::fs::write(&enc_path, &self.extra.smc)?;
             wrote += 1;
 
             // Try to decrypt and write decrypted version
@@ -393,8 +391,7 @@ impl EccSkeleton {
             dec.ensure_decrypted();
             if self.smc_looks_decrypted(&dec.data) {
                 let dec_path = output_dir.as_ref().join("SMC_dec.bin");
-                std::fs::write(&dec_path, &dec.data)
-                    .map_err(|e| anyhow::anyhow!("Failed to write decrypted SMC: {}", e))?;
+                std::fs::write(&dec_path, &dec.data)?;
                 wrote += 1;
             }
         }
@@ -404,8 +401,7 @@ impl EccSkeleton {
             ($opt:expr, $name:expr) => {
                 if let Some(ref bl) = $opt {
                     let path = output_dir.as_ref().join($name);
-                    std::fs::write(&path, bl.serialize())
-                        .map_err(|e| anyhow::anyhow!("Failed to write {}: {}", $name, e))?;
+                    std::fs::write(&path, bl.serialize())?;
                     wrote += 1;
                 }
             };
@@ -427,8 +423,7 @@ impl EccSkeleton {
         for (off, data) in &self.xell {
             let name = format!("XeLL_0x{:X}.bin", off);
             let path = output_dir.as_ref().join(&name);
-            std::fs::write(&path, data)
-                .map_err(|e| anyhow::anyhow!("Failed to write {}: {}", name, e))?;
+            std::fs::write(&path, data)?;
             wrote += 1;
         }
 
@@ -449,7 +444,7 @@ impl EccSkeleton {
 
 /// High-level function to extract an ECC image to a directory.
 /// Returns the number of files written.
-pub fn extract_ecc<P: AsRef<Path>>(ecc_path: P, output_dir: P) -> anyhow::Result<usize> {
+pub fn extract_ecc<P: AsRef<Path>>(ecc_path: P, output_dir: P) -> Result<usize> {
     let skeleton = EccSkeleton::from_ecc(ecc_path)?;
     let count = skeleton.write_to_dir(output_dir)?;
     
@@ -466,15 +461,14 @@ pub fn extract_ecc<P: AsRef<Path>>(ecc_path: P, output_dir: P) -> anyhow::Result
 pub fn handle_extract_ecc<P: AsRef<Path>>(
     ecc_path: P,
     output_dir: P,
-) -> anyhow::Result<usize> {
+) -> Result<usize> {
     let ecc_path = ecc_path.as_ref();
     let output_dir = output_dir.as_ref();
 
     let _ = std::fs::create_dir_all(output_dir);
 
     // Read ECC file
-    let ecc_raw = std::fs::read(ecc_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read ECC file '{}': {}", ecc_path.display(), e))?;
+    let ecc_raw = std::fs::read(ecc_path)?;
 
     // Strip ECC and detect layout
     let clean = strip_ecc(&ecc_raw);
@@ -487,12 +481,12 @@ pub fn handle_extract_ecc<P: AsRef<Path>>(
     let wrote = skeleton.write_to_dir(output_dir)?;
 
     if wrote == 0 {
-        return Err(anyhow::anyhow!(
+        return Err(BuilderError::Build(format!(
             "No extractable components found in ECC image (layout={:?}, raw={}, clean={})",
             layout,
             ecc_raw.len(),
             clean.len()
-        ));
+        )));
     }
 
     info!(

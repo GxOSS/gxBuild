@@ -97,12 +97,11 @@ impl NandHeader {
     const XEBUILD_XELL_ALT_POC_OFFSET: usize = 0x3E;
     const XEBUILD_XELL_POC_OFFSET: usize = 0x3F;
 
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), crate::builder::builder::BuilderError> {
         if self.prefix.magic.get() != Self::MAGIC {
-            return Err(format!(
-                "Invalid NAND magic: 0x{:04X}",
-                self.prefix.magic.get()
-            ));
+            return Err(crate::builder::builder::BuilderError::InvalidMagic {
+                magic: self.prefix.magic.get(),
+            });
         }
         Ok(())
     }
