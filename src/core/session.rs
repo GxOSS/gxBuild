@@ -1803,9 +1803,7 @@ impl Session {
                         | crate::builder::types::MotherboardType::Falcon => {
                             crate::core::images::blocks::SpareMetaType::MetaType0
                         }
-                        _ => {
-                            
-                        }
+                        _ => crate::core::images::blocks::SpareMetaType::MetaType1,
                     };
 
                     if let Some(parent) = output.parent() {
@@ -2557,7 +2555,7 @@ impl Session {
                                 "single"
                             };
                             let (_, _, phys_fs_block) =
-                                crate::builder::builder::LayoutCalculator::calculate(
+                                crate::builder::types::LayoutCalculator::calculate(
                                     sb,
                                     chain_profile,
                                     nand.layout,

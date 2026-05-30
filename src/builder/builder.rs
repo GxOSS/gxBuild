@@ -21,11 +21,15 @@
 */
 
 use log::{debug, error, info, warn};
-use zerocopy::byteorder::{BigEndian, I16, U16, U32};
-use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
+use zerocopy::byteorder::{I16, U16, U32};
+use zerocopy::FromBytes;
 
 use crate::builder::chain::smc::smc_crypt;
 use crate::builder::chain::*;
+use crate::builder::chain::{
+    cb::BootloaderCb, sc::BootloaderSc, cd::BootloaderCd, ce::BootloaderCe,
+    cf::BootloaderCf, cg::BootloaderCg,
+};
 use crate::builder::filesystem::corona::{self, CoronaFsSlots};
 use crate::builder::filesystem::flashfs::FlashFS;
 use crate::builder::filesystem::mobile::MobileStore;
@@ -33,6 +37,12 @@ use crate::core::images::blocks::*;
 use crate::core::images::gxp::{apply_records, GxpBinary, GxpPatchType, PatchRecord};
 use crate::crypto::{calculate_smc_hash, hmac_sha, Rc4};
 use crate::builder::types::*;
+// Re-export for backward compatibility
+pub use crate::builder::types::{
+    LayoutCalculator, SouthbridgeType, PayloadEntry, PayloadList,
+    MotherboardType, BuildOptions, BuildMode, NandHeader, NandHeaderPrefix,
+    NandBootloaders, NandUpdate, NandExtra,
+};
 
 
 fn bl_is_valid_magic(magic: u16) -> bool {

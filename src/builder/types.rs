@@ -1,17 +1,18 @@
-use log::{debug, error, info, warn};
+use log::info;
 use zerocopy::byteorder::{BigEndian, I16, U16, U32};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
-use crate::core::images::blocks::NandLayout;
+use crate::core::images::blocks::{NandLayout, LbaMap};
+use crate::core::images::gxp::PatchRecord;
 
-const NAND_RETAIL_1BL_KEY: [u8; 16] = [
+pub const NAND_RETAIL_1BL_KEY: [u8; 16] = [
     0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA,
 ];
 
-struct BlDiscovery {
-    magic: String,
-    version: u16,
-    size: u32,
-    key_source: String,
+pub struct BlDiscovery {
+    pub magic: String,
+    pub version: u16,
+    pub size: u32,
+    pub key_source: String,
 }
 
 #[derive(FromBytes, IntoBytes, KnownLayout, Immutable, Clone, Copy)]
@@ -202,7 +203,7 @@ impl NandBootloaders {
 }
 
 impl Default for NandBootloaders {
-    pub fn default() -> Self {
+    fn default() -> Self {
         NandBootloaders {
             cb: None,
             cb_a: None,
@@ -235,7 +236,7 @@ impl NandUpdate {
 }
 
 impl Default for NandUpdate {
-    pub fn default() -> Self {
+    fn default() -> Self {
         NandUpdate {
             cf_0: None,
             cg_0: None,
@@ -245,7 +246,7 @@ impl Default for NandUpdate {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct NandExtra {
     pub smc: Vec<u8>,
     pub smc_metadata: Option<crate::builder::chain::smc::SmcMetadata>,
@@ -292,7 +293,7 @@ pub enum SouthbridgeType {
 }
 
 impl From<MotherboardType> for SouthbridgeType {
-    pub fn from(m: MotherboardType) -> Self {
+    fn from(m: MotherboardType) -> Self {
         match m {
             MotherboardType::Xenon | MotherboardType::Zephyr | MotherboardType::Falcon => {
                 SouthbridgeType::Xsb
@@ -390,7 +391,7 @@ pub struct BuildOptions {
 }
 
 impl Default for BuildOptions {
-    pub fn default() -> Self {
+    fn default() -> Self {
         BuildOptions {
             layout: NandLayout::Sb,
             lba_map: LbaMap::new(0x400),
