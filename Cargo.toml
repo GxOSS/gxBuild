@@ -59,3 +59,6 @@ ffi = ["dep:interoptopus", "dep:interoptopus_backend_c", "dep:interoptopus_backe
 # Rhai scripting engine + rustyline REPL (--script <file>, --shell).
 rhai = ["dep:rhai", "dep:rustyline"]
 
+[patch."https://github.com/GxOSS/GxCrypt"]
+gxcrypt = { path = "../GxCrypt" }
+

@@ -23,28 +23,6 @@
 use crate::crypto::{hmac_sha, Rc4};
 use log::info;
 use thiserror::Error;
-use zerocopy::byteorder::{BigEndian, U16};
-use zerocopy::FromBytes;
-
-#[derive(
-    zerocopy::FromBytes,
-    zerocopy::IntoBytes,
-    zerocopy::KnownLayout,
-    zerocopy::Immutable,
-    Clone,
-    Copy,
-    Debug,
-)]
-#[repr(C)]
-pub struct KeyvaultRecord {
-    pub hmac: [u8; 0x10], // HMAC-SHA1 nonce (RC4 seed)
-    pub unused0: [u8; 0x0C],
-    pub version: U16<BigEndian>,
-    pub unused1: [u8; 0x92],
-    pub serial: [u8; 12], // Console serial number (ASCII)
-    pub unused2: [u8; 0x50],
-    pub dvd_key: [u8; 16],
-}
 
 #[derive(Clone, Debug)]
 pub struct KeyvaultMetadata {
@@ -73,7 +51,6 @@ pub const OFFSET_SERIAL: usize = 0xB0;
 pub const OFFSET_DVD_KEY: usize = 0x100;
 pub const OFFSET_CONSOLE_ID: usize = 0x9CA;
 pub const OFFSET_MF_DATE: usize = 0x9E4;
-pub const OFFSET_DRIVE_INQUIRY: usize = 0xC8A;
 pub const OFFSET_OSIG_STR: usize = 0xC92;
 #[derive(Error, Debug)]
 pub enum KeyvaultError {
@@ -139,28 +116,19 @@ impl Keyvault {
             ));
         }
 
-        let record = self.get_record().map_err(|e| KeyvaultError::Other(e))?;
-
-        let flags = u16::from_be_bytes(self.data[0x1C..0x1E].try_into().unwrap());
+        let kv = gxcrypt::keyvault::KeyVault::parse(&self.data)
+            .map_err(|e| KeyvaultError::Other(e.to_string()))?;
 
         let meta = KeyvaultMetadata {
-            serial: self.get_serial(),
-            region: u16::from_be_bytes(
-                self.data[OFFSET_REGION..OFFSET_REGION + 2]
-                    .try_into()
-                    .unwrap(),
-            ),
-            dvd_key: self.data[OFFSET_DVD_KEY..OFFSET_DVD_KEY + 16]
-                .try_into()
-                .unwrap(),
-            console_id: self.data[OFFSET_CONSOLE_ID..OFFSET_CONSOLE_ID + 5]
-                .try_into()
-                .unwrap(),
-            mf_date: self.get_mf_date(),
+            serial: kv.console_serial().to_string(),
+            region: kv.game_region().bits() as u16,
+            dvd_key: *kv.dvd_key(),
+            console_id: kv.console_id().0,
+            mf_date: kv.console_certificate.manufacturing_date.clone(),
             osig: self.get_osig(),
-            fcrt: (flags & 0x120) != 0,
-            console_type: u32::from_be_bytes(self.data[0x9E0..0x9E4].try_into().unwrap()),
-            version: record.version.get(),
+            fcrt: (kv.config.odd_features.bits() & 0x0120) != 0,
+            console_type: kv.console_type().0,
+            version: kv.config.odd_features.bits(),
             kv_type: self.get_kv_type(),
         };
 
@@ -303,27 +271,16 @@ impl Keyvault {
         Ok(())
     }
 
-    pub fn get_record(&self) -> std::result::Result<KeyvaultRecord, String> {
-        KeyvaultRecord::read_from_prefix(&self.data)
-            .map(|(r, _)| r)
-            .map_err(|_| "Failed to map KeyvaultRecord".to_string())
-    }
-
     pub fn get_serial(&self) -> String {
-        let start = 0xB0;
-        let end = start + 12;
-        String::from_utf8_lossy(&self.data[start..end])
-            .trim_matches(char::from(0))
-            .to_string()
+        gxcrypt::keyvault::KeyVault::parse(&self.data)
+            .map(|kv| kv.console_serial().to_string())
+            .unwrap_or_default()
     }
 
     pub fn get_dvd_key(&self) -> String {
-        let start = 0x100;
-        let end = start + 16;
-        self.data[start..end]
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect()
+        gxcrypt::keyvault::KeyVault::parse(&self.data)
+            .map(|kv| kv.dvd_key().iter().map(|b| format!("{:02x}", b)).collect())
+            .unwrap_or_default()
     }
 
     pub fn get_osig(&self) -> String {
@@ -351,28 +308,15 @@ impl Keyvault {
     }
 
     pub fn get_console_id_alt(&self) -> String {
-        let start = 0x9CA;
-        let end = start + 5;
-        if self.data.len() > end {
-            self.data[start..end]
-                .iter()
-                .map(|b| format!("{:02x}", b))
-                .collect()
-        } else {
-            "Unknown".to_string()
-        }
+        gxcrypt::keyvault::KeyVault::parse(&self.data)
+            .map(|kv| kv.console_id().0.iter().map(|b| format!("{:02x}", b)).collect())
+            .unwrap_or_else(|_| "Unknown".to_string())
     }
 
     pub fn get_mf_date(&self) -> String {
-        let start = OFFSET_MF_DATE;
-        let end = start + 8;
-        if self.data.len() > end {
-            String::from_utf8_lossy(&self.data[start..end])
-                .trim_matches(char::from(0))
-                .to_string()
-        } else {
-            "Unknown".to_string()
-        }
+        gxcrypt::keyvault::KeyVault::parse(&self.data)
+            .map(|kv| kv.console_certificate.manufacturing_date.clone())
+            .unwrap_or_else(|_| "Unknown".to_string())
     }
 
     fn ensure_decrypted(&self) -> Result<()> {
