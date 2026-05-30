@@ -26,7 +26,75 @@ use log::{error, info, warn};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum SessionError {
+    #[error("[session] IO error: {0}")]
+    Io(String),
+
+    #[error("[session] Failed to parse options INI: {0}")]
+    OptionsIniParse(String),
+
+    #[error("[session] Failed to parse INI: {0}")]
+    IniParse(String),
+
+    #[error("[session] INI discovery failed: {0}")]
+    IniDiscovery(String),
+
+    #[error("[session] Failed to apply INI data: {0}")]
+    IniApply(String),
+
+    #[error("[session] prepare_build: build_type not set")]
+    BuildTypeNotSet,
+
+    #[error("[session] prepare_build: console_type not set")]
+    ConsoleTypeNotSet,
+
+    #[error("[session] prepare_build: cannot read INI at {path:?}")]
+    IniRead { path: PathBuf },
+
+    #[error("[session] SMC autopatching failed ({error}): {path:?}")]
+    SmcAutopatch { error: String, path: PathBuf },
+
+    #[error("[session] SMC config error: {0}")]
+    SmcConfig(String),
+
+    #[error("[session] Keyvault error: {0}")]
+    Keyvault(String),
+
+    #[error("[session] Invalid hex u8 '{value}': {error}")]
+    InvalidHexU8 { value: String, error: String },
+
+    #[error("[session] Invalid decimal u8 '{value}': {error}")]
+    InvalidDecimalU8 { value: String, error: String },
+
+    #[error("[session] Invalid hex u16 '{value}': {error}")]
+    InvalidHexU16 { value: String, error: String },
+
+    #[error("[session] Invalid decimal u16 '{value}': {error}")]
+    InvalidDecimalU16 { value: String, error: String },
+
+    #[error("[session] No active NAND loaded to patch")]
+    NoActiveNand,
+
+    #[error("[session] {0}")]
+    Other(String),
+}
+
+impl From<String> for SessionError {
+    fn from(s: String) -> Self {
+        SessionError::Other(s)
+    }
+}
+
+impl From<io::Error> for SessionError {
+    fn from(e: io::Error) -> Self {
+        SessionError::Io(e.to_string())
+    }
+}
 
 #[derive(Debug)]
 pub enum InternalCommand {
@@ -390,7 +458,7 @@ impl Session {
     fn resolve_cb_ldv(
         _options: &crate::core::data::optini::OptionsIni,
         nand: &NandSkeleton,
-    ) -> Result<u8, String> {
+    ) -> Result<u8, SessionError> {
         let from_nand = nand
             .bootloaders
             .cb_a
@@ -405,7 +473,7 @@ impl Session {
     fn resolve_cf_ldv(
         options: &crate::core::data::optini::OptionsIni,
         nand: &NandSkeleton,
-    ) -> Result<u8, String> {
+    ) -> Result<u8, SessionError> {
         if let Some(cfldv_option) = &options.cfldv {
             return Self::parse_u8_hex_or_dec(cfldv_option);
         }
@@ -722,18 +790,18 @@ impl Session {
         self.options.merge(o);
     }
 
-    pub fn load_options_ini(&mut self, content: &str) -> Result<(), String> {
+    pub fn load_options_ini(&mut self, content: &str) -> Result<(), SessionError> {
         match crate::core::data::optini::parse_options_ini(content) {
             Ok(new_opts) => {
                 self.options.merge(new_opts);
                 info!("[session] Merged options from INI content string.");
                 Ok(())
             }
-            Err(e) => Err(format!("Failed to parse options INI: {}", e)),
+            Err(e) => Err(SessionError::OptionsIniParse(e.to_string())),
         }
     }
 
-    pub fn load_ini(&mut self, content: &str, target: &str) -> Result<(), String> {
+    pub fn load_ini(&mut self, content: &str, target: &str) -> Result<(), SessionError> {
         let is_verbose = self.options.verbose.unwrap_or(false);
         let _ = crate::core::logger::init_logger("build", is_verbose);
 
@@ -813,20 +881,19 @@ impl Session {
                             self.build_ini_loaded = true;
                             info!("[session] INI assets applied to NAND skeleton");
                         }
-                        Err(e) => return Err(format!("Failed to apply INI data: {}", e)),
+                        Err(e) => return Err(SessionError::IniApply(e.to_string())),
                     }
                     Ok(())
                 }
-                Err(e) => Err(format!("INI discovery failed: {}", e)),
+                Err(e) => Err(SessionError::IniDiscovery(e.to_string())),
             },
-            Err(e) => Err(format!("Failed to parse INI string: {}", e)),
+            Err(e) => Err(SessionError::IniParse(e.to_string())),
         }
     }
 
     /// Loads an options.ini file from the specified path and merges it into the session options.
-    pub fn load_options_ini_file(&mut self, path: impl AsRef<Path>) -> Result<(), String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read options INI file: {}", e))?;
+    pub fn load_options_ini_file(&mut self, path: impl AsRef<Path>) -> Result<(), SessionError> {
+        let content = fs::read_to_string(path)?;
         self.load_options_ini(&content)
     }
 
@@ -845,7 +912,7 @@ impl Session {
     }
 
     /// Resolves build configuration and enqueues assets.
-    pub fn prepare_build(&mut self) -> Result<(), String> {
+    pub fn prepare_build(&mut self) -> Result<(), SessionError> {
         use std::collections::HashSet;
 
         let ini_dir = self.ini_dir.clone().unwrap_or_else(|| PathBuf::from("."));
@@ -894,11 +961,11 @@ impl Session {
         let build_type = self
             .build_type
             .clone()
-            .ok_or("prepare_build: build_type not set")?;
+            .ok_or(SessionError::BuildTypeNotSet)?;
         let console = self
             .console_type
             .clone()
-            .ok_or("prepare_build: console_type not set")?;
+            .ok_or(SessionError::ConsoleTypeNotSet)?;
 
         // Resolve INI filename: _<type>[_<ext>].ini
         let ini_suffix = self
@@ -930,7 +997,7 @@ impl Session {
                         target_filenames.insert(e.filename.to_lowercase());
                     }
                 }
-                Err(_) => return Err(format!("prepare_build: cannot read INI at {:?}", ini_path)),
+                Err(_) => return Err(SessionError::IniRead { path: ini_path }),
             }
         }
 
@@ -1175,7 +1242,7 @@ impl Session {
 
     /// Pushes the final merged session options back into the NAND skeleton's
     /// Keyvault and SMC buffers before a build.
-    pub fn sync_options_to_nand(&mut self) -> Result<(), String> {
+    pub fn sync_options_to_nand(&mut self) -> Result<(), SessionError> {
         if let Some(nand) = &mut self.active_nand {
             info!("[session] Syncing merged options to NAND components...");
 
@@ -1272,7 +1339,7 @@ impl Session {
                     }
 
                     // Re-encrypt and store Keyvault
-                    kv.encrypt(&cpukey)?;
+                    kv.encrypt(&cpukey).map_err(|e| SessionError::Keyvault(e.to_string()))?;
                     nand.extra.keyvault = kv.data.clone();
                 }
             }
@@ -1282,7 +1349,8 @@ impl Session {
                 info!("[session] No SMC Config found in skeleton, initializing clean defaults.");
                 crate::builder::chain::smc::SmcConfig::new_empty()
             } else {
-                crate::builder::chain::smc::SmcConfig::parse(&nand.extra.smc_config)?
+                crate::builder::chain::smc::SmcConfig::parse(&nand.extra.smc_config)
+                    .map_err(|e| SessionError::SmcConfig(e.to_string()))?
             };
 
             // MAC Address
@@ -1386,8 +1454,9 @@ impl Session {
                             &mut smc.data,
                             &json,
                         )
-                        .map_err(|e| {
-                            format!("SMC autopatching failed ({}): {:?}", e, patch_path)
+                        .map_err(|e| SessionError::SmcAutopatch {
+                            error: e.to_string(),
+                            path: patch_path.clone(),
                         })?;
                         if count == 0 {
                             let mut retry =
@@ -1398,8 +1467,9 @@ impl Session {
                                     &mut retry.data,
                                     &json,
                                 )
-                                .map_err(|e| {
-                                    format!("SMC autopatching failed ({}): {:?}", e, patch_path)
+                                .map_err(|e| SessionError::SmcAutopatch {
+                                    error: e.to_string(),
+                                    path: patch_path.clone(),
                                 })?;
                             if retry_count > 0 {
                                 smc.data = retry.data;
@@ -1431,7 +1501,7 @@ impl Session {
 
     /// Applies a batch of signature patches (JSON format) to the active NAND's decrypted SMC.
     /// Returns the total number of patches applied.
-    pub fn apply_smc_signature_batch(&mut self, json_str: &str) -> Result<usize, String> {
+    pub fn apply_smc_signature_batch(&mut self, json_str: &str) -> Result<usize, SessionError> {
         if let Some(nand) = &mut self.active_nand {
             info!("[session] Applying signature batch to SMC...");
             let mut smc = crate::builder::chain::smc::RawSmc::new(nand.extra.smc.clone());
@@ -1447,32 +1517,42 @@ impl Session {
             );
             Ok(count)
         } else {
-            Err("No active NAND loaded to patch.".to_string())
+            Err(SessionError::NoActiveNand)
         }
     }
 
-    fn parse_u16_hex_or_dec(s: &str) -> Result<u16, String> {
+    fn parse_u16_hex_or_dec(s: &str) -> Result<u16, SessionError> {
         if s.starts_with("0x") {
-            u16::from_str_radix(&s[2..], 16).map_err(|e| format!("Invalid hex u16 '{}': {}", s, e))
+            u16::from_str_radix(&s[2..], 16).map_err(|e| SessionError::InvalidHexU16 {
+                value: s.to_string(),
+                error: e.to_string(),
+            })
         } else {
-            s.parse::<u16>()
-                .map_err(|e| format!("Invalid decimal u16 '{}': {}", s, e))
+            s.parse::<u16>().map_err(|e| SessionError::InvalidDecimalU16 {
+                value: s.to_string(),
+                error: e.to_string(),
+            })
         }
     }
 
-    fn parse_u8_hex_or_dec(s: &str) -> Result<u8, String> {
+    fn parse_u8_hex_or_dec(s: &str) -> Result<u8, SessionError> {
         if s.starts_with("0x") {
-            u8::from_str_radix(&s[2..], 16).map_err(|e| format!("Invalid hex u8 '{}': {}", s, e))
+            u8::from_str_radix(&s[2..], 16).map_err(|e| SessionError::InvalidHexU8 {
+                value: s.to_string(),
+                error: e.to_string(),
+            })
         } else {
-            s.parse::<u8>()
-                .map_err(|e| format!("Invalid decimal u8 '{}': {}", s, e))
+            s.parse::<u8>().map_err(|e| SessionError::InvalidDecimalU8 {
+                value: s.to_string(),
+                error: e.to_string(),
+            })
         }
     }
 
     /// Execute a command by ID and remove it.
-    pub fn session_run_once(&mut self, id: usize) -> Result<bool, String> {
+    pub fn session_run_once(&mut self, id: usize) -> Result<bool, SessionError> {
         let mut remaining = Vec::new();
-        let mut result: Result<bool, String> = Ok(false);
+        let mut result: Result<bool, SessionError> = Ok(false);
         while let Some(q) = self.queue.pop() {
             if q.sequence_id == id {
                 result = self.execute_command(q.command).map(|_| true);
@@ -1519,7 +1599,7 @@ impl Session {
         self.enqueue(InternalCommand::FinalizeFlashfs);
     }
 
-    pub fn run(&mut self) -> Result<(), String> {
+    pub fn run(&mut self) -> Result<(), SessionError> {
         info!("[session] Running {} queued commands...", self.queue.len());
 
         while let Some(queued_cmd) = self.queue.pop() {
@@ -1551,7 +1631,7 @@ impl Session {
         });
     }
 
-    pub fn run_once(&mut self, command: InternalCommand) -> Result<(), String> {
+    pub fn run_once(&mut self, command: InternalCommand) -> Result<(), SessionError> {
         info!(
             "[session] Executing command directly (queue bypassed): {:?}",
             command
@@ -1559,7 +1639,7 @@ impl Session {
         self.execute_command(command)
     }
 
-    pub fn execute_command(&mut self, command: InternalCommand) -> Result<(), String> {
+    pub fn execute_command(&mut self, command: InternalCommand) -> Result<(), SessionError> {
         use crate::core::commands;
         match command {
             InternalCommand::ExtractAll {
@@ -1582,7 +1662,9 @@ impl Session {
             InternalCommand::ParseImage { path, key } => {
                 commands::handle_parse_image(self, path, key)
             }
-            InternalCommand::ApplyEcc { path } => commands::handle_apply_ecc(self, path),
+            InternalCommand::ApplyEcc { path } => {
+                commands::handle_apply_ecc(self, path)
+            }
             InternalCommand::ParseKey { key } => {
                 commands::handle_parse_key(self, key);
                 Ok(())
@@ -1591,8 +1673,12 @@ impl Session {
                 commands::handle_parse_keybin(self, key);
                 Ok(())
             }
-            InternalCommand::ParseFlashfs { path } => commands::handle_parse_flashfs(self, path),
-            InternalCommand::ParsePatch { path } => commands::handle_parse_patch(self, path),
+            InternalCommand::ParseFlashfs { path } => {
+                commands::handle_parse_flashfs(self, path)
+            }
+            InternalCommand::ParsePatch { path } => {
+                commands::handle_parse_patch(self, path)
+            }
             InternalCommand::ApplyPatch { path, ptype, target } => {
                 commands::handle_apply_patch(self, path, ptype, target)
             }
@@ -1624,7 +1710,9 @@ impl Session {
                 commands::handle_compress();
                 Ok(())
             }
-            InternalCommand::ApplyOptions => commands::handle_apply_options(self),
+            InternalCommand::ApplyOptions => {
+                commands::handle_apply_options(self)
+            }
             InternalCommand::SessionInit { base, common } => {
                 commands::handle_session_init(base, common);
                 Ok(())
@@ -1637,12 +1725,16 @@ impl Session {
                 commands::handle_session_delete(self, id);
                 Ok(())
             }
-            InternalCommand::SessionRun => commands::handle_session_run(self),
+            InternalCommand::SessionRun => {
+                commands::handle_session_run(self)
+            }
             InternalCommand::CreateImage { layout } => {
                 commands::handle_create_image(self, layout);
                 Ok(())
             }
-            InternalCommand::Update { path } => commands::handle_update(self, path),
+            InternalCommand::Update { path } => {
+                commands::handle_update(self, path)
+            }
             InternalCommand::FinalizeMobile => {
                 commands::handle_finalize_mobile(self);
                 Ok(())

@@ -22,7 +22,7 @@
 
 use crate::builder::builder::NandSkeleton;
 use crate::core::images::gxp::parse_patch_binary;
-use crate::core::session::Session;
+use crate::core::session::{Session, SessionError};
 use log::{error, info, warn};
 use std::fs;
 use std::path::PathBuf;
@@ -33,19 +33,19 @@ pub fn handle_extract_all(
     output_dir: PathBuf,
     all: bool,
     include_decrypted: bool,
-) -> Result<(), String> {
+) -> Result<(), SessionError> {
     let nand = session
         .active_nand
         .as_mut()
-        .ok_or("No active NAND to extract from")?;
+        .ok_or(SessionError::Other("No active NAND to extract from".to_string()))?;
 
     let _ = std::fs::create_dir_all(&output_dir);
 
     // Helper to write a file
-    let write_file = |name: &str, data: &[u8]| -> Result<(), String> {
+    let write_file = |name: &str, data: &[u8]| -> Result<(), SessionError> {
         let path = output_dir.join(name);
         std::fs::write(&path, data)
-            .map_err(|e| format!("Failed to write {}: {}", name, e))?;
+            .map_err(|e| SessionError::Other(format!("Failed to write {}: {}", name, e)))?;
         info!("[extract] Wrote {} ({} bytes)", name, data.len());
         Ok(())
     };
@@ -166,9 +166,9 @@ pub fn handle_build(
     session: &mut Session,
     output: PathBuf,
     _target: u8,
-) -> Result<(), String> {
+) -> Result<(), SessionError> {
     // Get key before borrowing active_nand
-    let key = session.pending_key.ok_or("No CPU key available for build")?;
+    let key = session.pending_key.ok_or(SessionError::Other("No CPU key available for build".to_string()))?;
 
     // Sync and finalize before building
     session.sync_options_to_nand()?;
@@ -198,7 +198,7 @@ pub fn handle_build(
 
                 // Write output
                 std::fs::write(&output, &final_bytes)
-                    .map_err(|e| format!("Failed to write output: {}", e))?;
+                    .map_err(|e| SessionError::Other(format!("Failed to write output: {}", e)))?;
 
                 info!(
                     "[session] Build complete: {} bytes written to {:?}",
@@ -207,10 +207,10 @@ pub fn handle_build(
                 );
                 Ok(())
             }
-            Err(e) => Err(format!("Build failed: {}", e)),
+            Err(e) => Err(SessionError::Other(format!("Build failed: {}", e))),
         }
     } else {
-        Err("No active NAND loaded to build!".to_string())
+        Err(SessionError::Other("No active NAND loaded to build!".to_string()))
     }
 }
 
@@ -224,7 +224,7 @@ pub fn handle_parse_ini(
     data: PathBuf,
     _payloads: PathBuf,
     _smc: PathBuf,
-) -> Result<(), String> {
+) -> Result<(), SessionError> {
     info!("[session] Parsing INI {:?} for target '{}'...", path, target);
 
     match crate::core::data::xeini::parse_xe_ini(&path, &target) {
@@ -241,7 +241,7 @@ pub fn handle_parse_ini(
             }
             Ok(())
         }
-        Err(e) => Err(format!("Failed to parse INI: {}", e)),
+        Err(e) => Err(SessionError::Other(format!("Failed to parse INI: {}", e))),
     }
 }
 
@@ -250,7 +250,7 @@ pub fn handle_parse_image(
     session: &mut Session,
     path: PathBuf,
     key: Option<[u8; 16]>,
-) -> Result<(), String> {
+) -> Result<(), SessionError> {
     info!("[session] Parsing image {:?}...", path);
     match fs::read(&path) {
         Ok(raw_data) => {
@@ -293,39 +293,39 @@ pub fn handle_parse_image(
                             info!("[session] Successfully parsed NAND from {:?}", path);
                             Ok(())
                         }
-                        Err(e) => Err(format!("Failed to interpret clean NAND: {}", e)),
+                        Err(e) => Err(SessionError::Other(format!("Failed to interpret clean NAND: {}", e))),
                     }
                 }
-                Err(e) => Err(format!("Failed to pre-process NAND image: {}", e)),
+                Err(e) => Err(SessionError::Other(format!("Failed to pre-process NAND image: {}", e))),
             }
         }
-        Err(e) => Err(format!("Failed to read image file '{}': {}", path.display(), e)),
+        Err(e) => Err(SessionError::Other(format!("Failed to read image file '{}': {}", path.display(), e))),
     }
 }
 
 /// Apply ECC file to active NAND
-pub fn handle_apply_ecc(session: &mut Session, path: PathBuf) -> Result<(), String> {
+pub fn handle_apply_ecc(session: &mut Session, path: PathBuf) -> Result<(), SessionError> {
     let Some(old) = session.active_nand.take() else {
         error!("[session] No active NAND loaded. Cannot apply ECC.");
         return Ok(());
     };
 
     let ecc_raw = fs::read(&path)
-        .map_err(|e| format!("Failed to read ECC file '{}': {}", path.display(), e))?;
+        .map_err(|e| SessionError::Other(format!("Failed to read ECC file '{}': {}", path.display(), e)))?;
 
     let (ecc_clean, ecc_layout, _ecc_lba) =
         crate::core::images::blocks::NandProcessor::preprocess_nand_with_lba_options(
             &ecc_raw, false,
         )
-        .map_err(|e| format!("Failed to pre-process ECC image: {}", e))?;
+        .map_err(|e| SessionError::Other(format!("Failed to pre-process ECC image: {}", e)))?;
 
     let nand_layout = old.layout;
     if ecc_layout != nand_layout {
         session.active_nand = Some(old);
-        return Err(format!(
+        return Err(SessionError::Other(format!(
             "ECC layout mismatch: ECC={:?}, NAND={:?}. Provide a matching ECC for this NAND type.",
             ecc_layout, nand_layout
-        ));
+        )));
     }
 
     let mut image = old.image;
@@ -356,7 +356,7 @@ pub fn handle_apply_ecc(session: &mut Session, path: PathBuf) -> Result<(), Stri
             info!("[session] Applied ECC from '{}' over {} bytes.", path.display(), write_len);
             Ok(())
         }
-        Err(e) => Err(format!("Applied ECC but failed to re-parse NAND: {}", e)),
+        Err(e) => Err(SessionError::Other(format!("Applied ECC but failed to re-parse NAND: {}", e))),
     }
 }
 
@@ -387,7 +387,7 @@ pub fn handle_parse_keybin(session: &mut Session, key: Option<[u8; 16]>) {
 }
 
 /// Parse FlashFS from folder
-pub fn handle_parse_flashfs(session: &mut Session, path: PathBuf) -> Result<(), String> {
+pub fn handle_parse_flashfs(session: &mut Session, path: PathBuf) -> Result<(), SessionError> {
     info!("[session] Preparing to build flashfs from folder {:?}...", path);
     if let Some(nand) = &mut session.active_nand {
         let fs_start: u16 = match nand.layout {
@@ -431,7 +431,7 @@ pub fn handle_parse_flashfs(session: &mut Session, path: PathBuf) -> Result<(), 
                         &nand.flashfs.root,
                         &nand.mobile,
                     ) {
-                        return Err(format!("Corona metadata write failed: {}", e));
+                        return Err(SessionError::Other(format!("Corona metadata write failed: {}", e)));
                     }
                     if nand.flashfs.root.block_number >= 0 {
                         nand.header
@@ -454,7 +454,7 @@ pub fn handle_parse_flashfs(session: &mut Session, path: PathBuf) -> Result<(), 
 }
 
 /// Parse patch binary
-pub fn handle_parse_patch(_session: &mut Session, path: PathBuf) -> Result<(), String> {
+pub fn handle_parse_patch(_session: &mut Session, path: PathBuf) -> Result<(), SessionError> {
     info!("[session] Parsing patch binary from {:?}...", path);
     match parse_patch_binary(&path) {
         Ok(patch) => {
@@ -464,18 +464,18 @@ pub fn handle_parse_patch(_session: &mut Session, path: PathBuf) -> Result<(), S
             );
             Ok(())
         }
-        Err(e) => Err(format!("Failed to parse patch binary: {}", e)),
+        Err(e) => Err(SessionError::Other(format!("Failed to parse patch binary: {}", e))),
     }
 }
 
 /// Apply patch to active NAND
-pub fn handle_apply_patch(session: &mut Session, path: PathBuf, _ptype: u8, _target: Option<u8>) -> Result<(), String> {
+pub fn handle_apply_patch(session: &mut Session, path: PathBuf, _ptype: u8, _target: Option<u8>) -> Result<(), SessionError> {
     info!("[session] Applying patch {:?} (GXP Logic)...", path);
     if let Some(nand) = &mut session.active_nand {
         match parse_patch_binary(&path) {
             Ok(patch) => {
                 if let Err(e) = nand.apply_patch(patch) {
-                    Err(format!("Failed to apply patch: {}", e))
+                    Err(SessionError::Other(format!("Failed to apply patch: {}", e)))
                 } else {
                     info!("[session] Successfully applied patch and routed components.");
                     Ok(())
@@ -498,7 +498,7 @@ pub fn handle_swap_bootloader(
     bl_type: String,
     path: PathBuf,
     is_rebooter: bool,
-) -> Result<(), String> {
+) -> Result<(), SessionError> {
     info!(
         "[session] Swapping bootloader {} with {:?} (Rebooter: {})...",
         bl_type, path, is_rebooter
@@ -514,11 +514,12 @@ pub fn handle_swap_bootloader(
         };
 
         let data = fs::read(&path)
-            .map_err(|e| format!("Failed to read swap bootloader: {}", e))?;
+            .map_err(|e| SessionError::Other(format!("Failed to read swap bootloader: {}", e)))?;
 
         match bl_type.to_lowercase().as_str() {
             "cb" | "cba" | "cbb" | "cbx" => {
-                let bl = crate::builder::chain::cb::BootloaderCb::parse(&data)?;
+                let bl = crate::builder::chain::cb::BootloaderCb::parse(&data)
+                    .map_err(|e| SessionError::Other(format!("Failed to parse CB: {}", e)))?;
                 match bl_type.to_lowercase().as_str() {
                     "cb" => target.cb = Some(bl),
                     "cba" => target.cb_a = Some(bl),
@@ -528,15 +529,18 @@ pub fn handle_swap_bootloader(
                 }
             }
             "cd" => {
-                let bl = crate::builder::chain::cd::BootloaderCd::parse(&data)?;
+                let bl = crate::builder::chain::cd::BootloaderCd::parse(&data)
+                    .map_err(|e| SessionError::Other(format!("Failed to parse CD: {}", e)))?;
                 target.cd = Some(bl);
             }
             "ce" => {
-                let bl = crate::builder::chain::ce::BootloaderCe::parse(&data)?;
+                let bl = crate::builder::chain::ce::BootloaderCe::parse(&data)
+                    .map_err(|e| SessionError::Other(format!("Failed to parse CE: {}", e)))?;
                 target.ce = Some(bl);
             }
             "cf" => {
-                let bl = crate::builder::chain::cf::BootloaderCf::parse(&data)?;
+                let bl = crate::builder::chain::cf::BootloaderCf::parse(&data)
+                    .map_err(|e| SessionError::Other(format!("Failed to parse CF: {}", e)))?;
                 if is_rebooter {
                     if nand.rebooter_update.is_none() {
                         nand.rebooter_update = Some(Default::default());
@@ -547,7 +551,8 @@ pub fn handle_swap_bootloader(
                 }
             }
             "cg" => {
-                let bl = crate::builder::chain::cg::BootloaderCg::parse(&data)?;
+                let bl = crate::builder::chain::cg::BootloaderCg::parse(&data)
+                    .map_err(|e| SessionError::Other(format!("Failed to parse CG: {}", e)))?;
                 if is_rebooter {
                     if nand.rebooter_update.is_none() {
                         nand.rebooter_update = Some(Default::default());
@@ -560,12 +565,12 @@ pub fn handle_swap_bootloader(
             "smc" => {
                 nand.extra.smc = data;
             }
-            _ => return Err(format!("Unknown bootloader type: {}", bl_type)),
+            _ => return Err(SessionError::Other(format!("Unknown bootloader type: {}", bl_type))),
         }
         info!("[session] Bootloader {} swapped successfully.", bl_type);
         Ok(())
     } else {
-        Err("No active NAND loaded. Cannot swap bootloader.".to_string())
+        Err(SessionError::Other("No active NAND loaded. Cannot swap bootloader.".to_string()))
     }
 }
 
@@ -628,7 +633,7 @@ pub fn handle_compress() {
 }
 
 /// Apply SMC signature batch
-pub fn handle_apply_smc_signature(session: &mut Session, json: String) -> Result<usize, String> {
+pub fn handle_apply_smc_signature(session: &mut Session, json: String) -> Result<usize, SessionError> {
     session.apply_smc_signature_batch(&json)
 }
 
@@ -674,7 +679,7 @@ pub fn handle_session_delete(session: &mut Session, id: u8) {
 }
 
 /// Session run - execute all queued commands
-pub fn handle_session_run(session: &mut Session) -> Result<(), String> {
+pub fn handle_session_run(session: &mut Session) -> Result<(), SessionError> {
     let commands: Vec<_> = session.queue.drain().collect();
     info!(
         "[session] SessionRun: executing {} queued commands in priority order.",
@@ -715,7 +720,7 @@ pub fn handle_create_image(session: &mut Session, layout: crate::core::images::b
 }
 
 /// Update - load asset
-pub fn handle_update(session: &mut Session, path: PathBuf) -> Result<(), String> {
+pub fn handle_update(session: &mut Session, path: PathBuf) -> Result<(), SessionError> {
     info!("[session] Loading asset discovery from {:?}...", path);
     match fs::read(&path) {
         Ok(data) => {
@@ -728,7 +733,7 @@ pub fn handle_update(session: &mut Session, path: PathBuf) -> Result<(), String>
             info!("[session] Discovered asset '{}' added to session pool.", name);
             Ok(())
         }
-        Err(e) => Err(format!("Failed to read asset at {:?}: {}", path, e)),
+        Err(e) => Err(SessionError::Other(format!("Failed to read asset at {:?}: {}", path, e))),
     }
 }
 
@@ -811,7 +816,7 @@ pub fn handle_finalize_flashfs(session: &mut Session) {
 }
 
 /// Apply options to NAND
-pub fn handle_apply_options(session: &mut Session) -> Result<(), String> {
+pub fn handle_apply_options(session: &mut Session) -> Result<(), SessionError> {
     info!("[session] Applying session options to active NAND...");
     session.sync_options_to_nand()
 }
@@ -821,7 +826,7 @@ pub fn handle_extract_stfs(
     _session: &mut Session,
     path: PathBuf,
     target_dir: PathBuf,
-) -> Result<(), String> {
+) -> Result<(), SessionError> {
     info!("[extract] Extracting STFS package from {:?} to {:?}...", path, target_dir);
     
     let _ = std::fs::create_dir_all(&target_dir);
