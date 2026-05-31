@@ -105,7 +105,10 @@ impl Smc {
 
     pub fn populate_metadata(&mut self) {
         if self.data.len() < 0x103 {
-            warn!("[smc] SMC data too short for metadata: got 0x{:x}, need 0x103", self.data.len());
+            warn!(
+                "[smc] SMC data too short for metadata: got 0x{:x}, need 0x103",
+                self.data.len()
+            );
             return;
         }
 
@@ -222,7 +225,9 @@ impl Smc {
         let mut bl_hash = [0u8; 0x14];
         self.calculate_rotsum(&mut bl_hash)?;
         let expected_salt = b"XBOX_ROM_S\0";
-        if verify_signature(&self.header.signature, &bl_hash, expected_salt, pubkey).unwrap_or(false) {
+        if verify_signature(&self.header.signature, &bl_hash, expected_salt, pubkey)
+            .unwrap_or(false)
+        {
             Ok(())
         } else {
             Err(SmcError::SignatureVerification)

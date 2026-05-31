@@ -87,7 +87,10 @@ impl BootloaderCd {
             return;
         }
         if self.data.len() < 0x250 {
-            warn!("[builder] CD data too short for metadata: got 0x{:x}, need 0x250", self.data.len());
+            warn!(
+                "[builder] CD data too short for metadata: got 0x{:x}, need 0x250",
+                self.data.len()
+            );
             return;
         }
 
@@ -118,7 +121,10 @@ impl BootloaderCd {
     pub fn sync_metadata(&mut self) {
         if let Some(ref meta) = self.metadata {
             if self.data.len() < 0x250 {
-                warn!("[builder] CD data too short for sync_metadata: got 0x{:x}, need 0x250", self.data.len());
+                warn!(
+                    "[builder] CD data too short for sync_metadata: got 0x{:x}, need 0x250",
+                    self.data.len()
+                );
                 return;
             }
 

@@ -91,7 +91,11 @@ impl BootloaderCe {
         let mut data_vec = payload.to_vec();
         let expected_payload_size = ((header.size.get() as usize + 0xF) & 0xFFFFFFF0) - 0x10;
         if data_vec.len() < expected_payload_size {
-            warn!("[builder] CE data resized from {} to {} bytes", data_vec.len(), expected_payload_size);
+            warn!(
+                "[builder] CE data resized from {} to {} bytes",
+                data_vec.len(),
+                expected_payload_size
+            );
             data_vec.resize(expected_payload_size, 0);
         }
 
@@ -110,7 +114,10 @@ impl BootloaderCe {
             return;
         }
         if self.data.len() < 0x20 {
-            warn!("[builder] CE data too short for metadata: got 0x{:x}, need 0x20", self.data.len());
+            warn!(
+                "[builder] CE data too short for metadata: got 0x{:x}, need 0x20",
+                self.data.len()
+            );
             return;
         }
 
@@ -128,7 +135,10 @@ impl BootloaderCe {
             return;
         }
         if self.data.len() < 0x20 {
-            warn!("[builder] CE data too short for sync_metadata: got 0x{:x}, need 0x20", self.data.len());
+            warn!(
+                "[builder] CE data too short for sync_metadata: got 0x{:x}, need 0x20",
+                self.data.len()
+            );
             return;
         }
         if let Some(meta) = &self.metadata {

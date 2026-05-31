@@ -305,8 +305,7 @@ impl MobileStore {
     }
 
     pub fn add_from_path(&mut self, slot: usize, path: &Path) -> Result<()> {
-        let data_type =
-            type_for_slot(slot).ok_or_else(|| FsError::InvalidMobileSlot(slot))?;
+        let data_type = type_for_slot(slot).ok_or_else(|| FsError::InvalidMobileSlot(slot))?;
         let data = std::fs::read(path)?;
         self.add_entry(data_type, data)
     }

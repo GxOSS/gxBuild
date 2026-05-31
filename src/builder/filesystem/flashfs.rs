@@ -766,7 +766,9 @@ impl FileSystemRoot {
                 if next == 0 {
                     return Err(FsError::AllocationFailed(format!(
                         "extending chain starting at {} (need {} blocks, have {})",
-                        start_block, needed, chain.len()
+                        start_block,
+                        needed,
+                        chain.len()
                     )));
                 }
                 info!("[flashfs]   + Expanding chain: {} -> {}", curr, next);

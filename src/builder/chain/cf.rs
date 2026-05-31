@@ -115,7 +115,10 @@ impl BootloaderCf {
             return;
         }
         if self.data.len() < 0x344 {
-            warn!("[builder] CF data too short for metadata: got 0x{:x}, need 0x344", self.data.len());
+            warn!(
+                "[builder] CF data too short for metadata: got 0x{:x}, need 0x344",
+                self.data.len()
+            );
             return;
         }
         self.populate_metadata_unchecked();
@@ -184,7 +187,10 @@ impl BootloaderCf {
     pub fn sync_metadata(&mut self) {
         if let Some(ref meta) = self.metadata {
             if self.data.len() < 0x344 {
-                warn!("[builder] CF data too short for sync_metadata: got 0x{:x}, need 0x344", self.data.len());
+                warn!(
+                    "[builder] CF data too short for sync_metadata: got 0x{:x}, need 0x344",
+                    self.data.len()
+                );
                 return;
             }
 

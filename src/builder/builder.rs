@@ -28,21 +28,20 @@ use zerocopy::FromBytes;
 use crate::builder::chain::smc::smc_crypt;
 use crate::builder::chain::*;
 use crate::builder::chain::{
-    cb::BootloaderCb, sc::BootloaderSc, cd::BootloaderCd, ce::BootloaderCe,
-    cf::BootloaderCf, cg::BootloaderCg,
+    cb::BootloaderCb, cd::BootloaderCd, ce::BootloaderCe, cf::BootloaderCf, cg::BootloaderCg,
+    sc::BootloaderSc,
 };
 use crate::builder::filesystem::corona::{self, CoronaFsSlots};
 use crate::builder::filesystem::flashfs::FlashFS;
 use crate::builder::filesystem::mobile::MobileStore;
+use crate::builder::types::*;
 use crate::core::images::blocks::*;
 use crate::core::images::gxp::{apply_records, GxpBinary, GxpPatchType, PatchRecord};
 use crate::crypto::{calculate_smc_hash, hmac_sha, Rc4};
-use crate::builder::types::*;
 // Re-export for backward compatibility
 pub use crate::builder::types::{
-    LayoutCalculator, SouthbridgeType, PayloadEntry, PayloadList,
-    MotherboardType, BuildOptions, BuildMode, NandHeader, NandHeaderPrefix,
-    NandBootloaders, NandUpdate, NandExtra,
+    BuildMode, BuildOptions, LayoutCalculator, MotherboardType, NandBootloaders, NandExtra,
+    NandHeader, NandHeaderPrefix, NandUpdate, PayloadEntry, PayloadList, SouthbridgeType,
 };
 
 /// Unified error type for builder operations.
@@ -63,7 +62,9 @@ pub enum BuilderError {
     #[error("Invalid NAND magic: 0x{magic:04X}")]
     InvalidMagic { magic: u16 },
 
-    #[error("{component} out of bounds: offset 0x{offset:X} + size 0x{size:X} > image 0x{image_len:X}")]
+    #[error(
+        "{component} out of bounds: offset 0x{offset:X} + size 0x{size:X} > image 0x{image_len:X}"
+    )]
     OutOfBounds {
         component: String,
         offset: usize,
@@ -86,11 +87,21 @@ pub enum BuilderError {
     #[error("Bootchain stage {stage} overflow at 0x{offset:X}")]
     BootchainOverflow { stage: String, offset: usize },
 
-    #[error("SMC write out of bounds: offset 0x{offset:X} + size 0x{size:X} > image 0x{image_len:X}")]
-    SmcOutOfBounds { offset: usize, size: usize, image_len: usize },
+    #[error(
+        "SMC write out of bounds: offset 0x{offset:X} + size 0x{size:X} > image 0x{image_len:X}"
+    )]
+    SmcOutOfBounds {
+        offset: usize,
+        size: usize,
+        image_len: usize,
+    },
 
     #[error("Keyvault write out of bounds: offset 0x{offset:X} + size 0x{size:X} > image 0x{image_len:X}")]
-    KvOutOfBounds { offset: usize, size: usize, image_len: usize },
+    KvOutOfBounds {
+        offset: usize,
+        size: usize,
+        image_len: usize,
+    },
 
     #[error("CF overflow at 0x{offset:X}: need 0x{need:X} bytes")]
     CfOverflow { offset: usize, need: usize },
@@ -1317,25 +1328,37 @@ impl NandSkeleton {
                             "[builder] CB (single) at 0x{:08X} (v{}, 0x{:X} bytes)",
                             off, bl_version, bl_size
                         );
-                        bl.cb = Some(BootloaderCb::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                        bl.cb = Some(
+                            BootloaderCb::parse(&bl_data)
+                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                        );
                     } else if is_cba {
                         info!(
                             "[builder] CB_A at 0x{:08X} (v{}, 0x{:X} bytes)",
                             off, bl_version, bl_size
                         );
-                        bl.cb_a = Some(BootloaderCb::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                        bl.cb_a = Some(
+                            BootloaderCb::parse(&bl_data)
+                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                        );
                     } else if is_cbx {
                         info!(
                             "[builder] CB_X (RGH3 stub) at 0x{:08X} (v{}, 0x{:X} bytes)",
                             off, bl_version, bl_size
                         );
-                        bl.cb_x = Some(BootloaderCb::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                        bl.cb_x = Some(
+                            BootloaderCb::parse(&bl_data)
+                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                        );
                     } else {
                         info!(
                             "[builder] CB_B at 0x{:08X} (v{}, 0x{:X} bytes)",
                             off, bl_version, bl_size
                         );
-                        bl.cb_b = Some(BootloaderCb::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                        bl.cb_b = Some(
+                            BootloaderCb::parse(&bl_data)
+                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                        );
                     }
                 }
                 XenonBlType::SC => {
@@ -1343,21 +1366,30 @@ impl NandSkeleton {
                         "[builder] SC at 0x{:08X} (v{}, 0x{:X} bytes)",
                         off, bl_version, bl_size
                     );
-                    bl.sc = Some(BootloaderSc::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                    bl.sc = Some(
+                        BootloaderSc::parse(&bl_data)
+                            .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                    );
                 }
                 XenonBlType::CD => {
                     info!(
                         "[builder] CD at 0x{:08X} (v{}, 0x{:X} bytes)",
                         off, bl_version, bl_size
                     );
-                    bl.cd = Some(BootloaderCd::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                    bl.cd = Some(
+                        BootloaderCd::parse(&bl_data)
+                            .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                    );
                 }
                 XenonBlType::CE => {
                     info!(
                         "[builder] CE at 0x{:08X} (v{}, 0x{:X} bytes)",
                         off, bl_version, bl_size
                     );
-                    bl.ce = Some(BootloaderCe::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                    bl.ce = Some(
+                        BootloaderCe::parse(&bl_data)
+                            .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                    );
                 }
                 XenonBlType::CF => {
                     info!(
@@ -1367,7 +1399,8 @@ impl NandSkeleton {
                         bl_version,
                         bl_size
                     );
-                    let cf = BootloaderCf::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?;
+                    let cf = BootloaderCf::parse(&bl_data)
+                        .map_err(|e| BuilderError::Bootloader(e.to_string()))?;
                     if cf_count == 0 {
                         update.cf_0 = Some(cf);
                         cf0_offset = off;
@@ -1392,7 +1425,8 @@ impl NandSkeleton {
                         info!("[builder] Failed to fetch complete CG data, stopping chain walk");
                         break;
                     }
-                    let cg = BootloaderCg::parse(&actual_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?;
+                    let cg = BootloaderCg::parse(&actual_data)
+                        .map_err(|e| BuilderError::Bootloader(e.to_string()))?;
                     if cg_count == 0 {
                         update.cg_0 = Some(cg);
                     } else {
@@ -1462,7 +1496,8 @@ impl NandSkeleton {
                             bl_header.version.get(),
                             bl_size
                         );
-                        let cf = BootloaderCf::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?;
+                        let cf = BootloaderCf::parse(&bl_data)
+                            .map_err(|e| BuilderError::Bootloader(e.to_string()))?;
                         if cf_count == 0 {
                             update.cf_0 = Some(cf);
                             cf0_offset = off;
@@ -1487,7 +1522,8 @@ impl NandSkeleton {
                             info!("[builder] Failed to fetch complete CG data, stopping CF_Ptr chain walk");
                             break;
                         }
-                        let cg = BootloaderCg::parse(&actual_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?;
+                        let cg = BootloaderCg::parse(&actual_data)
+                            .map_err(|e| BuilderError::Bootloader(e.to_string()))?;
                         if cg_count == 0 {
                             update.cg_0 = Some(cg);
                         } else {
@@ -1545,7 +1581,8 @@ impl NandSkeleton {
                                     bl_header.version.get(),
                                     bl_size
                                 );
-                                let cf = BootloaderCf::parse(&bl_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?;
+                                let cf = BootloaderCf::parse(&bl_data)
+                                    .map_err(|e| BuilderError::Bootloader(e.to_string()))?;
                                 if cf_count == 0 {
                                     update.cf_0 = Some(cf);
                                     cf0_offset = off;
@@ -1570,7 +1607,8 @@ impl NandSkeleton {
                                     info!("[builder] Failed to fetch complete CG data, stopping discovery scan");
                                     break;
                                 }
-                                let cg = BootloaderCg::parse(&actual_data).map_err(|e| BuilderError::Bootloader(e.to_string()))?;
+                                let cg = BootloaderCg::parse(&actual_data)
+                                    .map_err(|e| BuilderError::Bootloader(e.to_string()))?;
                                 if cg_count == 0 {
                                     update.cg_0 = Some(cg);
                                 } else {
@@ -1674,7 +1712,10 @@ impl NandSkeleton {
             }
 
             if curr_off + data.len() > logical_image.len() {
-                return Err(BuilderError::BootchainOverflow { stage: format!("Chain 0 {}", name), offset: curr_off });
+                return Err(BuilderError::BootchainOverflow {
+                    stage: format!("Chain 0 {}", name),
+                    offset: curr_off,
+                });
             }
             info!(
                 "[builder] JTAG Chain 0: Serializing {} at 0x{:08X}",
@@ -1684,10 +1725,9 @@ impl NandSkeleton {
             curr_off += data.len();
         }
 
-        let rebooter = self
-            .rebooter
-            .as_ref()
-            .ok_or_else(|| BuilderError::Build("Rebooter chain (Chain 1) is missing for JTAG build".to_string()))?;
+        let rebooter = self.rebooter.as_ref().ok_or_else(|| {
+            BuilderError::Build("Rebooter chain (Chain 1) is missing for JTAG build".to_string())
+        })?;
         curr_off = 0x20000;
         let mut update_stages = Vec::new();
         if let Some(cb) = &rebooter.cb {
@@ -1720,7 +1760,10 @@ impl NandSkeleton {
             }
 
             if curr_off + data.len() > logical_image.len() {
-                return Err(BuilderError::BootchainOverflow { stage: format!("Chain 1 {}", name), offset: curr_off });
+                return Err(BuilderError::BootchainOverflow {
+                    stage: format!("Chain 1 {}", name),
+                    offset: curr_off,
+                });
             }
             info!(
                 "[builder] JTAG Chain 1: Serializing {} at 0x{:08X}",
@@ -1997,7 +2040,8 @@ impl NandSkeleton {
             if let Some(xell) = self.bootloaders.xell.as_ref() {
                 let xell_offset = xell
                     .get_target_offset(self.layout, &self.options.image_profile, false, 0, 0x10000)
-                    .map_err(|e| BuilderError::XellOffset(e.to_string()))? as usize;
+                    .map_err(|e| BuilderError::XellOffset(e.to_string()))?
+                    as usize;
                 info!(
                     "[builder] JTAG Chain 1: Injecting XeLL-1F payload at 0x{:08X}",
                     xell_offset
@@ -2009,7 +2053,8 @@ impl NandSkeleton {
             if let Some(xell) = rebooter.xell.as_ref() {
                 let xell_offset = xell
                     .get_target_offset(self.layout, &self.options.image_profile, false, 0, 0x10000)
-                    .map_err(|e| BuilderError::XellOffset(e.to_string()))? as usize;
+                    .map_err(|e| BuilderError::XellOffset(e.to_string()))?
+                    as usize;
                 info!(
                     "[builder] JTAG Chain 1: Injecting XeLL-2F payload at 0x{:08X}",
                     xell_offset
@@ -2363,7 +2408,9 @@ impl NandSkeleton {
 
             if self.options.dualpatchslots {
                 if cf1.is_none() || cg1.is_none() {
-                    return Err(BuilderError::Build("dualpatchslots is enabled but CF1/CG1 is missing".to_string()));
+                    return Err(BuilderError::Build(
+                        "dualpatchslots is enabled but CF1/CG1 is missing".to_string(),
+                    ));
                 }
                 header.patch_slots.set(2);
             } else {
@@ -2478,10 +2525,10 @@ impl NandSkeleton {
                 // Align CF1 to the next 64KB block after CG0
                 let cf1_offset = (next_offset + 0xFFFF) & !0xFFFF;
                 if cf1_offset + cf1d.len() > logical_image.len() {
-                return Err(BuilderError::CfOverflow {
-                    offset: cf1_offset,
-                    need: cf1d.len(),
-                });
+                    return Err(BuilderError::CfOverflow {
+                        offset: cf1_offset,
+                        need: cf1d.len(),
+                    });
                 }
                 logical_image[cf1_offset..cf1_offset + cf1d.len()].copy_from_slice(&cf1d);
 
@@ -2566,7 +2613,9 @@ impl NandSkeleton {
                 if xell_offset + xell.data.len() > logical_image.len() {
                     return Err(BuilderError::XellOffset(format!(
                         "XeLL ({:?}) overflow at 0x{:X}: need 0x{:X} bytes",
-                        x_type, xell_offset, xell.data.len()
+                        x_type,
+                        xell_offset,
+                        xell.data.len()
                     )));
                 }
                 info!(
@@ -3078,7 +3127,8 @@ impl NandSkeleton {
 
         if let Some(ref mut kv) = skel.kv {
             info!("[builder] Encrypting Keyvault...");
-            kv.encrypt(&cpukey).map_err(|e| BuilderError::Build(e.to_string()))?;
+            kv.encrypt(&cpukey)
+                .map_err(|e| BuilderError::Build(e.to_string()))?;
             skel.extra.keyvault = kv.data.clone();
         } else {
             warn!(
@@ -3145,7 +3195,11 @@ impl NandSkeleton {
         }
 
         info!("[builder] Re-encrypting SMC...");
-        let scramble_smc = skel.options.image_profile.to_ascii_lowercase().contains("glitch3");
+        let scramble_smc = skel
+            .options
+            .image_profile
+            .to_ascii_lowercase()
+            .contains("glitch3");
         smc.encrypt_with_scramble(scramble_smc);
         skel.extra.smc = smc.data;
 
@@ -3230,7 +3284,12 @@ impl NandSkeleton {
     pub fn inject_security_file(&mut self, name: &str, data: &[u8], fs_start: u16) {
         // For now, this is a placeholder implementation
         // In a full implementation, this would inject the security file into the filesystem
-        log::info!("[builder] Injecting security file: {} ({} bytes) at fs_start: 0x{:X}", name, data.len(), fs_start);
+        log::info!(
+            "[builder] Injecting security file: {} ({} bytes) at fs_start: 0x{:X}",
+            name,
+            data.len(),
+            fs_start
+        );
     }
 }
 

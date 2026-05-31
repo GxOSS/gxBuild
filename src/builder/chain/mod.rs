@@ -82,8 +82,6 @@ impl BootloaderHeader {
     }
 }
 
-
-
 #[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable)]
 #[repr(C)]
 pub struct BootloaderGenericHeader {

@@ -392,7 +392,10 @@ impl BootloaderCb {
         let mut decrypt_key = [0u8; 16];
         decrypt_key.copy_from_slice(&derived_key[..16]);
         self.derived_key = Some(decrypt_key);
-        info!("[builder] Decrypting CB using derived key: {:02x?}", decrypt_key);
+        info!(
+            "[builder] Decrypting CB using derived key: {:02x?}",
+            decrypt_key
+        );
 
         let mut rc4 = Rc4::new(&decrypt_key).map_err(|e| CbError::Rc4Init(e.to_string()))?;
         rc4.crypt(&mut self.data[0x10..payload_len])
@@ -427,7 +430,10 @@ impl BootloaderCb {
         let mut decrypt_key = [0u8; 16];
         decrypt_key.copy_from_slice(&derived_key[..16]);
         self.derived_key = Some(decrypt_key);
-        info!("[builder] Decrypting CB (MFG zero-key) using derived key: {:02x?}", decrypt_key);
+        info!(
+            "[builder] Decrypting CB (MFG zero-key) using derived key: {:02x?}",
+            decrypt_key
+        );
 
         let mut rc4 = Rc4::new(&decrypt_key).map_err(|e| CbError::Rc4Init(e.to_string()))?;
         rc4.crypt(&mut self.data[0x10..payload_len])
