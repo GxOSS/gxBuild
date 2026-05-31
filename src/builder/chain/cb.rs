@@ -229,20 +229,6 @@ impl BootloaderCb {
             self.data[0x38C..0x3A0].copy_from_slice(&meta.digest_4bl);
 
             self.data[0x3A0..0x3A4].copy_from_slice(&meta.console_allow);
-
-            if self.data.len() > 0x2400 && self.data[0x1FF0] == 0x43 && self.data[0x1FF1] == 0x42 {
-                self.data[0x2010..0x2013].copy_from_slice(&pd_sync);
-                self.data[0x2013] = meta.lockdown_value;
-                self.data[0x2014..0x2020].copy_from_slice(&meta.reserved_per_box);
-                self.data[0x2020..0x2030].copy_from_slice(&meta.per_box_digest);
-                if self.data.len() >= 0x23A4 {
-                    self.data[0x23A0..0x23A4].copy_from_slice(&meta.console_allow);
-                }
-                if self.data.len() > 0x23B1 {
-                    self.data[0x23B1] = meta.lockdown_value;
-                }
-                info!("[pfa] Synchronized embedded CB_B metadata!");
-            }
         }
     }
 

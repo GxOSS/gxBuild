@@ -20,6 +20,22 @@ pub const ONEBL_KEY: [u8; 16] = [
     0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA,
 ];
 
+#[derive(Debug, PartialEq)]
+#[repr(u32)]
+pub enum XenonBlType {
+    OneBL = 0,
+    CB = 1,
+    SC = 2,
+    CD = 3,
+    CE = 4,
+    CF = 5,
+    CG = 6,
+    HV = 0x10,
+    XKE = 0x11,
+    BLUPD = 0x12,
+    INVALID = 0xFFFFFFFF,
+}
+
 #[derive(
     zerocopy::FromBytes,
     zerocopy::IntoBytes,
@@ -66,21 +82,7 @@ impl BootloaderHeader {
     }
 }
 
-#[derive(Debug, PartialEq)]
-#[repr(u32)]
-pub enum XenonBlType {
-    OneBL = 0,
-    CB = 1,
-    SC = 2,
-    CD = 3,
-    CE = 4,
-    CF = 5,
-    CG = 6,
-    HV = 0x10,
-    XKE = 0x11,
-    BLUPD = 0x12,
-    INVALID = 0xFFFFFFFF,
-}
+
 
 #[derive(zerocopy::FromBytes, zerocopy::IntoBytes, zerocopy::KnownLayout, zerocopy::Immutable)]
 #[repr(C)]

@@ -83,5 +83,6 @@ Component breakdown:
 * **xenon-bltool:** GPL v2
 * **x360utils:** Unlicense
 * **XeCrypt:** MIT License
+* **STFS:** MIT License
 
 All code taken from other projects has been properly attributed in their respective file headers.

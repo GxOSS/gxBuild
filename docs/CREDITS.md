@@ -10,6 +10,7 @@ Everyone who has knowingly or unknowingly contributed to gxBuild
 - [erorn](https://github.com/erorndev)
 - [emoose](https://github.com/emoose)
 - [wurthless-elektroniks](https://github.com/wurthless-elektroniks)
+- [Landaire](https://github.com/landaire)
 - [Octal450](https://github.com/Octal450)
 - [mitchellwaite](https://github.com/mitchellwaite)
 - [15432](https://github.com/15432)
