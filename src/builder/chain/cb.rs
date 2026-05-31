@@ -68,7 +68,9 @@ pub struct CbMetadata {
     pub sb_flash_addr: u64,
     pub soc_mmio_addr: u64,
 
-    pub console_allow: [u8; 4],
+    pub console_type: u8,
+    pub console_sequence: u8,
+    pub console_sequence_allow: [u8; 2],
 }
 
 #[derive(Clone)]
@@ -180,8 +182,10 @@ impl BootloaderCb {
         let mut digest_4bl = [0u8; 0x14];
         digest_4bl.copy_from_slice(&self.data[0x38C..0x3A0]);
 
-        let mut console_allow = [0u8; 4];
-        console_allow.copy_from_slice(&self.data[0x3A0..0x3A4]);
+        let console_type = self.data.get(0x3A0).copied().unwrap_or(0);
+        let console_sequence = self.data.get(0x3A1).copied().unwrap_or(0);
+        let mut console_sequence_allow = [0u8; 2];
+        console_sequence_allow.copy_from_slice(&self.data[0x3A2..0x3A4]);
 
         self.metadata = Some(CbMetadata {
             b_flags: self.header.flags.get(),
@@ -198,7 +202,9 @@ impl BootloaderCb {
             salt_3bl,
             salt_4bl,
             digest_4bl,
-            console_allow,
+            console_type,
+            console_sequence,
+            console_sequence_allow,
         });
     }
 
@@ -228,7 +234,9 @@ impl BootloaderCb {
             self.data[0x382..0x38C].copy_from_slice(&meta.salt_4bl);
             self.data[0x38C..0x3A0].copy_from_slice(&meta.digest_4bl);
 
-            self.data[0x3A0..0x3A4].copy_from_slice(&meta.console_allow);
+            self.data[0x3A0] = meta.console_type;
+            self.data[0x3A1] = meta.console_sequence;
+            self.data[0x3A2..0x3A4].copy_from_slice(&meta.console_sequence_allow);
         }
     }
 
@@ -347,8 +355,16 @@ impl BootloaderCb {
                 );
                 info!("[builder] {} Nonce 3BL: {:02x?}", indicator, meta.nonce_3bl);
                 info!(
-                    "[builder] {} Allow Mask: {:02x?}",
-                    indicator, meta.console_allow
+                    "[builder] {} Console Type: {:02x}",
+                    indicator, meta.console_type
+                );
+                info!(
+                    "[builder] {} Console Sequence: {:02x}",
+                    indicator, meta.console_sequence
+                );
+                info!(
+                    "[builder] {} Console Sequence Allow: {:02x?}",
+                    indicator, meta.console_sequence_allow
                 );
                 info!(
                     "[builder] {} Next Digest: {:02x?}",

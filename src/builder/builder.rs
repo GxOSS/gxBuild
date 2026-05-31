@@ -683,6 +683,46 @@ impl NandSkeleton {
             }
         }
 
+        // Recalculate digests for bootloader chain
+        if let Some(ref cd) = self.bootloaders.cd {
+            let mut cd_rotsum = [0u8; 0x14];
+            if cd.calculate_rotsum(&mut cd_rotsum).is_ok() {
+                // Update digest_4bl in all CB variants
+                if let Some(ref mut cb) = self.bootloaders.cb {
+                    if let Some(ref mut meta) = cb.metadata {
+                        meta.digest_4bl = cd_rotsum;
+                    }
+                }
+                if let Some(ref mut cba) = self.bootloaders.cb_a {
+                    if let Some(ref mut meta) = cba.metadata {
+                        meta.digest_4bl = cd_rotsum;
+                    }
+                }
+                if let Some(ref mut cbx) = self.bootloaders.cb_x {
+                    if let Some(ref mut meta) = cbx.metadata {
+                        meta.digest_4bl = cd_rotsum;
+                    }
+                }
+                if let Some(ref mut cbb) = self.bootloaders.cb_b {
+                    if let Some(ref mut meta) = cbb.metadata {
+                        meta.digest_4bl = cd_rotsum;
+                    }
+                }
+            }
+        }
+
+        if let Some(ref ce) = self.bootloaders.ce {
+            let mut ce_rotsum = [0u8; 0x14];
+            if ce.calculate_rotsum(&mut ce_rotsum).is_ok() {
+                // Update digest_5bl in CD
+                if let Some(ref mut cd) = self.bootloaders.cd {
+                    if let Some(ref mut meta) = cd.metadata {
+                        meta.digest_5bl = ce_rotsum;
+                    }
+                }
+            }
+        }
+
         if let Some(ref mut cb) = self.bootloaders.cb {
             cb.sync_metadata();
         }

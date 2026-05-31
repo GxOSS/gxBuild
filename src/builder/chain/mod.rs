@@ -513,6 +513,28 @@ pub fn encrypt_rebooter_chain(
 ) -> Result<(), String> {
     info!("[builder] Re-encrypting JTAG dual-chain...");
 
+    // Recalculate digests for Chain 0
+    let mut cd0_rotsum = [0u8; 0x14];
+    if cd0.calculate_rotsum(&mut cd0_rotsum).is_ok() {
+        if let Some(ref mut meta) = cb0.metadata {
+            meta.digest_4bl = cd0_rotsum;
+        }
+    }
+
+    // Recalculate digests for Chain 1
+    let mut cd1_rotsum = [0u8; 0x14];
+    let mut ce1_rotsum = [0u8; 0x14];
+    if cd1.calculate_rotsum(&mut cd1_rotsum).is_ok() {
+        if let Some(ref mut meta) = cb1.metadata {
+            meta.digest_4bl = cd1_rotsum;
+        }
+    }
+    if ce1.calculate_rotsum(&mut ce1_rotsum).is_ok() {
+        if let Some(ref mut meta) = cd1.metadata {
+            meta.digest_5bl = ce1_rotsum;
+        }
+    }
+
     cb0.sync_metadata();
     cd0.sync_metadata();
 
