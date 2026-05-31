@@ -3145,7 +3145,8 @@ impl NandSkeleton {
         }
 
         info!("[builder] Re-encrypting SMC...");
-        smc.encrypt_with_scramble(false);
+        let scramble_smc = skel.options.image_profile.to_ascii_lowercase().contains("glitch3");
+        smc.encrypt_with_scramble(scramble_smc);
         skel.extra.smc = smc.data;
 
         if skel.rebooter.is_some() {
