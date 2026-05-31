@@ -22,9 +22,9 @@
 
 #![cfg(feature = "cli")]
 
+use crate::builder::ecc::handle_extract_ecc;
 #[cfg(feature = "rhai")]
 use crate::core::interface::gxscript::GxScriptEngine;
-use crate::builder::ecc::handle_extract_ecc;
 use crate::core::logger;
 use thiserror::Error;
 
@@ -362,14 +362,8 @@ pub fn ggx_cli() {
 }
 
 fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
-    let build_type = args
-        .build_type
-        .as_ref()
-        .ok_or(CliError::MissingBuildType)?;
-    let console_type = args
-        .console
-        .as_ref()
-        .ok_or(CliError::MissingConsole)?;
+    let build_type = args.build_type.as_ref().ok_or(CliError::MissingBuildType)?;
+    let console_type = args.console.as_ref().ok_or(CliError::MissingConsole)?;
 
     // --- Path Resolution ---
     // -d = INI directory (contains _retail.ini, bootloaders, flashfs/)

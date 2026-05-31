@@ -34,4 +34,4 @@ async-trait = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
 
 [dev-dependencies]
-insta = { workspace = true }
+insta = { workspace = true, features = ["toml"] }

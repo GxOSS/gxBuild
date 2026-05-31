@@ -210,7 +210,8 @@ impl Keyvault {
         fallback_key.copy_from_slice(&hmac_res_v2[..16]);
 
         let mut kv2_data = original_data;
-        let mut rc4_v2 = Rc4::new(&fallback_key).map_err(|e| KeyvaultError::Rc4Init(e.to_string()))?;
+        let mut rc4_v2 =
+            Rc4::new(&fallback_key).map_err(|e| KeyvaultError::Rc4Init(e.to_string()))?;
         rc4_v2
             .crypt(&mut kv2_data[0x10..])
             .map_err(|e| KeyvaultError::Rc4Crypt(e.to_string()))?;
@@ -248,8 +249,8 @@ impl Keyvault {
             let final_key = hmac_sha(cpukey, &[&salt[..16]])
                 .map_err(|e| KeyvaultError::KeyDerivation(format!("KV2 key: {}", e)))?;
 
-            let mut rc4 = Rc4::new(&final_key[..16])
-                .map_err(|e| KeyvaultError::Rc4Init(e.to_string()))?;
+            let mut rc4 =
+                Rc4::new(&final_key[..16]).map_err(|e| KeyvaultError::Rc4Init(e.to_string()))?;
 
             rc4.crypt(&mut self.data[0x10..])
                 .map_err(|e| KeyvaultError::Rc4Crypt(e.to_string()))?;
@@ -260,8 +261,8 @@ impl Keyvault {
             nonce.copy_from_slice(&self.data[..0x10]);
             let hmac_res = hmac_sha(cpukey, &[&nonce])
                 .map_err(|e| KeyvaultError::KeyDerivation(e.to_string()))?;
-            let mut rc4 = Rc4::new(&hmac_res[..16])
-                .map_err(|e| KeyvaultError::Rc4Init(e.to_string()))?;
+            let mut rc4 =
+                Rc4::new(&hmac_res[..16]).map_err(|e| KeyvaultError::Rc4Init(e.to_string()))?;
             rc4.crypt(&mut self.data[0x10..])
                 .map_err(|e| KeyvaultError::Rc4Crypt(e.to_string()))?;
         }
@@ -309,7 +310,13 @@ impl Keyvault {
 
     pub fn get_console_id_alt(&self) -> String {
         gxcrypt::keyvault::KeyVault::parse(&self.data)
-            .map(|kv| kv.console_id().0.iter().map(|b| format!("{:02x}", b)).collect())
+            .map(|kv| {
+                kv.console_id()
+                    .0
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect()
+            })
             .unwrap_or_else(|_| "Unknown".to_string())
     }
 

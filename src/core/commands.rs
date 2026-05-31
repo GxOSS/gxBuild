@@ -34,10 +34,9 @@ pub fn handle_extract_all(
     all: bool,
     include_decrypted: bool,
 ) -> Result<(), SessionError> {
-    let nand = session
-        .active_nand
-        .as_mut()
-        .ok_or(SessionError::Other("No active NAND to extract from".to_string()))?;
+    let nand = session.active_nand.as_mut().ok_or(SessionError::Other(
+        "No active NAND to extract from".to_string(),
+    ))?;
 
     let _ = std::fs::create_dir_all(&output_dir);
 
@@ -109,7 +108,11 @@ pub fn handle_extract_all(
             // Try to decrypt
             let mut smc = crate::builder::chain::smc::RawSmc::new(nand.extra.smc.clone());
             smc.ensure_decrypted();
-            if smc.data.windows(b"Microsoft".len()).any(|w| w == b"Microsoft") {
+            if smc
+                .data
+                .windows(b"Microsoft".len())
+                .any(|w| w == b"Microsoft")
+            {
                 write_file("SMC_dec.bin", &smc.data)?;
             }
         }
@@ -144,7 +147,10 @@ pub fn handle_extract_all(
     if all {
         let image_path = output_dir.join("nandimage.bin");
         match std::fs::write(&image_path, &nand.image) {
-            Ok(_) => info!("[extract] Wrote full NAND image ({} bytes)", nand.image.len()),
+            Ok(_) => info!(
+                "[extract] Wrote full NAND image ({} bytes)",
+                nand.image.len()
+            ),
             Err(e) => warn!("[extract] Failed to write full image: {}", e),
         }
     }
@@ -168,7 +174,9 @@ pub fn handle_build(
     _target: u8,
 ) -> Result<(), SessionError> {
     // Get key before borrowing active_nand
-    let key = session.pending_key.ok_or(SessionError::Other("No CPU key available for build".to_string()))?;
+    let key = session.pending_key.ok_or(SessionError::Other(
+        "No CPU key available for build".to_string(),
+    ))?;
 
     // Sync and finalize before building
     session.sync_options_to_nand()?;
@@ -210,7 +218,9 @@ pub fn handle_build(
             Err(e) => Err(SessionError::Other(format!("Build failed: {}", e))),
         }
     } else {
-        Err(SessionError::Other("No active NAND loaded to build!".to_string()))
+        Err(SessionError::Other(
+            "No active NAND loaded to build!".to_string(),
+        ))
     }
 }
 
@@ -225,7 +235,10 @@ pub fn handle_parse_ini(
     _payloads: PathBuf,
     _smc: PathBuf,
 ) -> Result<(), SessionError> {
-    info!("[session] Parsing INI {:?} for target '{}'...", path, target);
+    info!(
+        "[session] Parsing INI {:?} for target '{}'...",
+        path, target
+    );
 
     match crate::core::data::xeini::parse_xe_ini(&path, &target) {
         Ok(ini) => {
@@ -266,11 +279,10 @@ pub fn handle_parse_image(
                     );
                     let active_key = key.or(session.pending_key);
 
-                    let flashfs = crate::builder::filesystem::flashfs::FlashFS::scan_physical_with_lba(
-                        &raw_data,
-                        &layout,
-                        &lba_map,
-                    );
+                    let flashfs =
+                        crate::builder::filesystem::flashfs::FlashFS::scan_physical_with_lba(
+                            &raw_data, &layout, &lba_map,
+                        );
                     let mobile = if session.options.nomobile.unwrap_or(false) {
                         crate::builder::filesystem::mobile::MobileStore::new()
                     } else {
@@ -293,13 +305,23 @@ pub fn handle_parse_image(
                             info!("[session] Successfully parsed NAND from {:?}", path);
                             Ok(())
                         }
-                        Err(e) => Err(SessionError::Other(format!("Failed to interpret clean NAND: {}", e))),
+                        Err(e) => Err(SessionError::Other(format!(
+                            "Failed to interpret clean NAND: {}",
+                            e
+                        ))),
                     }
                 }
-                Err(e) => Err(SessionError::Other(format!("Failed to pre-process NAND image: {}", e))),
+                Err(e) => Err(SessionError::Other(format!(
+                    "Failed to pre-process NAND image: {}",
+                    e
+                ))),
             }
         }
-        Err(e) => Err(SessionError::Other(format!("Failed to read image file '{}': {}", path.display(), e))),
+        Err(e) => Err(SessionError::Other(format!(
+            "Failed to read image file '{}': {}",
+            path.display(),
+            e
+        ))),
     }
 }
 
@@ -310,8 +332,13 @@ pub fn handle_apply_ecc(session: &mut Session, path: PathBuf) -> Result<(), Sess
         return Ok(());
     };
 
-    let ecc_raw = fs::read(&path)
-        .map_err(|e| SessionError::Other(format!("Failed to read ECC file '{}': {}", path.display(), e)))?;
+    let ecc_raw = fs::read(&path).map_err(|e| {
+        SessionError::Other(format!(
+            "Failed to read ECC file '{}': {}",
+            path.display(),
+            e
+        ))
+    })?;
 
     let (ecc_clean, ecc_layout, _ecc_lba) =
         crate::core::images::blocks::NandProcessor::preprocess_nand_with_lba_options(
@@ -353,10 +380,17 @@ pub fn handle_apply_ecc(session: &mut Session, path: PathBuf) -> Result<(), Sess
             nand.mobile = mobile;
             nand.corona_fs = corona_fs;
             session.active_nand = Some(nand);
-            info!("[session] Applied ECC from '{}' over {} bytes.", path.display(), write_len);
+            info!(
+                "[session] Applied ECC from '{}' over {} bytes.",
+                path.display(),
+                write_len
+            );
             Ok(())
         }
-        Err(e) => Err(SessionError::Other(format!("Applied ECC but failed to re-parse NAND: {}", e))),
+        Err(e) => Err(SessionError::Other(format!(
+            "Applied ECC but failed to re-parse NAND: {}",
+            e
+        ))),
     }
 }
 
@@ -388,7 +422,10 @@ pub fn handle_parse_keybin(session: &mut Session, key: Option<[u8; 16]>) {
 
 /// Parse FlashFS from folder
 pub fn handle_parse_flashfs(session: &mut Session, path: PathBuf) -> Result<(), SessionError> {
-    info!("[session] Preparing to build flashfs from folder {:?}...", path);
+    info!(
+        "[session] Preparing to build flashfs from folder {:?}...",
+        path
+    );
     if let Some(nand) = &mut session.active_nand {
         let fs_start: u16 = match nand.layout {
             crate::core::images::blocks::NandLayout::Bb => 0x1E0,
@@ -405,8 +442,11 @@ pub fn handle_parse_flashfs(session: &mut Session, path: PathBuf) -> Result<(), 
                 } else {
                     "single"
                 };
-                let (_, _, phys_fs_block) =
-                    crate::builder::types::LayoutCalculator::calculate(sb, chain_profile, nand.layout);
+                let (_, _, phys_fs_block) = crate::builder::types::LayoutCalculator::calculate(
+                    sb,
+                    chain_profile,
+                    nand.layout,
+                );
                 if phys_fs_block != 0 {
                     phys_fs_block as u16
                 } else {
@@ -431,7 +471,10 @@ pub fn handle_parse_flashfs(session: &mut Session, path: PathBuf) -> Result<(), 
                         &nand.flashfs.root,
                         &nand.mobile,
                     ) {
-                        return Err(SessionError::Other(format!("Corona metadata write failed: {}", e)));
+                        return Err(SessionError::Other(format!(
+                            "Corona metadata write failed: {}",
+                            e
+                        )));
                     }
                     if nand.flashfs.root.block_number >= 0 {
                         nand.header
@@ -464,12 +507,20 @@ pub fn handle_parse_patch(_session: &mut Session, path: PathBuf) -> Result<(), S
             );
             Ok(())
         }
-        Err(e) => Err(SessionError::Other(format!("Failed to parse patch binary: {}", e))),
+        Err(e) => Err(SessionError::Other(format!(
+            "Failed to parse patch binary: {}",
+            e
+        ))),
     }
 }
 
 /// Apply patch to active NAND
-pub fn handle_apply_patch(session: &mut Session, path: PathBuf, _ptype: u8, _target: Option<u8>) -> Result<(), SessionError> {
+pub fn handle_apply_patch(
+    session: &mut Session,
+    path: PathBuf,
+    _ptype: u8,
+    _target: Option<u8>,
+) -> Result<(), SessionError> {
     info!("[session] Applying patch {:?} (GXP Logic)...", path);
     if let Some(nand) = &mut session.active_nand {
         match parse_patch_binary(&path) {
@@ -565,12 +616,19 @@ pub fn handle_swap_bootloader(
             "smc" => {
                 nand.extra.smc = data;
             }
-            _ => return Err(SessionError::Other(format!("Unknown bootloader type: {}", bl_type))),
+            _ => {
+                return Err(SessionError::Other(format!(
+                    "Unknown bootloader type: {}",
+                    bl_type
+                )))
+            }
         }
         info!("[session] Bootloader {} swapped successfully.", bl_type);
         Ok(())
     } else {
-        Err(SessionError::Other("No active NAND loaded. Cannot swap bootloader.".to_string()))
+        Err(SessionError::Other(
+            "No active NAND loaded. Cannot swap bootloader.".to_string(),
+        ))
     }
 }
 
@@ -633,7 +691,10 @@ pub fn handle_compress() {
 }
 
 /// Apply SMC signature batch
-pub fn handle_apply_smc_signature(session: &mut Session, json: String) -> Result<usize, SessionError> {
+pub fn handle_apply_smc_signature(
+    session: &mut Session,
+    json: String,
+) -> Result<usize, SessionError> {
     session.apply_smc_signature_batch(&json)
 }
 
@@ -730,10 +791,16 @@ pub fn handle_update(session: &mut Session, path: PathBuf) -> Result<(), Session
                 .to_string_lossy()
                 .to_lowercase();
             session.pending_assets.insert(name.clone(), data);
-            info!("[session] Discovered asset '{}' added to session pool.", name);
+            info!(
+                "[session] Discovered asset '{}' added to session pool.",
+                name
+            );
             Ok(())
         }
-        Err(e) => Err(SessionError::Other(format!("Failed to read asset at {:?}: {}", path, e))),
+        Err(e) => Err(SessionError::Other(format!(
+            "Failed to read asset at {:?}: {}",
+            path, e
+        ))),
     }
 }
 
@@ -779,8 +846,11 @@ pub fn handle_finalize_flashfs(session: &mut Session) {
                 } else {
                     "single"
                 };
-                let (_, _, phys_fs_block) =
-                    crate::builder::types::LayoutCalculator::calculate(sb, chain_profile, nand.layout);
+                let (_, _, phys_fs_block) = crate::builder::types::LayoutCalculator::calculate(
+                    sb,
+                    chain_profile,
+                    nand.layout,
+                );
                 if phys_fs_block != 0 {
                     phys_fs_block as u16
                 } else {
@@ -795,7 +865,18 @@ pub fn handle_finalize_flashfs(session: &mut Session) {
                 &nand.image,
                 &nand.layout,
             );
-            nand.flashfs.root = new_fs.root;
+            if new_fs.root.block_number >= 0 {
+                nand.flashfs.root = new_fs.root;
+            } else {
+                // Re-scan found nothing — create a fresh root at fs_start
+                let mut root = crate::builder::filesystem::flashfs::FileSystemRoot::new(
+                    fs_start as i32,
+                    0,
+                    0x30,
+                );
+                root.create_defaults(nand.image.len(), &nand.layout, fs_start);
+                nand.flashfs.root = root;
+            }
         }
 
         // Apply security assets if needed
@@ -827,13 +908,16 @@ pub fn handle_extract_stfs(
     path: PathBuf,
     target_dir: PathBuf,
 ) -> Result<(), SessionError> {
-    info!("[extract] Extracting STFS package from {:?} to {:?}...", path, target_dir);
-    
+    info!(
+        "[extract] Extracting STFS package from {:?} to {:?}...",
+        path, target_dir
+    );
+
     let _ = std::fs::create_dir_all(&target_dir);
-    
+
     // For now, this is a placeholder implementation
     // In a full implementation, this would extract the STFS package
     warn!("[extract] STFS extraction not yet implemented");
-    
+
     Ok(())
 }

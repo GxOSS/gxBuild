@@ -22,11 +22,12 @@
 use log::{info, warn};
 use thiserror::Error;
 
-
 /// Errors that can occur during NAND block operations.
 #[derive(Error, Debug)]
 pub enum BlocksError {
-    #[error("[blocks] NAND layout detection failed: could not detect layout for image size 0x{size:x}")]
+    #[error(
+        "[blocks] NAND layout detection failed: could not detect layout for image size 0x{size:x}"
+    )]
     LayoutDetectionFailed { size: usize },
 
     #[error("[blocks] Invalid image size: {size} bytes (expected aligned to block size)")]
@@ -391,8 +392,6 @@ pub fn write_logical_data(
 }
 
 impl NandLayout {
-
-
     pub fn detect(image: &[u8]) -> Result<Self, BlocksError> {
         let len = image.len();
         let layout = match len {
@@ -622,7 +621,7 @@ pub fn add_spare(
                 let reserve_start = layout.reserve_start(image.len());
 
                 if val >= reserve_start {
-                    // Reserve region: leave spare fully erased (0xFF), no ECC
+                    page_slice.fill(0xFF);
                 } else if let Some(fs) = mobile_meta
                     .and_then(|m| m.get(&i))
                     .or_else(|| fs_meta.and_then(|m| m.get(&val)))
@@ -681,7 +680,7 @@ pub fn add_spare(
                 }
 
                 if val >= reserve_start {
-                    // Reserve region: leave spare fully erased (0xFF), no ECC
+                    page_slice.fill(0xFF);
                 } else if let Some(fs) = mobile_meta
                     .and_then(|m| m.get(&i))
                     .or_else(|| fs_meta.and_then(|m| m.get(&val)))
@@ -1388,7 +1387,7 @@ impl NandProcessor {
 
 #[cfg(test)]
 mod nand_layout_detection_tests {
-    use super::NandLayout;
+    use super::{add_spare, NandLayout, SpareMetaType};
 
     #[test]
     fn detects_partial_smallblock_logical_by_alignment() {
@@ -1427,5 +1426,39 @@ mod nand_layout_detection_tests {
         );
 
         assert_eq!(NandLayout::detect(&buf).unwrap(), NandLayout::Bb);
+    }
+
+    #[test]
+    fn keeps_smallblock_reserve_pages_erased() {
+        let image = vec![0u8; 0x1000000];
+        let physical = add_spare(
+            &image,
+            NandLayout::Sb,
+            SpareMetaType::MetaType1,
+            0,
+            None,
+            None,
+            None,
+        );
+        let offset = 0x3E0 * 32 * 0x210;
+
+        assert!(physical[offset..offset + 0x210].iter().all(|&b| b == 0xFF));
+    }
+
+    #[test]
+    fn keeps_bigblock_reserve_pages_erased() {
+        let image = vec![0u8; 0x4000000];
+        let physical = add_spare(
+            &image,
+            NandLayout::Bb,
+            SpareMetaType::MetaType2,
+            0,
+            None,
+            None,
+            None,
+        );
+        let offset = 0x1E0 * 256 * 0x210;
+
+        assert!(physical[offset..offset + 0x210].iter().all(|&b| b == 0xFF));
     }
 }

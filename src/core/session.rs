@@ -1339,7 +1339,8 @@ impl Session {
                     }
 
                     // Re-encrypt and store Keyvault
-                    kv.encrypt(&cpukey).map_err(|e| SessionError::Keyvault(e.to_string()))?;
+                    kv.encrypt(&cpukey)
+                        .map_err(|e| SessionError::Keyvault(e.to_string()))?;
                     nand.extra.keyvault = kv.data.clone();
                 }
             }
@@ -1467,9 +1468,11 @@ impl Session {
                                     &mut retry.data,
                                     &json,
                                 )
-                                .map_err(|e| SessionError::SmcAutopatch {
-                                    error: e.to_string(),
-                                    path: patch_path.clone(),
+                                .map_err(|e| {
+                                    SessionError::SmcAutopatch {
+                                        error: e.to_string(),
+                                        path: patch_path.clone(),
+                                    }
                                 })?;
                             if retry_count > 0 {
                                 smc.data = retry.data;
@@ -1528,10 +1531,11 @@ impl Session {
                 error: e.to_string(),
             })
         } else {
-            s.parse::<u16>().map_err(|e| SessionError::InvalidDecimalU16 {
-                value: s.to_string(),
-                error: e.to_string(),
-            })
+            s.parse::<u16>()
+                .map_err(|e| SessionError::InvalidDecimalU16 {
+                    value: s.to_string(),
+                    error: e.to_string(),
+                })
         }
     }
 
@@ -1658,13 +1662,13 @@ impl Session {
                 data,
                 payloads,
                 smc,
-            } => commands::handle_parse_ini(self, path, target, ini_base, common, data, payloads, smc),
+            } => commands::handle_parse_ini(
+                self, path, target, ini_base, common, data, payloads, smc,
+            ),
             InternalCommand::ParseImage { path, key } => {
                 commands::handle_parse_image(self, path, key)
             }
-            InternalCommand::ApplyEcc { path } => {
-                commands::handle_apply_ecc(self, path)
-            }
+            InternalCommand::ApplyEcc { path } => commands::handle_apply_ecc(self, path),
             InternalCommand::ParseKey { key } => {
                 commands::handle_parse_key(self, key);
                 Ok(())
@@ -1673,15 +1677,13 @@ impl Session {
                 commands::handle_parse_keybin(self, key);
                 Ok(())
             }
-            InternalCommand::ParseFlashfs { path } => {
-                commands::handle_parse_flashfs(self, path)
-            }
-            InternalCommand::ParsePatch { path } => {
-                commands::handle_parse_patch(self, path)
-            }
-            InternalCommand::ApplyPatch { path, ptype, target } => {
-                commands::handle_apply_patch(self, path, ptype, target)
-            }
+            InternalCommand::ParseFlashfs { path } => commands::handle_parse_flashfs(self, path),
+            InternalCommand::ParsePatch { path } => commands::handle_parse_patch(self, path),
+            InternalCommand::ApplyPatch {
+                path,
+                ptype,
+                target,
+            } => commands::handle_apply_patch(self, path, ptype, target),
             InternalCommand::ApplySmcSignature { json } => {
                 commands::handle_apply_smc_signature(self, json).map(|_| ())
             }
@@ -1710,9 +1712,7 @@ impl Session {
                 commands::handle_compress();
                 Ok(())
             }
-            InternalCommand::ApplyOptions => {
-                commands::handle_apply_options(self)
-            }
+            InternalCommand::ApplyOptions => commands::handle_apply_options(self),
             InternalCommand::SessionInit { base, common } => {
                 commands::handle_session_init(base, common);
                 Ok(())
@@ -1725,16 +1725,12 @@ impl Session {
                 commands::handle_session_delete(self, id);
                 Ok(())
             }
-            InternalCommand::SessionRun => {
-                commands::handle_session_run(self)
-            }
+            InternalCommand::SessionRun => commands::handle_session_run(self),
             InternalCommand::CreateImage { layout } => {
                 commands::handle_create_image(self, layout);
                 Ok(())
             }
-            InternalCommand::Update { path } => {
-                commands::handle_update(self, path)
-            }
+            InternalCommand::Update { path } => commands::handle_update(self, path),
             InternalCommand::FinalizeMobile => {
                 commands::handle_finalize_mobile(self);
                 Ok(())
@@ -1772,12 +1768,23 @@ impl Session {
                     )
                 }
                 _ => {
-                    let sb: crate::builder::types::SouthbridgeType = nand.options.motherboard.into();
-                    let chain_profile = if nand.bootloaders.cb_b.is_some() { "split" } else { "single" };
+                    let sb: crate::builder::types::SouthbridgeType =
+                        nand.options.motherboard.into();
+                    let chain_profile = if nand.bootloaders.cb_b.is_some() {
+                        "split"
+                    } else {
+                        "single"
+                    };
                     let (_, _, phys_fs_block) = crate::builder::types::LayoutCalculator::calculate(
-                        sb, chain_profile, nand.layout,
+                        sb,
+                        chain_profile,
+                        nand.layout,
                     );
-                    if phys_fs_block != 0 { phys_fs_block as u16 } else { 0x4E }
+                    if phys_fs_block != 0 {
+                        phys_fs_block as u16
+                    } else {
+                        0x4E
+                    }
                 }
             };
 
@@ -1786,10 +1793,27 @@ impl Session {
                     &nand.image,
                     &nand.layout,
                 );
-                nand.flashfs.root = new_fs.root;
+                if new_fs.root.block_number >= 0 {
+                    nand.flashfs.root = new_fs.root;
+                } else {
+                    let mut root = crate::builder::filesystem::flashfs::FileSystemRoot::new(
+                        fs_start as i32,
+                        0,
+                        0x30,
+                    );
+                    root.create_defaults(nand.image.len(), &nand.layout, fs_start);
+                    nand.flashfs.root = root;
+                }
             }
 
-            let sec_files = ["fcrt.bin", "crl.bin", "dae.bin", "extended.bin", "secdata.bin", "odd.bin"];
+            let sec_files = [
+                "fcrt.bin",
+                "crl.bin",
+                "dae.bin",
+                "extended.bin",
+                "secdata.bin",
+                "odd.bin",
+            ];
             for name in &sec_files {
                 if let Some(data) = self.security_assets.get(*name).cloned() {
                     nand.inject_security_file(name, &data, fs_start);
@@ -1802,7 +1826,10 @@ impl Session {
         if self.options.nomobile.unwrap_or(false) {
             return;
         }
-        let data_dir = self.data_dir.clone().unwrap_or_else(|| PathBuf::from("mydata"));
+        let data_dir = self
+            .data_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("mydata"));
         if let Some(nand) = &mut self.active_nand {
             nand.mobile.apply_data_folder_tier(&data_dir);
         }

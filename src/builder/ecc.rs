@@ -20,18 +20,17 @@
   3. This notice may not be removed or altered from any source distribution.
 */
 
-use crate::builder::chain::{
-    BootloaderHeader, XenonBlType, smc::RawSmc,
-    cb::BootloaderCb, sc::BootloaderSc, cd::BootloaderCd, ce::BootloaderCe,
-    cf::BootloaderCf, cg::BootloaderCg,
-};
-use crate::builder::types::{NandBootloaders, NandUpdate, NandExtra, NandHeader};
 use crate::builder::builder::{BuilderError, Result};
-use crate::core::images::blocks::NandLayout;
+use crate::builder::chain::{
+    cb::BootloaderCb, cd::BootloaderCd, ce::BootloaderCe, cf::BootloaderCf, cg::BootloaderCg,
+    sc::BootloaderSc, smc::RawSmc, BootloaderHeader, XenonBlType,
+};
+use crate::builder::types::{NandBootloaders, NandExtra, NandHeader, NandUpdate};
 use crate::core::images::blocks::ecc_verify_and_correct;
+use crate::core::images::blocks::NandLayout;
 use log::{info, warn};
-use zerocopy::FromBytes;
 use std::path::Path;
+use zerocopy::FromBytes;
 
 /// Strips ECC parity bytes from raw NAND pages.
 /// Supports 0x210 (small block) and 0x840 (large block) page formats.
@@ -106,7 +105,7 @@ impl EccSkeleton {
     /// Parse and extract components from an ECC image.
     pub fn from_ecc<P: AsRef<Path>>(ecc_path: P) -> Result<Self> {
         let ecc_raw = std::fs::read(ecc_path.as_ref())?;
-        
+
         let clean = strip_ecc(&ecc_raw);
         let layout = NandLayout::detect(&ecc_raw)
             .or_else(|_| NandLayout::detect(&clean))
@@ -150,13 +149,17 @@ impl EccSkeleton {
         }
 
         // Walk the bootloader chain
-        let cb_offset = skeleton.header.as_ref()
+        let cb_offset = skeleton
+            .header
+            .as_ref()
             .map(|h| h.cb_offset() as usize)
             .unwrap_or(0x8000);
-        let cf_ptr = skeleton.header.as_ref()
+        let cf_ptr = skeleton
+            .header
+            .as_ref()
             .map(|h| h.cf_offset.get() as usize)
             .unwrap_or(0);
-        
+
         skeleton.walk_chain(&clean, cb_offset, cf_ptr)?;
 
         // Scan for XeLL
@@ -177,19 +180,19 @@ impl EccSkeleton {
             if off.saturating_add(0x10) > clean.len() {
                 break;
             }
-            
+
             let blh = match BootloaderHeader::read_from_prefix(&clean[off..off + 0x10]) {
                 Ok((v, _)) => v,
                 Err(_) => break,
             };
-            
+
             let bl_size = blh.size.get() as usize;
             if bl_size < 0x10 || bl_size > 0x2000000 || off.saturating_add(bl_size) > clean.len() {
                 break;
             }
 
             let data = &clean[off..off + bl_size];
-            
+
             match blh.get_type() {
                 XenonBlType::CB => {
                     cb_seen += 1;
@@ -203,38 +206,71 @@ impl EccSkeleton {
                         && (blh.version.get() == 0x3C48 || bl_size == 0x400);
 
                     if is_single {
-                        self.bootloaders.cb = Some(BootloaderCb::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                        self.bootloaders.cb = Some(
+                            BootloaderCb::parse(data)
+                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                        );
                     } else if is_cba {
-                        self.bootloaders.cb_a = Some(BootloaderCb::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                        self.bootloaders.cb_a = Some(
+                            BootloaderCb::parse(data)
+                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                        );
                     } else if is_cbx {
-                        self.bootloaders.cb_x = Some(BootloaderCb::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                        self.bootloaders.cb_x = Some(
+                            BootloaderCb::parse(data)
+                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                        );
                         cbx_written = true;
                     } else {
-                        self.bootloaders.cb_b = Some(BootloaderCb::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                        self.bootloaders.cb_b = Some(
+                            BootloaderCb::parse(data)
+                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                        );
                     }
                 }
                 XenonBlType::SC => {
-                    self.bootloaders.sc = Some(BootloaderSc::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                    self.bootloaders.sc = Some(
+                        BootloaderSc::parse(data)
+                            .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                    );
                 }
                 XenonBlType::CD => {
-                    self.bootloaders.cd = Some(BootloaderCd::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                    self.bootloaders.cd = Some(
+                        BootloaderCd::parse(data)
+                            .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                    );
                 }
                 XenonBlType::CE => {
-                    self.bootloaders.ce = Some(BootloaderCe::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                    self.bootloaders.ce = Some(
+                        BootloaderCe::parse(data)
+                            .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                    );
                 }
                 XenonBlType::CF => {
                     if cf_count == 0 {
-                        self.update.cf_0 = Some(BootloaderCf::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                        self.update.cf_0 = Some(
+                            BootloaderCf::parse(data)
+                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                        );
                     } else {
-                        self.update.cf_1 = Some(BootloaderCf::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                        self.update.cf_1 = Some(
+                            BootloaderCf::parse(data)
+                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                        );
                     }
                     cf_count += 1;
                 }
                 XenonBlType::CG => {
                     if cg_count == 0 {
-                        self.update.cg_0 = Some(BootloaderCg::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                        self.update.cg_0 = Some(
+                            BootloaderCg::parse(data)
+                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                        );
                     } else {
-                        self.update.cg_1 = Some(BootloaderCg::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                        self.update.cg_1 = Some(
+                            BootloaderCg::parse(data)
+                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                        );
                     }
                     cg_count += 1;
                 }
@@ -261,14 +297,16 @@ impl EccSkeleton {
     fn scan_cbx(&mut self, clean: &[u8]) -> Result<()> {
         let scan_end = std::cmp::min(clean.len().saturating_sub(0x10), 0x20000);
         let mut scan_off = 0x8000usize;
-        
+
         while scan_off < scan_end {
-            if let Ok((blh, _)) = BootloaderHeader::read_from_prefix(&clean[scan_off..scan_off + 0x10]) {
+            if let Ok((blh, _)) =
+                BootloaderHeader::read_from_prefix(&clean[scan_off..scan_off + 0x10])
+            {
                 if blh.get_type() == XenonBlType::CB {
                     let bl_size = blh.size.get() as usize;
                     let flags = blh.flags.get();
                     let has_cba_flag = (flags & 0x800) == 0x800;
-                    
+
                     if has_cba_flag
                         && bl_size >= 0x10
                         && bl_size <= 0x800
@@ -276,14 +314,17 @@ impl EccSkeleton {
                         && (blh.version.get() == 0x3C48 || bl_size == 0x400)
                     {
                         let data = &clean[scan_off..scan_off + bl_size];
-                        self.bootloaders.cb_x = Some(BootloaderCb::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                        self.bootloaders.cb_x = Some(
+                            BootloaderCb::parse(data)
+                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                        );
                         break;
                     }
                 }
             }
             scan_off = scan_off.saturating_add(0x10);
         }
-        
+
         Ok(())
     }
 
@@ -299,71 +340,86 @@ impl EccSkeleton {
             if scan_off.saturating_add(0x10) > clean.len() {
                 break;
             }
-            
+
             let blh = match BootloaderHeader::read_from_prefix(&clean[scan_off..scan_off + 0x10]) {
                 Ok((v, _)) => v,
                 Err(_) => break,
             };
-            
+
             let bl_size = blh.size.get() as usize;
-            if bl_size < 0x10 || bl_size > 0x2000000 || scan_off.saturating_add(bl_size) > clean.len() {
+            if bl_size < 0x10
+                || bl_size > 0x2000000
+                || scan_off.saturating_add(bl_size) > clean.len()
+            {
                 break;
             }
-            
+
             let data = &clean[scan_off..scan_off + bl_size];
-            
+
             match blh.get_type() {
                 XenonBlType::CF => {
                     if *cf_count == 0 {
-                        self.update.cf_0 = Some(BootloaderCf::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                        self.update.cf_0 = Some(
+                            BootloaderCf::parse(data)
+                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                        );
                     } else {
-                        self.update.cf_1 = Some(BootloaderCf::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                        self.update.cf_1 = Some(
+                            BootloaderCf::parse(data)
+                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                        );
                     }
                     *cf_count += 1;
                 }
                 XenonBlType::CG => {
                     if *cg_count == 0 {
-                        self.update.cg_0 = Some(BootloaderCg::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                        self.update.cg_0 = Some(
+                            BootloaderCg::parse(data)
+                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                        );
                     } else {
-                        self.update.cg_1 = Some(BootloaderCg::parse(data).map_err(|e| BuilderError::Bootloader(e.to_string()))?);
+                        self.update.cg_1 = Some(
+                            BootloaderCg::parse(data)
+                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
+                        );
                     }
                     *cg_count += 1;
                 }
                 _ => break,
             }
-            
+
             scan_off = scan_off.saturating_add((bl_size + 0xF) & 0xFFFF_FFF0);
         }
-        
+
         Ok(())
     }
 
     /// Scan for XeLL payloads at known offsets.
     fn scan_xell(&mut self, clean: &[u8]) {
         const CANDIDATES: [usize; 5] = [0x70000, 0xC0000, 0x100000, 0x10_0000, 0xE2_A600];
-        
+
         for off in CANDIDATES {
             if off.saturating_add(4) > clean.len() {
                 continue;
             }
-            
+
             let magic = &clean[off..off + 4];
             if magic != b"XeLL" && magic != b"Xell" {
                 continue;
             }
-            
+
             let max_len = std::cmp::min(0x40000usize, clean.len() - off);
             let mut payload = clean[off..off + max_len].to_vec();
-            
+
             // Trim trailing 0xFF bytes
             while payload.last().is_some_and(|b| *b == 0xFF) {
                 payload.pop();
             }
-            
+
             if payload.len() < 0x1000 {
                 payload = clean[off..off + max_len].to_vec();
             }
-            
+
             self.xell.push((off as u32, payload));
         }
     }
@@ -447,21 +503,15 @@ impl EccSkeleton {
 pub fn extract_ecc<P: AsRef<Path>>(ecc_path: P, output_dir: P) -> Result<usize> {
     let skeleton = EccSkeleton::from_ecc(ecc_path)?;
     let count = skeleton.write_to_dir(output_dir)?;
-    
-    info!(
-        "[ecc] Extracted {} component(s) from ECC image",
-        count
-    );
-    
+
+    info!("[ecc] Extracted {} component(s) from ECC image", count);
+
     Ok(count)
 }
 
 /// Handle ECC extraction with full logging for CLI usage.
 /// This is the main entry point for the extract command when dealing with ECC images.
-pub fn handle_extract_ecc<P: AsRef<Path>>(
-    ecc_path: P,
-    output_dir: P,
-) -> Result<usize> {
+pub fn handle_extract_ecc<P: AsRef<Path>>(ecc_path: P, output_dir: P) -> Result<usize> {
     let ecc_path = ecc_path.as_ref();
     let output_dir = output_dir.as_ref();
 

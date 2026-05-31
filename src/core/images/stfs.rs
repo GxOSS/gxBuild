@@ -45,7 +45,10 @@ pub enum StfsContainerError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Failed to extract file '{name}': {source}")]
-    ExtractFailed { name: String, source: stfs::StfsError },
+    ExtractFailed {
+        name: String,
+        source: stfs::StfsError,
+    },
 }
 
 pub struct StfsContainer<'a> {

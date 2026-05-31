@@ -78,7 +78,10 @@ impl BootloaderCg {
 
     pub fn populate_metadata(&mut self) {
         if self.data.len() < 0x40 {
-            warn!("[builder] CG data too short for metadata: got 0x{:x}, need 0x40", self.data.len());
+            warn!(
+                "[builder] CG data too short for metadata: got 0x{:x}, need 0x40",
+                self.data.len()
+            );
             return;
         }
 
@@ -101,7 +104,10 @@ impl BootloaderCg {
     pub fn sync_metadata(&mut self) {
         if let Some(ref meta) = self.metadata {
             if self.data.len() < 0x40 {
-                warn!("[builder] CG data too short for sync_metadata: got 0x{:x}, need 0x40", self.data.len());
+                warn!(
+                    "[builder] CG data too short for sync_metadata: got 0x{:x}, need 0x40",
+                    self.data.len()
+                );
                 return;
             }
 

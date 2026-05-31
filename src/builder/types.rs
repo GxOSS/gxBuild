@@ -1,8 +1,8 @@
+use crate::core::images::blocks::{LbaMap, NandLayout};
+use crate::core::images::gxp::PatchRecord;
 use log::info;
 use zerocopy::byteorder::{BigEndian, I16, U16, U32};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
-use crate::core::images::blocks::{NandLayout, LbaMap};
-use crate::core::images::gxp::PatchRecord;
 
 pub const NAND_RETAIL_1BL_KEY: [u8; 16] = [
     0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA,
@@ -25,8 +25,6 @@ pub struct NandHeaderPrefix {
     pub entrypoint: U32<BigEndian>, // CB
     pub size: U32<BigEndian>,
 }
-
-
 
 #[derive(Debug, Clone)]
 pub struct PayloadEntry {
