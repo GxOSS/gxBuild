@@ -27,6 +27,8 @@ use crate::builder::ecc::handle_extract_ecc;
 use crate::core::interface::gxscript::GxScriptEngine;
 use crate::core::logger;
 use thiserror::Error;
+use super::handle_build;
+use super::handle_extract;
 
 #[derive(Error, Debug)]
 pub enum CliError {
