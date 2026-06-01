@@ -186,6 +186,7 @@ pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>> {
         .collect()
 }
 
+/*
 fn bl_try_identify(data: &[u8], parent_key: &[u8; 16]) -> Option<BlDiscovery> {
     if data.len() < 0x10 {
         return None;
@@ -269,6 +270,7 @@ where
     }
     None
 }
+*/
 
 #[derive(Clone)]
 pub struct NandSkeleton {
@@ -396,18 +398,17 @@ impl NandSkeleton {
 
     pub fn prepare_for_assembly(&mut self) -> Result<()> {
         if self.options.verbose {
-            info!("[pfa] === prepare_for_assembly START ===");
-            info!("[pfa] input_pd: {:02x?}", self.input_pd);
-            info!("[pfa] input_ldv_cb: {:?}", self.input_ldv_cb);
-            info!("[pfa] input_ldv_cf: {:?}", self.input_ldv_cf);
+            info!("[builder] input_pd: {:02x?}", self.input_pd);
+            info!("[builder] input_ldv_cb: {:?}", self.input_ldv_cb);
+            info!("[builder] input_ldv_cf: {:?}", self.input_ldv_cf);
             info!(
-                "[pfa] cb present: {}, cb_a present: {}, cb_b present: {}",
+                "[builder] cb present: {}, cb_a present: {}, cb_b present: {}",
                 self.bootloaders.cb.is_some(),
                 self.bootloaders.cb_a.is_some(),
                 self.bootloaders.cb_b.is_some()
             );
             info!(
-                "[pfa] cb meta: {}, cb_a meta: {}, cb_b meta: {}",
+                "[builder] cb meta: {}, cb_a meta: {}, cb_b meta: {}",
                 self.bootloaders
                     .cb
                     .as_ref()
@@ -422,7 +423,7 @@ impl NandSkeleton {
                     .map_or(false, |b| b.metadata.is_some())
             );
             info!(
-                "[pfa] cf_0 present: {}, cf_0 meta: {}",
+                "[builder] cf_0 present: {}, cf_0 meta: {}",
                 self.update.cf_0.is_some(),
                 self.update
                     .cf_0
@@ -435,47 +436,49 @@ impl NandSkeleton {
         if let Some(cpukey) = self.cpukey {
             if let Some(cb_b) = self.bootloaders.cb_b.as_mut() {
                 if cb_b.metadata.is_none() {
-                    info!("[pfa] CB_B has no metadata — decrypting");
+                    info!("[builder] CB_B has no metadata — decrypting");
                     if let Some(cb_a) = self.bootloaders.cb_a.as_ref() {
                         if let Some(cb_a_key_slice) = cb_a.data.get(0..16) {
                             let cb_a_key: [u8; 16] = cb_a_key_slice.try_into().unwrap();
                             let uses_new_crypto = (cb_a.header.flags.get() & 0x1000) != 0;
                             if uses_new_crypto {
                                 if let Err(e) = cb_b.decrypt_v2(&cb_a.header, &cb_a_key, &cpukey) {
-                                    warn!("[pfa] CB_B v2 decryption failed: {}", e);
+                                    warn!("[builder] CB_B v2 decryption failed: {}", e);
                                 }
                             } else {
                                 if let Err(e) = cb_b.decrypt_v1(&cb_a_key, &cpukey) {
-                                    warn!("[pfa] CB_B v1 decryption failed: {}", e);
+                                    warn!("[builder] CB_B v1 decryption failed: {}", e);
                                 }
                             }
                             cb_b.populate_metadata_unchecked();
                             if self.options.verbose {
                                 info!(
-                                    "[pfa] CB_B decrypted, meta: {:?}",
+                                    "[builder] CB_B decrypted, meta: {:?}",
                                     cb_b.metadata
                                         .as_ref()
                                         .map(|m| (m.lockdown_value, &m.pairing_data))
                                 );
                             }
                         } else {
-                            warn!("[pfa] CB_A is too small to derive CB_B key");
+                            warn!("[builder] CB_A is too small to derive CB_B key");
                         }
                     } else {
-                        warn!("[pfa] CB_B needs decrypt but CB_A is missing — cannot derive key");
+                        warn!(
+                            "[builder] CB_B needs decrypt but CB_A is missing — cannot derive key"
+                        );
                     }
                 }
             }
 
             if let Some(cb) = self.bootloaders.cb.as_mut() {
                 if cb.metadata.is_none() {
-                    info!("[pfa] CB (single) has no metadata — decrypting with 1BL key");
+                    info!("[builder] CB (single) has no metadata — decrypting with 1BL key");
                     if let Err(e) = cb.decrypt(&ONEBL_KEY) {
-                        warn!("[pfa] CB decryption failed: {}", e);
+                        warn!("[builder] CB decryption failed: {}", e);
                     }
                     cb.populate_metadata_unchecked();
                     info!(
-                        "[pfa] CB decrypted, meta: {:?}",
+                        "[builder] CB decrypted, meta: {:?}",
                         cb.metadata
                             .as_ref()
                             .map(|m| (m.lockdown_value, &m.pairing_data))
@@ -485,13 +488,13 @@ impl NandSkeleton {
 
             if let Some(cf) = self.update.cf_0.as_mut() {
                 if cf.metadata.is_none() {
-                    info!("[pfa] CF_0 has no metadata — decrypting with 1BL key");
+                    info!("[builder] CF_0 has no metadata — decrypting with 1BL key");
                     if let Err(e) = cf.decrypt(&ONEBL_KEY) {
-                        log::warn!("[pfa] CF_0 decryption failed: {}", e);
+                        log::warn!("[builder] CF_0 decryption failed: {}", e);
                     }
                     cf.populate_metadata_unchecked();
                     info!(
-                        "[pfa] CF_0 decrypted, meta: {:?}",
+                        "[builder] CF_0 decrypted, meta: {:?}",
                         cf.metadata
                             .as_ref()
                             .map(|m| (m.lockdown_value, &m.pairing_data))
@@ -501,13 +504,13 @@ impl NandSkeleton {
 
             if let Some(cf) = self.update.cf_1.as_mut() {
                 if cf.metadata.is_none() {
-                    info!("[pfa] CF_1 has no metadata — decrypting with 1BL key");
+                    info!("[builder] CF_1 has no metadata — decrypting with 1BL key");
                     if let Err(e) = cf.decrypt(&ONEBL_KEY) {
-                        log::warn!("[pfa] CF_1 decryption failed: {}", e);
+                        log::warn!("[builder] CF_1 decryption failed: {}", e);
                     }
                     cf.populate_metadata_unchecked();
                     info!(
-                        "[pfa] CF_1 decrypted, meta: {:?}",
+                        "[builder] CF_1 decrypted, meta: {:?}",
                         cf.metadata
                             .as_ref()
                             .map(|m| (m.lockdown_value, &m.pairing_data))
@@ -524,7 +527,7 @@ impl NandSkeleton {
             if let Some(ref mut cb_b) = self.bootloaders.cb_b {
                 if let Some(ref mut meta) = cb_b.metadata {
                     info!(
-                        "[pfa] Syncing PD {:02x?} -> CB_B (was {:02x?})",
+                        "[builder] Syncing PD {:02x?} -> CB_B (was {:02x?})",
                         pd_val, meta.pairing_data
                     );
                     meta.pairing_data = pd_val;
@@ -532,7 +535,7 @@ impl NandSkeleton {
             } else if let Some(ref mut cb) = self.bootloaders.cb {
                 if let Some(ref mut meta) = cb.metadata {
                     info!(
-                        "[pfa] Syncing PD {:02x?} -> CB (was {:02x?})",
+                        "[builder] Syncing PD {:02x?} -> CB (was {:02x?})",
                         pd_val, meta.pairing_data
                     );
                     meta.pairing_data = pd_val;
@@ -552,14 +555,14 @@ impl NandSkeleton {
                 meta.pairing_data = pd_val;
             }
         } else {
-            warn!("[pfa] input_pd is None — PD will not be synced");
+            warn!("[builder] input_pd is None — PD will not be synced");
         }
 
         if let Some(ldv) = ldv_cb {
             if let Some(ref mut cb_b) = self.bootloaders.cb_b {
                 if let Some(ref mut meta) = cb_b.metadata {
                     info!(
-                        "[pfa] Syncing LDV {} -> CB_B (was {})",
+                        "[builder] Syncing LDV {} -> CB_B (was {})",
                         ldv, meta.lockdown_value
                     );
                     meta.lockdown_value = ldv;
@@ -567,14 +570,14 @@ impl NandSkeleton {
             } else if let Some(ref mut cb) = self.bootloaders.cb {
                 if let Some(ref mut meta) = cb.metadata {
                     info!(
-                        "[pfa] Syncing LDV {} -> CB (was {})",
+                        "[builder] Syncing LDV {} -> CB (was {})",
                         ldv, meta.lockdown_value
                     );
                     meta.lockdown_value = ldv;
                 }
             }
         } else {
-            warn!("[pfa] input_ldv_cb is None — CB LDV will not be synced");
+            warn!("[builder] input_ldv_cb is None — CB LDV will not be synced");
         }
 
         if let Some(ldv) = ldv_cf {
@@ -632,7 +635,7 @@ impl NandSkeleton {
                             meta.cg_blocks_used = chain.len() as u16;
                             meta.cg_block_numbers = chain;
                             info!(
-                                "[pfa] Split CG0: {} blocks overflowed to sysupdate.xexp1",
+                                "[builder] Split CG0: {} blocks overflowed to sysupdate.xexp1",
                                 meta.cg_blocks_used
                             );
                         }
@@ -674,7 +677,7 @@ impl NandSkeleton {
                             meta.cg_blocks_used = chain.len() as u16;
                             meta.cg_block_numbers = chain;
                             info!(
-                                "[pfa] Split CG1: {} blocks overflowed to sysupdate.xexp2",
+                                "[builder] Split CG1: {} blocks overflowed to sysupdate.xexp2",
                                 meta.cg_blocks_used
                             );
                         }
@@ -721,1350 +724,6 @@ impl NandSkeleton {
             }
         }
         Ok(())
-    }
-
-    pub fn parse_clean_encrypted(
-        image: Vec<u8>,
-        layout: NandLayout,
-        flashfs: FlashFS,
-    ) -> Result<Self> {
-        let header_sz = std::mem::size_of::<NandHeader>();
-        if image.len() < header_sz {
-            return Err(BuilderError::ImageTooSmall {
-                got: image.len(),
-                need: header_sz,
-            });
-        }
-        let header = NandHeader::read_from_prefix(&image[..header_sz])
-            .map_err(|e| BuilderError::HeaderParse(e.to_string()))?
-            .0;
-        header.validate()?;
-        header.print_info();
-
-        let kv_addr = header.kv_addr.get() as usize;
-        let kv_size = header.kv_size.get() as usize;
-        if kv_size != 0x4000 {
-            return Err(BuilderError::InvalidKvSize { size: kv_size });
-        }
-        let kv_end = kv_addr
-            .checked_add(kv_size)
-            .ok_or_else(|| BuilderError::OffsetOverflow("KV".to_string()))?;
-        if kv_end > image.len() {
-            return Err(BuilderError::KvOutOfBounds {
-                offset: kv_addr,
-                size: kv_size,
-                image_len: image.len(),
-            });
-        }
-        info!(
-            "[builder] Extracting Keyvault (encrypted) (Addr: 0x{:X}, Size: 0x{:X})...",
-            kv_addr, kv_size
-        );
-        let kv = crate::builder::chain::kv::Keyvault::parse(&image[kv_addr..kv_addr + kv_size])
-            .map_err(|e| BuilderError::Build(e.to_string()))?;
-
-        let smc_offset = header.smc_boot_offset.get() as usize;
-        let smc_size = header.smc_boot_size.get() as usize;
-        let smc_end = smc_offset
-            .checked_add(smc_size)
-            .ok_or_else(|| BuilderError::OffsetOverflow("SMC".to_string()))?;
-        if smc_end > image.len() {
-            return Err(BuilderError::SmcOutOfBounds {
-                offset: smc_offset,
-                size: smc_size,
-                image_len: image.len(),
-            });
-        }
-        info!(
-            "[builder] Extracting SMC (encrypted) (Addr: 0x{:X}, Size: 0x{:X})...",
-            smc_offset, smc_size
-        );
-        let smc_data = image[smc_offset..smc_offset + smc_size].to_vec();
-
-        let config_offset = header.smc_config_offset.get() as usize;
-        let config_size = 0x10000;
-        let config_data = if config_offset > 0 && config_offset + config_size <= image.len() {
-            info!(
-                "[builder] Extracting SMC Config (Addr: 0x{:X}, Size: 0x{:X})...",
-                config_offset, config_size
-            );
-            image[config_offset..config_offset + config_size].to_vec()
-        } else {
-            let fallback_offset =
-                crate::builder::chain::smc::SmcConfig::get_scan_address(&layout) as usize;
-            if fallback_offset > 0 && fallback_offset + config_size <= image.len() {
-                let data = image[fallback_offset..fallback_offset + config_size].to_vec();
-                if data.iter().any(|&b| b != 0xFF) {
-                    info!("[builder] Extracting SMC Config (fallback) (Addr: 0x{:X}, Size: 0x{:X})...", fallback_offset, config_size);
-                    data
-                } else {
-                    Vec::new()
-                }
-            } else {
-                Vec::new()
-            }
-        };
-
-        let mut extra = NandExtra {
-            smc: smc_data,
-            smc_metadata: None,
-            smc_config: config_data,
-            keyvault: kv.data.clone(),
-            fcrt: None,
-            power_on_cause_a: 0,
-            power_on_cause_b: 0,
-        };
-
-        info!(
-            "[builder] Walking bootloader chain (encrypted) starting at offset 0x{:X}...",
-            header.cb_offset()
-        );
-        let (bootloaders, update) = Self::parse_bootloader_chain(
-            &image,
-            header.cb_offset() as usize,
-            header.cf_offset.get() as usize,
-            &flashfs,
-        )?;
-
-        let motherboard = MotherboardType::Unknown;
-
-        let mut final_flashfs = flashfs;
-        if matches!(layout, NandLayout::Sb | NandLayout::Xsb) && final_flashfs.root.block_number < 0
-        {
-            let sb = SouthbridgeType::from(motherboard);
-            let chain_profile = if bootloaders.cb_b.is_some() {
-                "split"
-            } else {
-                "single"
-            };
-            let (_fs_root_addr, _smc_cfg, phys_fs_block) =
-                LayoutCalculator::calculate(sb, chain_profile, layout);
-            if phys_fs_block > 0 {
-                final_flashfs.root.block_number = phys_fs_block as i32;
-                final_flashfs.root.read(&image, &layout);
-            }
-        }
-
-        let fcrt_from_nand = final_flashfs
-            .root
-            .entries
-            .iter()
-            .find(|e| !e.deleted && e.file_name.eq_ignore_ascii_case("fcrt.bin"))
-            .map(|e| e.data.clone());
-        if extra.fcrt.is_none() {
-            extra.fcrt = fcrt_from_nand;
-        }
-
-        let total_blocks = layout.total_blocks(image.len());
-        let lba_map = LbaMap::from_layout(layout, total_blocks);
-        let corona_fs = if layout == NandLayout::Emmc {
-            corona::load_slots(&image)
-        } else {
-            [Default::default(), Default::default()]
-        };
-
-        Ok(NandSkeleton {
-            cpukey: None,
-            image,
-            lba_map: Some(lba_map),
-            options: BuildOptions {
-                layout,
-                lba_map: LbaMap::from_layout(layout, total_blocks),
-                image_profile: (if bootloaders.cb_b.is_some() {
-                    "split"
-                } else {
-                    "single"
-                })
-                .to_string(),
-                build_mode: BuildMode::Normal,
-                motherboard,
-                gxunsafe: false,
-                verbose: false,
-                ..Default::default()
-            },
-            header,
-            extra,
-            kv: Some(kv),
-            bootloaders,
-            rebooter: None,
-            update,
-            rebooter_update: None,
-            payloads: Vec::new(),
-            flashfs: final_flashfs,
-            mobile: MobileStore::new(),
-            corona_fs,
-            layout,
-            total_blocks,
-            input_ldv_cb: None,
-            input_ldv_cf: None,
-            input_pd: None,
-        })
-    }
-
-    pub fn parse_encrypted_chain(&self) -> Result<(NandBootloaders, NandUpdate)> {
-        Self::parse_bootloader_chain(
-            &self.image,
-            self.header.cb_offset() as usize,
-            self.header.cf_offset.get() as usize,
-            &self.flashfs,
-        )
-    }
-
-    pub fn parse_clean(
-        image: Vec<u8>,
-        layout: NandLayout,
-        cpukey: [u8; 16],
-        flashfs: FlashFS,
-    ) -> Result<Self> {
-        let header_sz = std::mem::size_of::<NandHeader>();
-        if image.len() < header_sz {
-            return Err(BuilderError::ImageTooSmall {
-                got: image.len(),
-                need: header_sz,
-            });
-        }
-        let header = NandHeader::read_from_prefix(&image[..header_sz])
-            .map_err(|e| BuilderError::HeaderParse(e.to_string()))?
-            .0;
-        header.validate()?;
-        header.print_info();
-
-        let kv_addr = header.kv_addr.get() as usize;
-        let kv_size = header.kv_size.get() as usize;
-        if kv_size != 0x4000 {
-            return Err(BuilderError::InvalidKvSize { size: kv_size });
-        }
-        let kv_end = kv_addr
-            .checked_add(kv_size)
-            .ok_or_else(|| BuilderError::OffsetOverflow("KV".to_string()))?;
-        if kv_end > image.len() {
-            return Err(BuilderError::KvOutOfBounds {
-                offset: kv_addr,
-                size: kv_size,
-                image_len: image.len(),
-            });
-        }
-        info!(
-            "[builder] Extracting and decrypting Keyvault (Addr: 0x{:X}, Size: 0x{:X})...",
-            kv_addr, kv_size
-        );
-        let mut kv = crate::builder::chain::kv::Keyvault::parse(&image[kv_addr..kv_addr + kv_size])
-            .map_err(|e| BuilderError::Build(e.to_string()))?;
-        kv.decrypt(&cpukey)
-            .map_err(|e| BuilderError::Build(e.to_string()))?;
-
-        let smc_offset = header.smc_boot_offset.get() as usize;
-        let smc_size = header.smc_boot_size.get() as usize;
-        let smc_end = smc_offset
-            .checked_add(smc_size)
-            .ok_or_else(|| BuilderError::OffsetOverflow("SMC".to_string()))?;
-        if smc_end > image.len() {
-            return Err(BuilderError::SmcOutOfBounds {
-                offset: smc_offset,
-                size: smc_size,
-                image_len: image.len(),
-            });
-        }
-        info!(
-            "[builder] Extracting and decrypting SMC (Addr: 0x{:X}, Size: 0x{:X})...",
-            smc_offset, smc_size
-        );
-        let mut smc = crate::builder::chain::smc::RawSmc::new(
-            image[smc_offset..smc_offset + smc_size].to_vec(),
-        );
-        smc.decrypt();
-
-        let config_offset = header.smc_config_offset.get() as usize;
-        let config_size = 0x10000;
-
-        let config_data = if config_offset > 0 && config_offset + config_size <= image.len() {
-            info!(
-                "[builder] Extracting SMC Config (Addr: 0x{:X}, Size: 0x{:X})...",
-                config_offset, config_size
-            );
-            image[config_offset..config_offset + config_size].to_vec()
-        } else {
-            if config_offset > 0 {
-                warn!(
-                    "[builder] SMC Config offset 0x{:X} is out of bounds, trying fallback scan",
-                    config_offset
-                );
-            }
-            let fallback_offset =
-                crate::builder::chain::smc::SmcConfig::get_scan_address(&layout) as usize;
-            if fallback_offset > 0 && fallback_offset + config_size <= image.len() {
-                let data = image[fallback_offset..fallback_offset + config_size].to_vec();
-                if data.iter().any(|&b| b != 0xFF) {
-                    info!("[builder] Extracting SMC Config (fallback) (Addr: 0x{:X}, Size: 0x{:X})...", fallback_offset, config_size);
-                    data
-                } else {
-                    Vec::new()
-                }
-            } else {
-                Vec::new()
-            }
-        };
-
-        let mut extra = NandExtra {
-            smc: smc.data,
-            smc_metadata: smc.metadata.clone(),
-            smc_config: config_data,
-            keyvault: kv.data.clone(),
-            fcrt: None,
-            power_on_cause_a: 0,
-            power_on_cause_b: 0,
-        };
-
-        info!(
-            "[builder] Walking bootloader chain starting at offset 0x{:X}...",
-            header.cb_offset()
-        );
-        let (bl, mut update) = Self::parse_bootloader_chain(
-            &image,
-            header.cb_offset() as usize,
-            header.cf_offset.get() as usize,
-            &flashfs,
-        )?;
-
-        info!("[builder] Decrypting bootloader chain...");
-        let mut bl_mut = bl;
-        if bl_mut.cb_a.is_none() {
-            return Err(BuilderError::Build("Missing CB_A bootloader".to_string()));
-        }
-        if bl_mut.cd.is_none() {
-            return Err(BuilderError::Build("Missing CD bootloader".to_string()));
-        }
-        if bl_mut.ce.is_none() {
-            return Err(BuilderError::Build("Missing CE bootloader".to_string()));
-        }
-
-        decrypt_chain(
-            bl_mut.cb_a.as_mut().unwrap(),
-            bl_mut.cb_x.as_mut(),
-            bl_mut.cb_b.as_mut(),
-            bl_mut.sc.as_mut(),
-            bl_mut.cd.as_mut().unwrap(),
-            bl_mut.ce.as_mut().unwrap(),
-            update.cf_0.as_mut(),
-            update.cg_0.as_mut(),
-            update.cf_1.as_mut(),
-            update.cg_1.as_mut(),
-            &cpukey,
-        )?;
-        info!("[builder] Bootloader chain successfully decrypted.");
-
-        let motherboard = if extra.smc.len() > 0x100 {
-            MotherboardType::from_smc(extra.smc[0x100])
-        } else {
-            MotherboardType::Unknown
-        };
-
-        let mut final_flashfs = flashfs;
-        if matches!(layout, NandLayout::Sb | NandLayout::Xsb) && final_flashfs.root.block_number < 0
-        {
-            let sb = SouthbridgeType::from(motherboard);
-            let chain_profile = if bl_mut.cb_b.is_some() {
-                "split"
-            } else {
-                "single"
-            };
-            let (_fs_root_addr, _smc_cfg, phys_fs_block) =
-                LayoutCalculator::calculate(sb, chain_profile, layout);
-            if phys_fs_block > 0 {
-                final_flashfs.root.block_number = phys_fs_block as i32;
-                final_flashfs.root.read(&image, &layout);
-            }
-        }
-
-        let fcrt_from_nand = final_flashfs
-            .root
-            .entries
-            .iter()
-            .find(|e| !e.deleted && e.file_name.eq_ignore_ascii_case("fcrt.bin"))
-            .map(|e| e.data.clone());
-        if extra.fcrt.is_none() {
-            extra.fcrt = fcrt_from_nand;
-        }
-
-        let total_blocks = layout.total_blocks(image.len());
-        let lba_map = LbaMap::from_layout(layout, total_blocks);
-
-        let mut input_ldv_cb = None;
-        let mut input_pd = None;
-
-        if let Some(cb_b) = bl_mut.cb_b.as_ref() {
-            info!(
-                "[builder] Input CB_B: data_len={}, metadata={}",
-                cb_b.data.len(),
-                cb_b.metadata.is_some()
-            );
-            if let Some(meta) = &cb_b.metadata {
-                input_ldv_cb = Some(meta.lockdown_value);
-                input_pd = Some(meta.pairing_data);
-                info!("[builder] Captured input CB_B LDV={}", meta.lockdown_value);
-            } else {
-                warn!("[builder] Input CB_B metadata is None after decryption!");
-            }
-        } else if let Some(cb) = bl_mut.cb.as_ref() {
-            info!(
-                "[builder] Input CB (single): data_len={}, metadata={}",
-                cb.data.len(),
-                cb.metadata.is_some()
-            );
-            if let Some(meta) = &cb.metadata {
-                input_ldv_cb = Some(meta.lockdown_value);
-                input_pd = Some(meta.pairing_data);
-                info!("[builder] Captured input CB LDV={}", meta.lockdown_value);
-            } else {
-                warn!("[builder] Input CB metadata is None after decryption!");
-            }
-        }
-
-        if input_pd.is_none() {
-            input_pd = update
-                .cf_0
-                .as_ref()
-                .and_then(|cf| cf.metadata.as_ref().map(|m| m.pairing_data));
-        }
-
-        let ldv0 = update
-            .cf_0
-            .as_ref()
-            .and_then(|cf| cf.metadata.as_ref().map(|m| m.lockdown_value));
-        let ldv1 = update
-            .cf_1
-            .as_ref()
-            .and_then(|cf| cf.metadata.as_ref().map(|m| m.lockdown_value));
-        let input_ldv_cf = match (ldv0, ldv1) {
-            (Some(a), Some(b)) => Some(a.max(b)),
-            (Some(a), None) => Some(a),
-            (None, Some(b)) => Some(b),
-            _ => None,
-        };
-
-        let corona_fs = if layout == NandLayout::Emmc {
-            corona::load_slots(&image)
-        } else {
-            [Default::default(), Default::default()]
-        };
-
-        Ok(NandSkeleton {
-            cpukey: Some(cpukey),
-            image,
-            lba_map: Some(lba_map),
-            layout,
-            total_blocks,
-            options: BuildOptions {
-                layout,
-                lba_map: LbaMap::from_layout(layout, total_blocks),
-                image_profile: (if bl_mut.cb_b.is_some() {
-                    "split"
-                } else {
-                    "single"
-                })
-                .to_string(),
-                build_mode: BuildMode::Normal,
-                motherboard,
-                gxunsafe: false,
-                verbose: false,
-                ..Default::default()
-            },
-            header,
-            extra,
-            kv: Some(kv),
-            bootloaders: bl_mut,
-            rebooter: None,
-            update,
-            rebooter_update: None,
-            payloads: Vec::new(),
-            flashfs: final_flashfs,
-            mobile: MobileStore::new(),
-            corona_fs,
-            input_ldv_cb,
-            input_ldv_cf,
-            input_pd,
-        })
-    }
-
-    fn parse_bootloader_chain(
-        image: &[u8],
-        cb_offset: usize,
-        cf_ptr: usize,
-        flashfs: &crate::builder::filesystem::flashfs::FlashFS,
-    ) -> Result<(NandBootloaders, NandUpdate)> {
-        let mut bl = NandBootloaders {
-            cb: None,
-            cb_a: None,
-            cb_x: None,
-            cb_b: None,
-            sc: None,
-            cd: None,
-            ce: None,
-            khvpatch: None,
-            xell: None,
-        };
-        let mut update = NandUpdate {
-            cf_0: None,
-            cg_0: None,
-            cf_1: None,
-            cg_1: None,
-        };
-
-        let mut off = cb_offset;
-        let mut cf_count = 0;
-        let mut cg_count = 0;
-        let mut cb_seen = 0;
-        let mut cf0_offset = 0;
-        let mut cf1_offset = 0;
-
-        let fetch_cg_data = |off: usize,
-                             bl_size: usize,
-                             cg_count: usize,
-                             cf0_offset: usize,
-                             cf1_offset: usize,
-                             image: &[u8],
-                             flashfs: &FlashFS|
-         -> Vec<u8> {
-            let slot_start = if cg_count == 0 {
-                cf0_offset
-            } else {
-                cf1_offset
-            };
-            let mut read_size = bl_size;
-            if slot_start > 0 {
-                let max_slot_end = slot_start + 0x10000;
-                if off + read_size > max_slot_end {
-                    read_size = max_slot_end - off;
-                }
-            }
-            if off + read_size > image.len() {
-                return vec![];
-            }
-            let mut data = image[off..off + read_size].to_vec();
-            if data.len() < bl_size {
-                let sysupdate_name = if cg_count == 0 {
-                    "sysupdate.xexp1"
-                } else {
-                    "sysupdate.xexp2"
-                };
-                if let Some(entry) = flashfs
-                    .root
-                    .entries
-                    .iter()
-                    .find(|e| e.file_name.to_lowercase() == sysupdate_name)
-                {
-                    let needed = bl_size - data.len();
-                    data.extend_from_slice(&entry.data[..std::cmp::min(needed, entry.data.len())]);
-                } else {
-                    warn!(
-                        "[builder] CG{} overflows patch slot but {} not found in FlashFS!",
-                        cg_count + 1,
-                        sysupdate_name
-                    );
-                    if off + bl_size <= image.len() {
-                        data = image[off..off + bl_size].to_vec();
-                    }
-                }
-            }
-            data
-        };
-
-        // Primary chain walk
-        let mut iteration = 0;
-        while iteration < 16 {
-            iteration += 1;
-
-            if off + 0x10 > image.len() {
-                info!("[builder] End of bootloader chain at offset 0x{:08X}", off);
-                break;
-            }
-
-            let bl_header = match BootloaderHeader::read_from_prefix(&image[off..off + 0x10]) {
-                Ok((h, _)) => h,
-                Err(_) => {
-                    info!(
-                        "[builder] Invalid bootloader header at offset 0x{:08X}",
-                        off
-                    );
-                    break;
-                }
-            };
-
-            let bl_size = bl_header.size.get() as usize;
-            let bl_version = bl_header.version.get();
-
-            // Validate size bounds - if invalid, stop the chain walk gracefully
-            // and let CF_Ptr bridging handle the gap (common between CE and CF)
-            if bl_size < 0x10 || bl_size > 0x2000000 {
-                info!(
-                    "[builder] Invalid bootloader size at 0x{:08X} (0x{:X}), stopping chain walk",
-                    off, bl_size
-                );
-                break;
-            }
-            if off + bl_size > image.len() {
-                info!("[builder] Bootloader at 0x{:08X} extends past image end (size 0x{:X}), stopping", off, bl_size);
-                break;
-            }
-
-            let bl_data = image[off..off + bl_size].to_vec();
-            let aligned_size = (bl_size + 0xF) & 0xFFFFFFF0;
-
-            match bl_header.get_type() {
-                XenonBlType::CB => {
-                    cb_seen += 1;
-                    let flags = bl_header.flags.get();
-                    let has_cba_flag = (flags & 0x800) == 0x800;
-                    let is_single = cb_seen == 1 && !has_cba_flag;
-                    let is_cba = cb_seen == 1 && has_cba_flag;
-                    let is_cbx = cb_seen == 2
-                        && has_cba_flag                   // stub still carries 0x800
-                        && bl_size <= 0x500               // stub is very small (0x400 on Corona)
-                        && bl_header.pairing.get() == 0; // stub pairing word is 0x0000
-                                                         // CB_B = anything that doesn't match the above (cb_seen >= 2, or cb_seen == 3)
-
-                    if is_single {
-                        info!(
-                            "[builder] CB (single) at 0x{:08X} (v{}, 0x{:X} bytes)",
-                            off, bl_version, bl_size
-                        );
-                        bl.cb = Some(
-                            BootloaderCb::parse(&bl_data)
-                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
-                        );
-                    } else if is_cba {
-                        info!(
-                            "[builder] CB_A at 0x{:08X} (v{}, 0x{:X} bytes)",
-                            off, bl_version, bl_size
-                        );
-                        bl.cb_a = Some(
-                            BootloaderCb::parse(&bl_data)
-                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
-                        );
-                    } else if is_cbx {
-                        info!(
-                            "[builder] CB_X (RGH3 stub) at 0x{:08X} (v{}, 0x{:X} bytes)",
-                            off, bl_version, bl_size
-                        );
-                        bl.cb_x = Some(
-                            BootloaderCb::parse(&bl_data)
-                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
-                        );
-                    } else {
-                        info!(
-                            "[builder] CB_B at 0x{:08X} (v{}, 0x{:X} bytes)",
-                            off, bl_version, bl_size
-                        );
-                        bl.cb_b = Some(
-                            BootloaderCb::parse(&bl_data)
-                                .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
-                        );
-                    }
-                }
-                XenonBlType::SC => {
-                    info!(
-                        "[builder] SC at 0x{:08X} (v{}, 0x{:X} bytes)",
-                        off, bl_version, bl_size
-                    );
-                    bl.sc = Some(
-                        BootloaderSc::parse(&bl_data)
-                            .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
-                    );
-                }
-                XenonBlType::CD => {
-                    info!(
-                        "[builder] CD at 0x{:08X} (v{}, 0x{:X} bytes)",
-                        off, bl_version, bl_size
-                    );
-                    bl.cd = Some(
-                        BootloaderCd::parse(&bl_data)
-                            .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
-                    );
-                }
-                XenonBlType::CE => {
-                    info!(
-                        "[builder] CE at 0x{:08X} (v{}, 0x{:X} bytes)",
-                        off, bl_version, bl_size
-                    );
-                    bl.ce = Some(
-                        BootloaderCe::parse(&bl_data)
-                            .map_err(|e| BuilderError::Bootloader(e.to_string()))?,
-                    );
-                }
-                XenonBlType::CF => {
-                    info!(
-                        "[builder] CF_{} at 0x{:08X} (v{}, 0x{:X} bytes)",
-                        cf_count + 1,
-                        off,
-                        bl_version,
-                        bl_size
-                    );
-                    let cf = BootloaderCf::parse(&bl_data)
-                        .map_err(|e| BuilderError::Bootloader(e.to_string()))?;
-                    if cf_count == 0 {
-                        update.cf_0 = Some(cf);
-                        cf0_offset = off;
-                    } else {
-                        update.cf_1 = Some(cf);
-                        cf1_offset = off;
-                    }
-                    cf_count += 1;
-                }
-                XenonBlType::CG => {
-                    info!(
-                        "[builder] CG_{} at 0x{:08X} (v{}, 0x{:X} bytes)",
-                        cg_count + 1,
-                        off,
-                        bl_version,
-                        bl_size
-                    );
-                    let actual_data = fetch_cg_data(
-                        off, bl_size, cg_count, cf0_offset, cf1_offset, image, &flashfs,
-                    );
-                    if actual_data.is_empty() {
-                        info!("[builder] Failed to fetch complete CG data, stopping chain walk");
-                        break;
-                    }
-                    let cg = BootloaderCg::parse(&actual_data)
-                        .map_err(|e| BuilderError::Bootloader(e.to_string()))?;
-                    if cg_count == 0 {
-                        update.cg_0 = Some(cg);
-                    } else {
-                        update.cg_1 = Some(cg);
-                    }
-                    cg_count += 1;
-                }
-                _ => {
-                    // For zeropaired or unencryped payloads
-                    let zero_key = [0u8; 16];
-                    let probe_len = 0x100.min(image.len().saturating_sub(off));
-                    if probe_len >= 0x10 {
-                        if let Some(disco) =
-                            bl_try_identify(&image[off..off + probe_len], &zero_key)
-                        {
-                            info!(
-                                "[builder] Discovery probe at 0x{:08X}: {} v{} (0x{:X} bytes) via {} key — not a standard chain type, stopping",
-                                off, disco.magic, disco.version, disco.size, disco.key_source
-                            );
-                        } else {
-                            info!("[builder] Unknown bootloader type at 0x{:08X}, stopping chain walk", off);
-                        }
-                    } else {
-                        info!(
-                            "[builder] Unknown bootloader type at 0x{:08X}, stopping chain walk",
-                            off
-                        );
-                    }
-                    break;
-                }
-            }
-
-            off += aligned_size;
-        }
-
-        // if not found in primary walk, try CF_Ptr
-        if update.cf_0.is_none() && cf_ptr > 0 && cf_ptr < image.len() {
-            info!(
-                "[builder] CF not found after CE, trying CF_Ptr at 0x{:08X}",
-                cf_ptr
-            );
-            off = cf_ptr;
-
-            while off + 0x10 <= image.len() && cf_count < 2 {
-                let bl_header = match BootloaderHeader::read_from_prefix(&image[off..off + 0x10]) {
-                    Ok((h, _)) => h,
-                    Err(_) => break,
-                };
-
-                let bl_size = bl_header.size.get() as usize;
-                if bl_size < 0x10 || bl_size > 0x2000000 {
-                    break;
-                }
-                if off + bl_size > image.len() {
-                    break;
-                }
-
-                let bl_data = image[off..off + bl_size].to_vec();
-                let aligned_size = (bl_size + 0xF) & 0xFFFFFFF0;
-
-                match bl_header.get_type() {
-                    XenonBlType::CF => {
-                        info!(
-                            "[builder] CF_{} at 0x{:08X} (v{}, 0x{:X} bytes)",
-                            cf_count + 1,
-                            off,
-                            bl_header.version.get(),
-                            bl_size
-                        );
-                        let cf = BootloaderCf::parse(&bl_data)
-                            .map_err(|e| BuilderError::Bootloader(e.to_string()))?;
-                        if cf_count == 0 {
-                            update.cf_0 = Some(cf);
-                            cf0_offset = off;
-                        } else {
-                            update.cf_1 = Some(cf);
-                            cf1_offset = off;
-                        }
-                        cf_count += 1;
-                    }
-                    XenonBlType::CG => {
-                        info!(
-                            "[builder] CG_{} at 0x{:08X} (v{}, 0x{:X} bytes)",
-                            cg_count + 1,
-                            off,
-                            bl_header.version.get(),
-                            bl_size
-                        );
-                        let actual_data = fetch_cg_data(
-                            off, bl_size, cg_count, cf0_offset, cf1_offset, image, &flashfs,
-                        );
-                        if actual_data.is_empty() {
-                            info!("[builder] Failed to fetch complete CG data, stopping CF_Ptr chain walk");
-                            break;
-                        }
-                        let cg = BootloaderCg::parse(&actual_data)
-                            .map_err(|e| BuilderError::Bootloader(e.to_string()))?;
-                        if cg_count == 0 {
-                            update.cg_0 = Some(cg);
-                        } else {
-                            update.cg_1 = Some(cg);
-                        }
-                        cg_count += 1;
-                    }
-                    _ => break,
-                }
-
-                off += aligned_size;
-            }
-
-            // if CF still not found after direct CF_Ptr read, scan in 0x10-byte steps through a 128KB window
-            if update.cf_0.is_none() {
-                let zero_key = [0u8; 16];
-                let scan_range = 0x20000;
-                let image_ref: &[u8] = image;
-                let mut read_fn = |offset: usize, len: usize| -> Option<Vec<u8>> {
-                    if offset + len <= image_ref.len() {
-                        Some(image_ref[offset..offset + len].to_vec())
-                    } else {
-                        None
-                    }
-                };
-                if let Some((found_off, disco)) =
-                    bl_scan(&mut read_fn, cf_ptr, scan_range, &zero_key)
-                {
-                    info!(
-                        "[builder] Discovery scan found {} v{} at 0x{:08X} via {} key",
-                        disco.magic, disco.version, found_off, disco.key_source
-                    );
-                    off = found_off;
-                    while off + 0x10 <= image.len() && cf_count < 2 {
-                        let bl_header =
-                            match BootloaderHeader::read_from_prefix(&image[off..off + 0x10]) {
-                                Ok((h, _)) => h,
-                                Err(_) => break,
-                            };
-                        let bl_size = bl_header.size.get() as usize;
-                        if bl_size < 0x10 || bl_size > 0x2000000 {
-                            break;
-                        }
-                        if off + bl_size > image.len() {
-                            break;
-                        }
-                        let bl_data = image[off..off + bl_size].to_vec();
-                        let aligned_size = (bl_size + 0xF) & 0xFFFFFFF0;
-                        match bl_header.get_type() {
-                            XenonBlType::CF => {
-                                info!(
-                                    "[builder] CF_{} at 0x{:08X} (v{}, 0x{:X} bytes) [discovery]",
-                                    cf_count + 1,
-                                    off,
-                                    bl_header.version.get(),
-                                    bl_size
-                                );
-                                let cf = BootloaderCf::parse(&bl_data)
-                                    .map_err(|e| BuilderError::Bootloader(e.to_string()))?;
-                                if cf_count == 0 {
-                                    update.cf_0 = Some(cf);
-                                    cf0_offset = off;
-                                } else {
-                                    update.cf_1 = Some(cf);
-                                    cf1_offset = off;
-                                }
-                                cf_count += 1;
-                            }
-                            XenonBlType::CG => {
-                                info!(
-                                    "[builder] CG_{} at 0x{:08X} (v{}, 0x{:X} bytes) [discovery]",
-                                    cg_count + 1,
-                                    off,
-                                    bl_header.version.get(),
-                                    bl_size
-                                );
-                                let actual_data = fetch_cg_data(
-                                    off, bl_size, cg_count, cf0_offset, cf1_offset, image, &flashfs,
-                                );
-                                if actual_data.is_empty() {
-                                    info!("[builder] Failed to fetch complete CG data, stopping discovery scan");
-                                    break;
-                                }
-                                let cg = BootloaderCg::parse(&actual_data)
-                                    .map_err(|e| BuilderError::Bootloader(e.to_string()))?;
-                                if cg_count == 0 {
-                                    update.cg_0 = Some(cg);
-                                } else {
-                                    update.cg_1 = Some(cg);
-                                }
-                                cg_count += 1;
-                            }
-                            _ => break,
-                        }
-                        off += aligned_size;
-                    }
-                } else {
-                    info!(
-                        "[builder] Discovery scan: no CF found in 0x{:08X}..0x{:08X}",
-                        cf_ptr,
-                        cf_ptr + scan_range
-                    );
-                }
-            }
-        }
-
-        Ok((bl, update))
-    }
-
-    /// Assembles a JTAG rebooter image with two bootloader chains.
-    /// Chain 0 (Base) starts at 0x8000.
-    /// Chain 1 (Update) starts at 0x20000.
-    pub fn assemble_rebooter(&mut self) -> Result<Vec<u8>> {
-        let layout = &self.layout;
-        let expected_size = self.total_blocks * layout.logical_pages_per_block() * 0x200;
-
-        let mut logical_image = self.image.clone();
-        if logical_image.len() != expected_size {
-            logical_image.resize(expected_size, 0xFF);
-        }
-
-        let mut header = self.header.clone();
-
-        let smc_len = self.extra.smc.len();
-        let target_smc_offset = match layout {
-            NandLayout::Emmc => 0x800,
-            _ => 0x1000,
-        };
-        if smc_len > 0 {
-            if target_smc_offset + smc_len > logical_image.len() {
-                return Err(BuilderError::SmcOutOfBounds {
-                    offset: target_smc_offset,
-                    size: smc_len,
-                    image_len: logical_image.len(),
-                });
-            }
-            logical_image[target_smc_offset..target_smc_offset + smc_len]
-                .copy_from_slice(&self.extra.smc);
-        }
-
-        let kv_offset = 0x4000usize;
-        if !self.extra.keyvault.is_empty() {
-            if kv_offset + self.extra.keyvault.len() > logical_image.len() {
-                return Err(BuilderError::KvOutOfBounds {
-                    offset: kv_offset,
-                    size: self.extra.keyvault.len(),
-                    image_len: logical_image.len(),
-                });
-            }
-            logical_image[kv_offset..kv_offset + self.extra.keyvault.len()]
-                .copy_from_slice(&self.extra.keyvault);
-        }
-
-        let mut curr_off = 0x8000;
-        let mut bl_stages = Vec::new();
-        if let Some(cb) = &self.bootloaders.cb_a {
-            bl_stages.push(("CB_A", cb.serialize()));
-        } else if let Some(cb) = &self.bootloaders.cb {
-            bl_stages.push(("CB", cb.serialize()));
-        }
-
-        if let Some(cbb) = &self.bootloaders.cb_b {
-            bl_stages.push(("CB_B", cbb.serialize()));
-        }
-        if let Some(cd) = &self.bootloaders.cd {
-            bl_stages.push(("CD", cd.serialize()));
-        }
-
-        for (name, mut data) in bl_stages {
-            let declared_size = if data.len() >= 16 {
-                let h = BootloaderHeader::read_from_prefix(&data)
-                    .map(|(h, _)| h.size.get())
-                    .unwrap_or(0);
-                h as usize
-            } else {
-                0
-            };
-            let aligned = (declared_size + 0xF) & !0xF;
-            if aligned > 0 && data.len() != aligned {
-                if data.len() < aligned {
-                    data.resize(aligned, 0);
-                } else if data.len() >= 0x10 {
-                    let new_len = data.len() as u32;
-                    data[0x0C..0x10].copy_from_slice(&new_len.to_be_bytes());
-                }
-            }
-
-            if curr_off + data.len() > logical_image.len() {
-                return Err(BuilderError::BootchainOverflow {
-                    stage: format!("Chain 0 {}", name),
-                    offset: curr_off,
-                });
-            }
-            info!(
-                "[builder] JTAG Chain 0: Serializing {} at 0x{:08X}",
-                name, curr_off
-            );
-            logical_image[curr_off..curr_off + data.len()].copy_from_slice(&data);
-            curr_off += data.len();
-        }
-
-        let rebooter = self.rebooter.as_ref().ok_or_else(|| {
-            BuilderError::Build("Rebooter chain (Chain 1) is missing for JTAG build".to_string())
-        })?;
-        curr_off = 0x20000;
-        let mut update_stages = Vec::new();
-        if let Some(cb) = &rebooter.cb {
-            update_stages.push(("CB", cb.serialize()));
-        }
-        if let Some(cd) = &rebooter.cd {
-            update_stages.push(("CD", cd.serialize()));
-        }
-        if let Some(ce) = &rebooter.ce {
-            update_stages.push(("CE", ce.serialize()));
-        }
-
-        for (name, mut data) in update_stages {
-            let declared_size = if data.len() >= 16 {
-                let h = BootloaderHeader::read_from_prefix(&data)
-                    .map(|(h, _)| h.size.get())
-                    .unwrap_or(0);
-                h as usize
-            } else {
-                0
-            };
-            let aligned = (declared_size + 0xF) & !0xF;
-            if aligned > 0 && data.len() != aligned {
-                if data.len() < aligned {
-                    data.resize(aligned, 0);
-                } else if data.len() >= 0x10 {
-                    let new_len = data.len() as u32;
-                    data[0x0C..0x10].copy_from_slice(&new_len.to_be_bytes());
-                }
-            }
-
-            if curr_off + data.len() > logical_image.len() {
-                return Err(BuilderError::BootchainOverflow {
-                    stage: format!("Chain 1 {}", name),
-                    offset: curr_off,
-                });
-            }
-            info!(
-                "[builder] JTAG Chain 1: Serializing {} at 0x{:08X}",
-                name, curr_off
-            );
-            logical_image[curr_off..curr_off + data.len()].copy_from_slice(&data);
-            curr_off += data.len();
-        }
-
-        let target_cf_offset = (curr_off + 0xFFFF) & !0xFFFF; // Align to 64KB for JTAG CF/CG
-        header.cf_offset.set(target_cf_offset as u32);
-        header.prefix.size.set(target_cf_offset as u32);
-
-        let mut curr_update = target_cf_offset;
-
-        let cf0 = self.update.cf_0.as_ref();
-        let cg0 = self.update.cg_0.as_ref();
-
-        if let Some(cf) = cf0.cloned() {
-            let data = cf.serialize();
-            logical_image[curr_update..curr_update + data.len()].copy_from_slice(&data);
-            curr_update += data.len();
-
-            if let Some(cg) = cg0.cloned() {
-                let cg_off = (curr_update + 0xF) & !0xF;
-                let data = cg.serialize();
-                logical_image[cg_off..cg_off + data.len()].copy_from_slice(&data);
-            }
-
-            let slot1_start = target_cf_offset + 0x10000;
-            let slot1_end = (slot1_start + 0x10000).min(logical_image.len());
-            if slot1_start < logical_image.len() {
-                logical_image[slot1_start..slot1_end].fill(0xFF);
-            }
-        }
-
-        let chain_profile = if self.bootloaders.cb_b.is_some() {
-            "split"
-        } else {
-            "single"
-        };
-        let (fs_addr_calc, smc_config_offset, phys_fs_block) = LayoutCalculator::calculate(
-            SouthbridgeType::from(self.options.motherboard),
-            chain_profile,
-            *layout,
-        );
-        let mut target_fs_block = phys_fs_block as i32;
-        if !self.flashfs.root.entries.is_empty()
-            && matches!(layout, NandLayout::Sb | NandLayout::Xsb | NandLayout::Bb)
-            && target_fs_block >= 0
-        {
-            let page_size = 0x200usize;
-            let pages_per_block = layout.logical_pages_per_block();
-            let logical_block_size = pages_per_block * page_size;
-
-            let bm_count = page_size / 2;
-            let fn_count = page_size / 0x20;
-
-            let non_deleted_count = self
-                .flashfs
-                .root
-                .entries
-                .iter()
-                .filter(|e| !e.deleted)
-                .count();
-            let required_data_blocks: usize = self
-                .flashfs
-                .root
-                .entries
-                .iter()
-                .filter(|e| !e.deleted)
-                .map(|e| {
-                    let len = e.data.len().max(1);
-                    (len + logical_block_size - 1) / logical_block_size
-                })
-                .sum();
-
-            let max_entries_per_root_block = ((pages_per_block + 1) / 2) * fn_count;
-            let max_bmap_per_root_block = (pages_per_block / 2) * bm_count;
-            let total_blocks = layout.total_blocks(logical_image.len());
-
-            let root_blocks_needed_for_entries = (non_deleted_count + max_entries_per_root_block
-                - 1)
-                / max_entries_per_root_block.max(1);
-            let root_blocks_needed_for_bmap =
-                (total_blocks + max_bmap_per_root_block - 1) / max_bmap_per_root_block.max(1);
-            let root_blocks_needed = root_blocks_needed_for_entries
-                .max(root_blocks_needed_for_bmap)
-                .max(1);
-
-            let reserve_start = layout.reserve_start(logical_image.len());
-            let config_start = reserve_start.saturating_sub(4);
-            let available_blocks = config_start.saturating_sub(target_fs_block as usize);
-
-            let required_total_blocks = required_data_blocks + root_blocks_needed;
-
-            if required_total_blocks > available_blocks {
-                let patch_slots = if self.options.dualpatchslots || self.update.cf_1.is_some() {
-                    2usize
-                } else {
-                    1usize
-                };
-                let patch_slot_size = patch_slots.saturating_mul(0x10000);
-                let sysupdate_end = (target_cf_offset as usize).saturating_add(patch_slot_size);
-                let min_fs_block =
-                    ((sysupdate_end + logical_block_size - 1) / logical_block_size) as i32;
-                let desired_start =
-                    (config_start as i32).saturating_sub(required_total_blocks as i32);
-                let new_start = desired_start.max(min_fs_block).max(4);
-
-                if new_start < target_fs_block {
-                    warn!(
-                        "[builder] FlashFS target block {} leaves insufficient space (need {} blocks, have {}); moving start to {}",
-                        target_fs_block, required_total_blocks, available_blocks, new_start
-                    );
-                    target_fs_block = new_start;
-                }
-            }
-        }
-
-        header.smc_config_offset.set(smc_config_offset);
-
-        let patch_slot_size: u32 = 0x10000;
-        header.fs_addr.set(patch_slot_size);
-
-        let has_vfuses = self
-            .payloads
-            .iter()
-            .any(|p| p.description.eq_ignore_ascii_case("virtual fuses"));
-        let patch_stream_start = (header.cf_offset.get() as usize)
-            .saturating_add(patch_slot_size as usize)
-            .saturating_add(if has_vfuses { 0x60 } else { 0x10 });
-
-        let mut khv_len = 0usize;
-        if let Some(records) = &self.bootloaders.khvpatch {
-            if !self.options.khv_apply {
-                let patch_stream = crate::core::images::gxp::serialize_records(records);
-                khv_len = patch_stream.len();
-                if patch_stream_start + khv_len > logical_image.len() {
-                    return Err(BuilderError::KhvOverflow {
-                        offset: patch_stream_start,
-                        need: khv_len,
-                    });
-                }
-                logical_image[patch_stream_start..patch_stream_start + khv_len]
-                    .copy_from_slice(&patch_stream);
-                info!(
-                    "[builder] Injected KHV patch stream at 0x{:08X} (Size: 0x{:X})",
-                    patch_stream_start, khv_len
-                );
-
-                let logical_block_size = layout.logical_pages_per_block() * 0x200;
-                let start_block = patch_stream_start / logical_block_size;
-                let end_block =
-                    (patch_stream_start + khv_len + logical_block_size - 1) / logical_block_size;
-                for b in start_block..end_block {
-                    if b < self.flashfs.root.block_map.len() {
-                        self.flashfs.root.block_map[b] = 0x1FFB;
-                    }
-                }
-            }
-        }
-
-        let mut final_payloads = self.payloads.clone();
-        let mut current_payload_offset = (patch_stream_start + khv_len + 0x1F) & !0x1F;
-        let mut payload_list = PayloadList::new();
-
-        for payload in &mut final_payloads {
-            let addr = if let Some(fixed) = payload.fixed_address {
-                fixed as usize
-            } else {
-                current_payload_offset
-            };
-
-            payload.address = addr as u32;
-            payload_list.entries.push(payload.clone());
-
-            // Reserve blocks in FlashFS to prevent overwriting
-            let logical_block_size = layout.logical_pages_per_block() * 0x200;
-            let start_block = addr / logical_block_size;
-            let end_block =
-                (addr + payload.data.len() + logical_block_size - 1) / logical_block_size;
-
-            for b in start_block..end_block {
-                if b < self.flashfs.root.block_map.len() {
-                    self.flashfs.root.block_map[b] = 0x1FFB; // Reserved
-                }
-            }
-
-            if payload.fixed_address.is_none() {
-                current_payload_offset =
-                    (current_payload_offset + payload.data.len() + 0x1F) & !0x1F;
-            }
-        }
-
-        if !payload_list.entries.is_empty() {
-            header.payload_indicator.set(0x1337);
-
-            // Write the Payload Table at 0x100
-            let table_data = payload_list.serialize();
-            if table_data.len() > 0x100 {
-                warn!("[builder] Payload Table at 0x100 exceeds 256 bytes! This may overwrite other header data.");
-            }
-            let table_len = table_data.len().min(0x100);
-            logical_image[0x100..0x100 + table_len].copy_from_slice(&table_data[..table_len]);
-
-            // Write payload data
-            for payload in &payload_list.entries {
-                let addr = payload.address as usize;
-                if addr + payload.data.len() > logical_image.len() {
-                    logical_image.resize(addr + payload.data.len(), 0xFF);
-                }
-                logical_image[addr..addr + payload.data.len()].copy_from_slice(&payload.data);
-                info!(
-                    "[builder] Injected payload '{}' at 0x{:08X} (Size: 0x{:X})",
-                    payload.description,
-                    addr,
-                    payload.data.len()
-                );
-            }
-        }
-
-        let fs_addr_effective = if target_fs_block >= 0 {
-            (target_fs_block as u32) * (layout.logical_pages_per_block() as u32) * 0x200
-        } else {
-            fs_addr_calc
-        };
-
-        if !self.flashfs.root.entries.is_empty() && fs_addr_effective > 0 {
-            let mut root = self.flashfs.root.clone();
-            let logical_block_size = layout.logical_pages_per_block() * 0x200;
-            root.block_number = (fs_addr_effective as usize / logical_block_size) as i32;
-            root.create_defaults(logical_image.len(), layout, root.block_number as u16);
-            for e in root.entries.iter_mut() {
-                if !e.deleted {
-                    e.block_number = 0;
-                    e.page_number = 0;
-                }
-            }
-            for payload in &payload_list.entries {
-                let addr = payload.address as usize;
-                let start_block = addr / logical_block_size;
-                let end_block =
-                    (addr + payload.data.len() + logical_block_size - 1) / logical_block_size;
-                for b in start_block..end_block {
-                    if b < root.block_map.len() {
-                        root.block_map[b] = 0x1FFB;
-                    }
-                }
-            }
-
-            root.write_logical(&mut logical_image, layout)?;
-            let fs_root_block = root.serialize_logical(*layout);
-            logical_image
-                [fs_addr_effective as usize..fs_addr_effective as usize + fs_root_block.len()]
-                .copy_from_slice(&fs_root_block);
-            self.flashfs.root = root;
-        }
-
-        header.smc_boot_offset.set(target_smc_offset as u32);
-        header.smc_boot_size.set(smc_len as u32);
-        header.kv_addr.set(kv_offset as u32);
-        header.kv_size.set(self.extra.keyvault.len() as u32);
-
-        // Update prefix entrypoint to CB_A in Chain 0
-        header.prefix.entrypoint.set(0x8000);
-
-        header.apply_xebuild_header_flags(&self.options, &self.extra);
-
-        let header_bytes = zerocopy::IntoBytes::as_bytes(&header);
-        logical_image[..header_bytes.len()].copy_from_slice(header_bytes);
-
-        if self.options.image_profile == "onef" {
-            if let Some(xell) = self.bootloaders.xell.as_ref() {
-                let xell_offset = xell
-                    .get_target_offset(self.layout, &self.options.image_profile, false, 0, 0x10000)
-                    .map_err(|e| BuilderError::XellOffset(e.to_string()))?
-                    as usize;
-                info!(
-                    "[builder] JTAG Chain 1: Injecting XeLL-1F payload at 0x{:08X}",
-                    xell_offset
-                );
-                logical_image[xell_offset..xell_offset + xell.data.len()]
-                    .copy_from_slice(&xell.data);
-            }
-        } else if let Some(rebooter) = &self.rebooter {
-            if let Some(xell) = rebooter.xell.as_ref() {
-                let xell_offset = xell
-                    .get_target_offset(self.layout, &self.options.image_profile, false, 0, 0x10000)
-                    .map_err(|e| BuilderError::XellOffset(e.to_string()))?
-                    as usize;
-                info!(
-                    "[builder] JTAG Chain 1: Injecting XeLL-2F payload at 0x{:08X}",
-                    xell_offset
-                );
-                logical_image[xell_offset..xell_offset + xell.data.len()]
-                    .copy_from_slice(&xell.data);
-            }
-        }
-
-        Ok(logical_image)
     }
 
     pub fn assemble_logical(&mut self) -> Result<Vec<u8>> {
@@ -2849,6 +1508,7 @@ impl NandSkeleton {
         Ok(logical_image)
     }
 
+    /*
     pub fn assemble_xell_image(&self) -> Result<Vec<u8>> {
         let layout = &self.options.layout;
         let image_size = 0x140000;
@@ -2980,6 +1640,7 @@ impl NandSkeleton {
 
         Ok(logical_image)
     }
+    */
 
     pub fn build(&self, cpukey: [u8; 16]) -> Result<Vec<u8>> {
         let mut skel = self.clone();

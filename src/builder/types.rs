@@ -108,6 +108,7 @@ impl NandHeader {
         self.prefix.entrypoint.get()
     }
 
+    /*
     pub fn print_info(&self) {
         info!(
             "[builder] NAND magic:       0x{:04X}",
@@ -132,7 +133,7 @@ impl NandHeader {
             self.smc_boot_offset.get()
         );
     }
-
+    */
     pub fn apply_xebuild_header_flags(&mut self, options: &BuildOptions, extra: &NandExtra) {
         let profile = options.image_profile.as_str();
         let is_devkit = profile == "devkit" || matches!(options.build_mode, BuildMode::Devkit);
@@ -177,7 +178,7 @@ pub struct NandBootloaders {
     pub sc: Option<crate::builder::chain::sc::BootloaderSc>,
     pub cd: Option<crate::builder::chain::cd::BootloaderCd>,
     pub ce: Option<crate::builder::chain::ce::BootloaderCe>,
-    pub khvpatch: Option<Vec<PatchRecord>>,
+    //  pub khvpatch: Option<Vec<PatchRecord>>,
     pub xell: Option<crate::builder::chain::xell::Xell>,
 }
 
@@ -194,7 +195,7 @@ impl NandBootloaders {
         self.sc = None;
         self.cd = None;
         self.ce = None;
-        self.khvpatch = None;
+        //      self.khvpatch = None;
         self.xell = None;
     }
 }
@@ -209,7 +210,7 @@ impl Default for NandBootloaders {
             sc: None,
             cd: None,
             ce: None,
-            khvpatch: None,
+            //          khvpatch: None,
             xell: None,
         }
     }
@@ -250,8 +251,8 @@ pub struct NandExtra {
     pub smc_config: Vec<u8>,
     pub keyvault: Vec<u8>,
     pub fcrt: Option<Vec<u8>>,
-    pub power_on_cause_a: u8,
-    pub power_on_cause_b: u8,
+    //  pub power_on_cause_a: u8,
+    //  pub power_on_cause_b: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -302,55 +303,52 @@ impl From<MotherboardType> for SouthbridgeType {
     }
 }
 
-pub struct LayoutCalculator;
+pub fn layout_calculator(
+    sb: SouthbridgeType,
+    image_profile: &str,
+    layout: NandLayout,
+) -> (u32, u32, u32) {
+    // Returns (header.fs_addr, header.smc_config_offset, physical_fs_block)
+    let smc_config = match layout {
+        NandLayout::Xsb | NandLayout::Sb => 0xF70000,
+        NandLayout::Bb => 0x3DF0000,
+        NandLayout::Emmc => 0x0,
+    };
 
-impl LayoutCalculator {
-    pub fn calculate(
-        sb: SouthbridgeType,
-        image_profile: &str,
-        layout: NandLayout,
-    ) -> (u32, u32, u32) {
-        // Returns (header.fs_addr, header.smc_config_offset, physical_fs_block)
-        let smc_config = match layout {
-            NandLayout::Xsb | NandLayout::Sb => 0xF70000,
-            NandLayout::Bb => 0x3DF0000,
-            NandLayout::Emmc => 0x0,
-        };
+    if matches!(layout, NandLayout::Bb | NandLayout::Emmc) {
+        return (0, smc_config, 0);
+    }
 
-        if matches!(layout, NandLayout::Bb | NandLayout::Emmc) {
-            return (0, smc_config, 0);
-        }
+    // SmallBlock FlashFS relocation based on SB and profile
+    let is_split = match image_profile {
+        "split" | "devgl" | "devkit" | "xdkbuild" | "glitch2m" | "glitch2" | "glitch3" => true,
+        _ => false,
+    };
 
-        // SmallBlock FlashFS relocation based on SB and profile
-        let is_split = match image_profile {
-            "split" | "devgl" | "devkit" | "xdkbuild" | "glitch2m" | "glitchr" | "glitch2r" => true,
-            _ => false,
-        };
-
-        match sb {
-            SouthbridgeType::Xsb => {
-                if is_split {
-                    (0xE44000, smc_config, 0x391)
-                } else {
-                    (0xD84000, smc_config, 0x361)
-                }
-            }
-            SouthbridgeType::Psb => {
-                if is_split {
-                    (0xDF4000, smc_config, 0x37D)
-                } else {
-                    (0xD84000, smc_config, 0x361)
-                }
-            }
-            SouthbridgeType::Ksb => {
-                // Corona is always split in modern builds (RGH2/3) or handles it same as Split PSB
+    match sb {
+        SouthbridgeType::Xsb => {
+            if is_split {
                 (0xE44000, smc_config, 0x391)
+            } else {
+                (0xD84000, smc_config, 0x361)
             }
-            _ => (0, smc_config, 0),
         }
+        SouthbridgeType::Psb => {
+            if is_split {
+                (0xDF4000, smc_config, 0x37D)
+            } else {
+                (0xD84000, smc_config, 0x361)
+            }
+        }
+        SouthbridgeType::Ksb => {
+            // Corona is always split in modern builds (RGH2/3) or handles it same as Split PSB
+            (0xE44000, smc_config, 0x391)
+        }
+        _ => (0, smc_config, 0),
     }
 }
 
+/*
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum BuildMode {
     Normal,
@@ -358,6 +356,7 @@ pub enum BuildMode {
     Shadowboot,
     Devkit,
 }
+*/
 
 #[derive(Clone)]
 pub struct BuildOptions {
@@ -368,23 +367,19 @@ pub struct BuildOptions {
     pub motherboard: MotherboardType,
     pub bigonsmall: bool,
     pub shadowboot: bool,
-    pub mfg: bool,
-    pub noremap: bool,
-    pub khv_apply: bool,
     pub khv_header_size: u32,
-    pub jtag_syscall: Option<u16>,
-    pub jtag_pairing_2bl: Option<[u8; 3]>,
     pub gxunsafe: bool,
     pub verbose: bool,
-    pub cba: Option<String>,
-    pub cbb: Option<String>,
-    pub full_image: bool,
-    pub xsb: bool,
-    pub nomobile: bool,
-    pub nofcrt: bool,
-    pub dualpatchslots: bool,
-    pub cygnos: bool,
-    pub demon: bool,
+    //  pub mfg: bool,
+    //  pub noremap: bool,
+    //  pub khv_apply: bool,
+    //  pub full_image: bool,
+    //  pub xsb: bool,
+    //  pub nomobile: bool,
+    //  pub nofcrt: bool,
+    //  pub dualpatchslots: bool,
+    //  pub cygnos: bool,
+    //  pub demon: bool,
 }
 
 impl Default for BuildOptions {
@@ -397,23 +392,24 @@ impl Default for BuildOptions {
             motherboard: MotherboardType::Unknown,
             bigonsmall: false,
             shadowboot: false,
-            mfg: false,
-            full_image: false,
-            xsb: false,
-            noremap: false,
-            khv_apply: false,
             khv_header_size: 0x4000,
-            jtag_syscall: None,
-            jtag_pairing_2bl: None,
             gxunsafe: false,
             verbose: false,
-            cba: None,
-            cbb: None,
-            nomobile: false,
-            nofcrt: false,
-            dualpatchslots: false,
-            cygnos: false,
-            demon: false,
+            //          mfg: false,
+            //          full_image: false,
+            //          xsb: false,
+            //          noremap: false,
+            //          khv_apply: false,
+            //          nomobile: false,
+            //          nofcrt: false,
+            //          dualpatchslots: false,
+            //          cygnos: false,
+            //          demon: false,
         }
     }
+}
+
+pub struct JtagOptions {
+    pub jtag_syscall: Option<u16>,
+    pub jtag_pairing_2bl: Option<[u8; 3]>,
 }

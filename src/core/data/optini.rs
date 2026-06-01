@@ -74,15 +74,12 @@ pub struct OptionsIni {
     pub gxunsafe: Option<bool>,
     pub verbose: Option<bool>,
     pub nochainpatch: Option<bool>,
-    pub cba: Option<String>,
-    pub cbb: Option<String>,
     pub full_image: Option<bool>,
     pub xsb: Option<bool>,
     pub serial: Option<String>,
     pub consoleid: Option<String>,
     pub osig: Option<String>,
     pub mfdate: Option<String>,
-    pub fcrt: Option<bool>,
     pub nofcrt: Option<bool>,
 }
 
@@ -305,6 +302,63 @@ impl OptionsIni {
         if let Some(v) = other.nofcrt {
             self.nofcrt = Some(v);
         }
+    }
+    pub fn set_option(&mut self, key: &str, value: &str) {
+        let mut o = crate::core::data::optini::OptionsIni::new();
+        let v = value;
+        let is_true = v.eq_ignore_ascii_case("true");
+        match key.to_lowercase().as_str() {
+            "region" | "avregion" => o.avregion = Some(v.to_string()),
+            "gameregion" => o.gameregion = Some(v.to_string()),
+            "dvdregion" => o.dvdregion = Some(v.to_string()),
+            "unsafe" | "gxunsafe" => o.gxunsafe = Some(is_true),
+            "verbose" => {
+                o.verbose = Some(is_true);
+                let _ = crate::core::logger::init_logger("build", is_true);
+            }
+            "cba" => o.cba = Some(v.to_string()),
+            "cbb" => o.cbb = Some(v.to_string()),
+            "nomobile" => o.nomobile = Some(is_true),
+            "noremap" => o.noremap = Some(is_true),
+            "nandmu" => o.nandmu = Some(is_true),
+            "cputemp" => o.cputemp = Some(v.to_string()),
+            "gputemp" => o.gputemp = Some(v.to_string()),
+            "edramtemp" => o.edramtemp = Some(v.to_string()),
+            "overcputemp" => o.overcputemp = Some(v.to_string()),
+            "overgputemp" => o.overgputemp = Some(v.to_string()),
+            "overedramtemp" => o.overedramtemp = Some(v.to_string()),
+            "cpufan" => o.cpufan = Some(v.to_string()),
+            "gpufan" => o.gpufan = Some(v.to_string()),
+            "macid" | "mac" => o.macid = Some(v.to_string()),
+            "dvdkey" => o.dvdkey = Some(v.to_string()),
+            "cfldv" => o.cfldv = Some(v.to_string()),
+            "serial" => o.serial = Some(v.to_string()),
+            "consoleid" => o.consoleid = Some(v.to_string()),
+            "osig" => o.osig = Some(v.to_string()),
+            "mfdate" => o.mfdate = Some(v.to_string()),
+            "fcrt" => o.fcrt = Some(is_true),
+            "nofcrt" => o.nofcrt = Some(is_true),
+            "xellbutton" => o.xellbutton = Some(v.to_string()),
+            "xellbutton2" => o.xellbutton2 = Some(v.to_string()),
+            "cygnos" => o.cygnos = Some(is_true),
+            "demon" => o.demon = Some(is_true),
+            "smcnoeject" => o.smcnoeject = Some(is_true),
+            "smcnoblink" => o.smcnoblink = Some(is_true),
+            "patchsmc" => o.patchsmc = Some(is_true),
+            "olddvd" => o.olddvd = Some(is_true),
+            "nodvd" => o.nodvd = Some(is_true),
+            "dualboot" => o.dualboot = Some(is_true),
+            "dualpatchslots" => o.dualpatchslots = Some(is_true),
+            "nolog" => o.nolog = Some(is_true),
+            "noinfo" => o.noinfo = Some(is_true),
+            "noenter" => o.noenter = Some(is_true),
+            "noecc" => o.noecc = Some(is_true),
+            "nosecurity" => o.nosecurity = Some(is_true),
+            "nosusecurity" => o.nosusecurity = Some(is_true),
+            "nochainpatch" => o.nochainpatch = Some(is_true),
+            _ => warn!("[session] set_option: unknown key '{}'", key),
+        }
+        self.options.merge(o);
     }
 }
 
