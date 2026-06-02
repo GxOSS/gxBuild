@@ -1,5 +1,14 @@
 use crate::core::session::InternalCommand;
 use crate::builder::builder::{LayoutCalculator, SouthbridgeType};
+use crate::builder::builder::NandSkeleton;
+use crate::core::data::filesearch::IniSearch;
+use crate::core::handler::Executor;
+use log::{error, info, warn};
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap};
+use std::fs;
+use std::path::{Path, PathBuf};
+
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum BuildMode {
@@ -410,7 +419,7 @@ impl Executor {
     }
 
     /// Pulls defaults from NAND into session options.
-    pub fn extract_options_from_nand(&mut session) {
+    pub fn extract_options_from_nand(&mut session: &mut crate::core::session::Session) {
         if let Some(nand) = &mut session.active_nand {
             info!("[session] Extracting hardware defaults from active NAND image...");
 
@@ -427,7 +436,7 @@ impl Executor {
             }
 
             if session.options.cfldv.is_none() {
-                if let Ok(ldv) = session::resolve_cf_ldv(&session.options, nand) {
+                if let Ok(ldv) = Self::resolve_cf_ldv(&session.options, nand) {
                     session.options.cfldv = Some(ldv.to_string());
                 }
             }
@@ -715,8 +724,11 @@ impl Executor {
 
     /// Applies a batch of signature patches (JSON format) to the active NAND's decrypted SMC.
     /// Returns the total number of patches applied.
-    pub fn apply_smc_signature_batch(&mut self, json_str: &str) -> Result<usize, String> {
-        if let Some(nand) = &mut self.active_nand {
+    pub fn apply_smc_signature_batch(
+        session: &mut crate::core::session::Session,
+        json_str: &str,
+    ) -> Result<usize, String> {
+        if let Some(nand) = &mut session.active_nand {
             info!("[session] Applying signature batch to SMC...");
             let mut smc = crate::builder::chain::smc::RawSmc::new(nand.extra.smc.clone());
             smc.ensure_decrypted();
@@ -1276,7 +1288,7 @@ impl Executor {
                                         info!("[session] LBA Map: {} total blocks, {} bad blocks remapped", lba_map.logical_to_physical.len(), lba_map.bad_blocks.len());
                                         nand.lba_map = Some(lba_map);
                                         session.active_nand = Some(nand);
-                                        self.extract_options_from_nand();
+                                        Self::extract_options_from_nand();
                                         info!("[session] Successfully parsed NAND from {:?} (Layout: {:?})", path, layout);
                                     }
                                     Err(e) => return Err(format!("Failed to interpret clean NAND: {}", e)),

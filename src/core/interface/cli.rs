@@ -27,8 +27,7 @@ use crate::builder::ecc::handle_extract_ecc;
 use crate::core::interface::gxscript::GxScriptEngine;
 use crate::core::logger;
 use thiserror::Error;
-use super::handle_build;
-use super::handle_extract;
+use super::{ handle_build, handle_extract, CliConsoleType, CliBuildType }
 
 #[derive(Error, Debug)]
 pub enum CliError {
@@ -195,36 +194,6 @@ pub enum GgxMode {
         #[arg(long = "all")]
         all: bool,
     },
-}
-
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq)]
-#[allow(non_camel_case_types)]
-pub enum CliBuildType {
-    retail,
-    jtag,
-    glitch,
-    glitch2,
-    glitch2m,
-    glitch3,
-    devkit,
-}
-
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq)]
-#[allow(non_camel_case_types)]
-pub enum CliConsoleType {
-    xenon,
-    zephyr,
-    falcon,
-    jasper,
-    jasper256,
-    jasper512,
-    jasperbb,
-    jasperbigffs,
-    trinity,
-    trinitybigffs,
-    corona,
-    corona4g,
-    winchester,
 }
 
 /// Custom parser for the -o options flag.

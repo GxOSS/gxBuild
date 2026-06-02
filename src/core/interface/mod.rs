@@ -1,3 +1,9 @@
+use crate::builder::ecc::handle_extract_ecc;
+use crate::core::logger;
+use thiserror::Error;
+use super::handle_build;
+use super::handle_extract;
+
 #[cfg(feature = "cli")]
 pub mod cli;
 
@@ -6,6 +12,37 @@ pub mod ffi;
 
 #[cfg(feature = "rhai")]
 pub mod rhai;
+use crate::core::interface::gxscript::GxScriptEngine;
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq)]
+#[allow(non_camel_case_types)]
+pub enum CliBuildType {
+    retail,
+    jtag,
+    glitch,
+    glitch2,
+    glitch2m,
+    glitch3,
+    devkit,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq)]
+#[allow(non_camel_case_types)]
+pub enum CliConsoleType {
+    xenon,
+    zephyr,
+    falcon,
+    jasper,
+    jasper256,
+    jasper512,
+    jasperbb,
+    jasperbigffs,
+    trinity,
+    trinitybigffs,
+    corona,
+    corona4g,
+    winchester,
+}
 
 fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
     let build_type = args.build_type.as_ref().ok_or(CliError::MissingBuildType)?;
