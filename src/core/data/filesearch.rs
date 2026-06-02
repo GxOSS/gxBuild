@@ -27,6 +27,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+use crate::core::images::gxpatch::{parse_patch_binary, apply_records};
+
 #[derive(Error, Debug)]
 pub enum FilesearchError {
     #[error("[filesearch] File not found: {0}")]
@@ -658,7 +660,7 @@ impl IniSearch {
             // Parse Auto Patch into Memory
             let mut xe_patch = None;
             if let Some(ref p) = patch_path {
-                if let Ok(parsed) = crate::core::images::gxp::parse_patch_binary(p) {
+                if let Ok(parsed) = parse_patch_binary(p) {
                     if let Some(khv) = parsed.khv.as_ref() {
                         ini.patch.khv = Some(khv.records.clone());
                     }
@@ -895,12 +897,12 @@ impl IniSearch {
                         if !nochainpatch {
                             if Some(&lower_name) == target_cb.as_ref() {
                                 if let Some(ref cb_patch) = parsed_patch.cb {
-                                    let _ = crate::core::images::gxp::apply_records(
+                                    let _ = apply_records(
                                         &cb_patch.records,
                                         &mut c,
                                     );
                                 } else if let Some(ref cbb_patch) = parsed_patch.cb_b {
-                                    let _ = crate::core::images::gxp::apply_records(
+                                    let _ = apply_records(
                                         &cbb_patch.records,
                                         &mut c,
                                     );
@@ -908,7 +910,7 @@ impl IniSearch {
                             } else if lower_name.starts_with("cd_") || lower_name.starts_with("sd_")
                             {
                                 if let Some(ref cd_patch) = parsed_patch.cd {
-                                    let _ = crate::core::images::gxp::apply_records(
+                                    let _ = apply_records(
                                         &cd_patch.records,
                                         &mut c,
                                     );

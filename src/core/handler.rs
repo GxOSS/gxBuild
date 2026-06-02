@@ -1,13 +1,14 @@
 use crate::core::session::InternalCommand;
-use crate::builder::builder::{LayoutCalculator, SouthbridgeType};
+use crate::builder::types::{layout_calculator, SouthbridgeType};
 use crate::builder::builder::NandSkeleton;
 use crate::core::data::filesearch::IniSearch;
-use crate::core::handler::Executor;
 use log::{error, info, warn};
-use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use crate::core::session::{Session, QueuedCommand};
+use crate::core::images::gxpatch::parse_patch_binary;
+use crate::builder::parser::hex_to_bytes;
 
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -419,7 +420,7 @@ impl Executor {
     }
 
     /// Pulls defaults from NAND into session options.
-    pub fn extract_options_from_nand(&mut session: &mut crate::core::session::Session) {
+    pub fn extract_options_from_nand(session: &mut Session) {
         if let Some(nand) = &mut session.active_nand {
             info!("[session] Extracting hardware defaults from active NAND image...");
 
@@ -468,11 +469,11 @@ impl Executor {
 
     /// Pushes the final merged session options back into the NAND skeleton's
     /// Keyvault and SMC buffers before a build.
-    pub fn sync_options_to_nand(&mut session) -> Result<(), String> {
+    pub fn sync_options_to_nand(session: &mut Session) -> Result<(), String> {
         if let Some(nand) = &mut session.active_nand {
             info!("[session] Syncing merged options to NAND components...");
 
-            //  Standard/Core Overrides
+            /*
             if let Some(noremap) = session.options.noremap {
                 nand.options.noremap = noremap;
             }
@@ -482,18 +483,19 @@ impl Executor {
             if let Some(cbb) = &session.options.cbb {
                 nand.options.cbb = Some(cbb.clone());
             }
+            */
 
             nand.options.gxunsafe = session.options.gxunsafe.unwrap_or(false);
             nand.options.verbose = session.options.verbose.unwrap_or(false);
-            nand.options.nomobile = session.options.nomobile.unwrap_or(false);
-            nand.options.nofcrt = session.options.nofcrt.unwrap_or(false);
-            nand.options.dualpatchslots = session.options.dualpatchslots.unwrap_or(false);
-            nand.options.cygnos = session.options.cygnos.unwrap_or(false);
-            nand.options.demon = session.options.demon.unwrap_or(false);
+            //nand.options.nomobile = session.options.nomobile.unwrap_or(false);
+            //nand.options.nofcrt = session.options.nofcrt.unwrap_or(false);
+            //nand.options.dualpatchslots = session.options.dualpatchslots.unwrap_or(false);
+            //nand.options.cygnos = session.options.cygnos.unwrap_or(false);
+            //nand.options.demon = session.options.demon.unwrap_or(false);
 
             //  CPU Key
             if let Some(key_str) = &session.options.cpukey {
-                if let Ok(key_bytes) = crate::builder::builder::hex_to_bytes(key_str) {
+                if let Ok(key_bytes) = hex_to_bytes(key_str) {
                     if key_bytes.len() == 16 {
                         let mut arr = [0u8; 16];
                         arr.copy_from_slice(&key_bytes);
@@ -524,7 +526,7 @@ impl Executor {
 
                 if kv.is_decrypted {
                     if let Some(dvdkey_str) = &session.options.dvdkey {
-                        if let Ok(key_bytes) = crate::builder::builder::hex_to_bytes(dvdkey_str) {
+                        if let Ok(key_bytes) = hex_to_bytes(dvdkey_str) {
                             if key_bytes.len() == 16 {
                                 let mut arr = [0u8; 16];
                                 arr.copy_from_slice(&key_bytes);
@@ -550,12 +552,8 @@ impl Executor {
                         kv.set_mf_date(mfdate)?;
                     }
 
-                    if let Some(fcrt) = session.options.fcrt {
-                        kv.apply_fcrt_patch(fcrt)?;
-                    }
-
                     if let Some(cid_str) = &session.options.consoleid {
-                        if let Ok(bytes) = crate::builder::builder::hex_to_bytes(cid_str) {
+                        if let Ok(bytes) = hex_to_bytes(cid_str) {
                             if bytes.len() == 5 {
                                 let mut arr = [0u8; 5];
                                 arr.copy_from_slice(&bytes);
@@ -581,7 +579,7 @@ impl Executor {
             // MAC Address
             if let Some(mac_str) = &session.options.macid {
                 let clean_mac = mac_str.replace(":", "");
-                if let Ok(bytes) = crate::builder::builder::hex_to_bytes(&clean_mac) {
+                if let Ok(bytes) = hex_to_bytes(&clean_mac) {
                     if bytes.len() == 6 {
                         let mut arr = [0u8; 6];
                         arr.copy_from_slice(&bytes);
@@ -671,7 +669,7 @@ impl Executor {
             let profile_l = nand.options.image_profile.to_ascii_lowercase();
             let auto_patch_smc = matches!(profile_l.as_str(), "glitch" | "glitch1" | "glitch2");
             if auto_patch_smc {
-                let ini_dir = self.ini_dir.clone().unwrap_or_else(|| PathBuf::from("."));
+                let ini_dir = session.ini_dir.clone().unwrap_or_else(|| PathBuf::from("."));
                 let patch_path = ini_dir.join("../smc/bin/glitch.json");
                 match fs::read_to_string(&patch_path) {
                     Ok(json) => {
@@ -766,7 +764,7 @@ impl Executor {
     }
 
     pub fn execute_command(
-        &mut session: &mut crate::core::session::Session,
+        session: &mut crate::core::session::Session,
         command: InternalCommand,
     ) -> Result<(), String> {
         match command {
@@ -986,11 +984,11 @@ impl Executor {
             }
             InternalCommand::Build {
                 output,
-                target: _target,
+                ..
             } => {
                 info!("[session] Building NAND image to '{}'...", output.display());
                 // Sync options before build
-                self.sync_options_to_nand()?;
+                Self::sync_options_to_nand(session)?;
 
                 if let Some(nand) = &session.active_nand {
                     let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
@@ -1002,7 +1000,7 @@ impl Executor {
                     } else {
                         "single"
                     };
-                    let _ = LayoutCalculator::calculate(sb_type, chain_profile, layout);
+                    let _ = layout_calculator(sb_type, chain_profile, layout);
 
                     let meta_type = match nand.options.motherboard {
                         crate::builder::types::MotherboardType::Xenon
@@ -1092,11 +1090,7 @@ impl Executor {
                                 }
                             }
 
-                            let jtag_syscall = session
-                                .active_nand
-                                .as_ref()
-                                .and_then(|n| n.options.jtag_syscall);
-                            let mobile_meta = if nand.options.nomobile {
+                            let mobile_meta = if session.options.nomobile.unwrap_or(false) {
                                 std::collections::HashMap::new()
                             } else {
                                 nand.mobile.collect_spare_meta(&layout)
@@ -1112,7 +1106,7 @@ impl Executor {
                                     } else {
                                         Some(&mobile_meta)
                                     },
-                                    jtag_syscall,
+                                    None,
                                 );
                             let final_size = finalized_bytes.len();
                             if let Err(e) = std::fs::write(&output, finalized_bytes) {
@@ -1288,7 +1282,7 @@ impl Executor {
                                         info!("[session] LBA Map: {} total blocks, {} bad blocks remapped", lba_map.logical_to_physical.len(), lba_map.bad_blocks.len());
                                         nand.lba_map = Some(lba_map);
                                         session.active_nand = Some(nand);
-                                        Self::extract_options_from_nand();
+                                        Self::extract_options_from_nand(session);
                                         info!("[session] Successfully parsed NAND from {:?} (Layout: {:?})", path, layout);
                                     }
                                     Err(e) => return Err(format!("Failed to interpret clean NAND: {}", e)),
@@ -1408,7 +1402,7 @@ impl Executor {
                                 "single"
                             };
                             let (_, _, phys_fs_block) =
-                                crate::builder::types::LayoutCalculator::calculate(
+                                crate::builder::types::layout_calculator(
                                     sb,
                                     chain_profile,
                                     nand.layout,
@@ -1485,7 +1479,7 @@ impl Executor {
                 }
             }
             InternalCommand::ApplySmcSignature { json } => {
-                if let Err(e) = self.apply_smc_signature_batch(&json) {
+                if let Err(e) = Self::apply_smc_signature_batch(session, &json) {
                     return Err(format!("Failed to apply SMC signature patch: {}", e));
                 }
             }
@@ -1635,7 +1629,7 @@ impl Executor {
             */
             InternalCommand::ApplyOptions => {
                 info!("[session] Applying session options to active NAND...");
-                self.sync_options_to_nand()?;
+                Self::sync_options_to_nand(session)?;
             }
             InternalCommand::SessionInit { base, common } => {
                 info!(
@@ -1697,7 +1691,7 @@ impl Executor {
                             );
                         }
                     }
-                    self.execute_command(queued_cmd.command)?;
+                    Self::execute_command(session, queued_cmd.command)?;
                 }
                 info!("[session] SessionRun: queue cleared.");
             }
@@ -1770,7 +1764,7 @@ impl Executor {
                                 "single"
                             };
                             let (_, _, phys_fs_block) =
-                                crate::builder::types::LayoutCalculator::calculate(
+                                crate::builder::types::layout_calculator(
                                     sb,
                                     chain_profile,
                                     nand.layout,

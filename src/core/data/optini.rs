@@ -29,13 +29,58 @@ pub enum OptionsIniError {
     BadOptionsFormat(),
 }
 
+pub struct CoreOptions {
+    pub mfg: bool,
+    pub noremap: bool,
+    pub xsb: bool,
+    pub nomobile: bool,
+    pub nofcrt: bool,
+    pub dualpatchslots: bool,
+    pub gxunsafe: bool,
+    pub full_image: bool,
+    pub cygnos: bool,
+    pub demon: bool,
+}
+
+impl Default for CoreOptions {
+    fn default() -> Self {
+        CoreOptions {
+            mfg: false,
+            noremap: false,
+            xsb: false,
+            nomobile: false,
+            nofcrt: false,
+            dualpatchslots: false,
+            gxunsafe: false,
+            full_image: false,
+            cygnos: false,
+            demon: false,
+        }
+    }
+}
+
+pub struct JtagOptions {
+    pub jtag_syscall: Option<u16>,
+    pub jtag_pairing_2bl: Option<[u8; 3]>,
+}
+
+impl Default for JtagOptions {
+    fn default() -> Self {
+        JtagOptions {
+            jtag_syscall: None,
+            jtag_pairing_2bl: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct OptionsIni {
-    pub ctype: Option<String>,
+    pub ctype: Option<String>, // console?
+
     pub _1blkey: Option<String>,
     pub cpukey: Option<String>,
     pub cfldv: Option<String>,
-    pub dvdkey: Option<String>,
+
     pub xellbutton: Option<String>,
     pub xellbutton2: Option<String>,
     pub cygnos: Option<bool>,
@@ -46,16 +91,24 @@ pub struct OptionsIni {
     pub olddvd: Option<bool>,
     pub nodvd: Option<bool>,
     pub dualboot: Option<bool>,
+
+    pub nochainpatch: Option<bool>,
     pub nomobile: Option<bool>,
+    pub noflashfs: Option<bool>,
+    pub dualpatchslots: Option<bool>,
+    pub nandmu: Option<bool>,
+    pub full_image: Option<bool>,
+    pub xsb: Option<bool>,
+    pub nofcrt: Option<bool>,
+
     pub noremap: Option<bool>,
     pub noecdremap: Option<bool>,
-    pub nandmu: Option<bool>,
+    pub smcnocheck: Option<bool>,
+
     pub nosecurity: Option<bool>,
     pub nosusecurity: Option<bool>,
     pub noecc: Option<bool>,
-    pub noflashfs: Option<bool>,
-    pub dualpatchslots: Option<bool>,
-    pub smcnocheck: Option<bool>,
+
     pub cputemp: Option<String>,
     pub gputemp: Option<String>,
     pub edramtemp: Option<String>,
@@ -64,33 +117,33 @@ pub struct OptionsIni {
     pub overedramtemp: Option<String>,
     pub cpufan: Option<String>,
     pub gpufan: Option<String>,
+
     pub avregion: Option<String>,
     pub gameregion: Option<String>,
     pub dvdregion: Option<String>,
-    pub macid: Option<String>,
+    pub macid : Option<String>,
+    pub serial: Option<String>,
+    pub consoleid: Option<String>,
+    pub osig: Option<String>,
+    pub mfdate: Option<String>,
+    pub dvdkey: Option<String>,
+
     pub noenter: Option<bool>,
     pub nolog: Option<bool>,
     pub noinfo: Option<bool>,
     pub gxunsafe: Option<bool>,
     pub verbose: Option<bool>,
-    pub nochainpatch: Option<bool>,
-    pub full_image: Option<bool>,
-    pub xsb: Option<bool>,
-    pub serial: Option<String>,
-    pub consoleid: Option<String>,
-    pub osig: Option<String>,
-    pub mfdate: Option<String>,
-    pub nofcrt: Option<bool>,
 }
 
 impl OptionsIni {
     pub fn new() -> Self {
         OptionsIni {
-            ctype: None,
+            ctype: None, // console?
+
             _1blkey: None,
             cpukey: None,
             cfldv: None,
-            dvdkey: None,
+
             xellbutton: None,
             xellbutton2: None,
             cygnos: None,
@@ -101,24 +154,24 @@ impl OptionsIni {
             olddvd: None,
             nodvd: None,
             dualboot: None,
+
+            nochainpatch: None,
             nomobile: None,
+            noflashfs: None,
+            dualpatchslots: None,
+            nandmu: None,
+            full_image: None,
+            xsb: None,
+            nofcrt: None,
+
             noremap: None,
             noecdremap: None,
-            nandmu: None,
+            smcnocheck: None,
+
             nosecurity: None,
             nosusecurity: None,
             noecc: None,
-            noflashfs: None,
-            dualpatchslots: None,
-            smcnocheck: None,
-            noenter: None,
-            nolog: None,
-            noinfo: None,
-            gxunsafe: None,
-            verbose: None,
-            nochainpatch: None,
-            cba: None,
-            cbb: None,
+
             cputemp: None,
             gputemp: None,
             edramtemp: None,
@@ -127,18 +180,22 @@ impl OptionsIni {
             overedramtemp: None,
             cpufan: None,
             gpufan: None,
+
             avregion: None,
             gameregion: None,
             dvdregion: None,
-            macid: None,
-            full_image: None,
-            xsb: None,
+            macid : None,
             serial: None,
             consoleid: None,
             osig: None,
             mfdate: None,
-            fcrt: None,
-            nofcrt: None,
+            dvdkey: None,
+
+            noenter: None,
+            nolog: None,
+            noinfo: None,
+            gxunsafe: None,
+            verbose: None,
         }
     }
 
@@ -236,12 +293,6 @@ impl OptionsIni {
         if let Some(v) = other.nochainpatch {
             self.nochainpatch = Some(v);
         }
-        if let Some(v) = other.cba {
-            self.cba = Some(v);
-        }
-        if let Some(v) = other.cbb {
-            self.cbb = Some(v);
-        }
         if let Some(v) = other.cputemp {
             self.cputemp = Some(v);
         }
@@ -296,9 +347,6 @@ impl OptionsIni {
         if let Some(v) = other.mfdate {
             self.mfdate = Some(v);
         }
-        if let Some(v) = other.fcrt {
-            self.fcrt = Some(v);
-        }
         if let Some(v) = other.nofcrt {
             self.nofcrt = Some(v);
         }
@@ -316,8 +364,6 @@ impl OptionsIni {
                 o.verbose = Some(is_true);
                 let _ = crate::core::logger::init_logger("build", is_true);
             }
-            "cba" => o.cba = Some(v.to_string()),
-            "cbb" => o.cbb = Some(v.to_string()),
             "nomobile" => o.nomobile = Some(is_true),
             "noremap" => o.noremap = Some(is_true),
             "nandmu" => o.nandmu = Some(is_true),
@@ -336,7 +382,6 @@ impl OptionsIni {
             "consoleid" => o.consoleid = Some(v.to_string()),
             "osig" => o.osig = Some(v.to_string()),
             "mfdate" => o.mfdate = Some(v.to_string()),
-            "fcrt" => o.fcrt = Some(is_true),
             "nofcrt" => o.nofcrt = Some(is_true),
             "xellbutton" => o.xellbutton = Some(v.to_string()),
             "xellbutton2" => o.xellbutton2 = Some(v.to_string()),
@@ -358,7 +403,7 @@ impl OptionsIni {
             "nochainpatch" => o.nochainpatch = Some(is_true),
             _ => warn!("[session] set_option: unknown key '{}'", key),
         }
-        self.options.merge(o);
+        self.merge(o);
     }
 }
 
@@ -422,8 +467,6 @@ pub fn parse_options_ini(content: &str) -> Result<OptionsIni, OptionsIniError> {
                     "nochainpatch" => {
                         options.nochainpatch = Some(value.eq_ignore_ascii_case("true"))
                     }
-                    "cba" => options.cba = Some(value.clone()),
-                    "cbb" => options.cbb = Some(value.clone()),
                     "cputemp" => options.cputemp = Some(value.clone()),
                     "gputemp" => options.gputemp = Some(value.clone()),
                     "edramtemp" => options.edramtemp = Some(value.clone()),
@@ -440,7 +483,6 @@ pub fn parse_options_ini(content: &str) -> Result<OptionsIni, OptionsIniError> {
                     "consoleid" => options.consoleid = Some(value.clone()),
                     "osig" => options.osig = Some(value.clone()),
                     "mfdate" => options.mfdate = Some(value.clone()),
-                    "fcrt" => options.fcrt = Some(value.eq_ignore_ascii_case("true")),
                     "nofcrt" => options.nofcrt = Some(value.eq_ignore_ascii_case("true")),
                     _ => warn!("[ini] Unknown option: {}", key),
                 },

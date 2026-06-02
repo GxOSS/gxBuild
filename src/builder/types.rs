@@ -1,6 +1,4 @@
 use crate::core::images::blocks::{LbaMap, NandLayout};
-use crate::core::images::gxp::PatchRecord;
-use log::info;
 use zerocopy::byteorder::{BigEndian, I16, U16, U32};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
@@ -95,9 +93,9 @@ impl NandHeader {
     const XEBUILD_XELL_ALT_POC_OFFSET: usize = 0x3E;
     const XEBUILD_XELL_POC_OFFSET: usize = 0x3F;
 
-    pub fn validate(&self) -> Result<(), crate::builder::builder::BuilderError> {
+    pub fn validate(&self) -> Result<(), crate::builder::parser::BuilderError> {
         if self.prefix.magic.get() != Self::MAGIC {
-            return Err(crate::builder::builder::BuilderError::InvalidMagic {
+            return Err(crate::builder::parser::BuilderError::InvalidMagic {
                 magic: self.prefix.magic.get(),
             });
         }
@@ -134,7 +132,7 @@ impl NandHeader {
         );
     }
     */
-    pub fn apply_xebuild_header_flags(&mut self, options: &BuildOptions, extra: &NandExtra) {
+    pub fn apply_xebuild_header_flags(&mut self, options: &BuildOptions) {
         let profile = options.image_profile.as_str();
         let is_devkit = profile == "devkit" || matches!(options.build_mode, BuildMode::Devkit);
         let is_retail = profile == "retail";
@@ -151,6 +149,7 @@ impl NandHeader {
         if is_hacked {
             self.copyright[Self::XEBUILD_FLAG_OFFSET] = 1;
 
+            /*
             let alt = extra.power_on_cause_a;
             let primary = extra.power_on_cause_b;
 
@@ -163,7 +162,7 @@ impl NandHeader {
             } else if options.cygnos {
                 self.copyright[Self::XEBUILD_UART_OFFSET] = 1;
             }
-
+            */
             let _ = Self::XEBUILD_DUALBOOT_OFFSET;
         }
     }
@@ -348,7 +347,7 @@ pub fn layout_calculator(
     }
 }
 
-/*
+
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum BuildMode {
     Normal,
@@ -356,7 +355,6 @@ pub enum BuildMode {
     Shadowboot,
     Devkit,
 }
-*/
 
 #[derive(Clone)]
 pub struct BuildOptions {
@@ -370,16 +368,6 @@ pub struct BuildOptions {
     pub khv_header_size: u32,
     pub gxunsafe: bool,
     pub verbose: bool,
-    //  pub mfg: bool,
-    //  pub noremap: bool,
-    //  pub khv_apply: bool,
-    //  pub full_image: bool,
-    //  pub xsb: bool,
-    //  pub nomobile: bool,
-    //  pub nofcrt: bool,
-    //  pub dualpatchslots: bool,
-    //  pub cygnos: bool,
-    //  pub demon: bool,
 }
 
 impl Default for BuildOptions {
@@ -395,21 +383,8 @@ impl Default for BuildOptions {
             khv_header_size: 0x4000,
             gxunsafe: false,
             verbose: false,
-            //          mfg: false,
-            //          full_image: false,
-            //          xsb: false,
-            //          noremap: false,
-            //          khv_apply: false,
-            //          nomobile: false,
-            //          nofcrt: false,
-            //          dualpatchslots: false,
-            //          cygnos: false,
-            //          demon: false,
         }
     }
 }
 
-pub struct JtagOptions {
-    pub jtag_syscall: Option<u16>,
-    pub jtag_pairing_2bl: Option<[u8; 3]>,
-}
+

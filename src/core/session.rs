@@ -21,14 +21,68 @@
 */
 
 use crate::builder::builder::NandSkeleton;
-use crate::builder::builder::{LayoutCalculator, SouthbridgeType};
 use crate::core::data::filesearch::IniSearch;
 use crate::core::handler::Executor;
-use log::{error, info, warn};
+use log::{info, error};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum SessionError {
+    #[error("[session] IO error: {0}")]
+    Io(String),
+
+    #[error("[session] Failed to parse options INI: {0}")]
+    OptionsIniParse(String),
+
+    #[error("[session] Failed to parse INI: {0}")]
+    IniParse(String),
+
+    #[error("[session] INI discovery failed: {0}")]
+    IniDiscovery(String),
+
+    #[error("[session] Failed to apply INI data: {0}")]
+    IniApply(String),
+
+    #[error("[session] prepare_build: build_type not set")]
+    BuildTypeNotSet,
+
+    #[error("[session] prepare_build: console_type not set")]
+    ConsoleTypeNotSet,
+
+    #[error("[session] prepare_build: cannot read INI at {path:?}")]
+    IniRead { path: PathBuf },
+
+    #[error("[session] SMC autopatching failed ({error}): {path:?}")]
+    SmcAutopatch { error: String, path: PathBuf },
+
+    #[error("[session] SMC config error: {0}")]
+    SmcConfig(String),
+
+    #[error("[session] Keyvault error: {0}")]
+    Keyvault(String),
+
+    #[error("[session] Invalid hex u8 '{value}': {error}")]
+    InvalidHexU8 { value: String, error: String },
+
+    #[error("[session] Invalid decimal u8 '{value}': {error}")]
+    InvalidDecimalU8 { value: String, error: String },
+
+    #[error("[session] Invalid hex u16 '{value}': {error}")]
+    InvalidHexU16 { value: String, error: String },
+
+    #[error("[session] Invalid decimal u16 '{value}': {error}")]
+    InvalidDecimalU16 { value: String, error: String },
+
+    #[error("[session] No active NAND loaded to patch")]
+    NoActiveNand,
+
+    #[error("[session] {0}")]
+    Other(String),
+}
 
 #[derive(Debug)]
 pub enum InternalCommand {
@@ -118,7 +172,7 @@ pub enum InternalCommand {
 }
 
 impl InternalCommand {
-    fn priority_score(&self) -> u8 {
+    pub fn priority_score(&self) -> u8 {
         match self {
             Self::ParseKey { .. } => 160,
             Self::ParseKeybin { .. } => 160,
@@ -392,7 +446,7 @@ impl Session {
     }
     /// Parses a 32-character hex CPU key string and enqueues a ParseKey command.
     pub fn set_cpukey(&mut self, key: String) {
-        if let Ok(bytes) = crate::builder::builder::hex_to_bytes(&key) {
+        if let Ok(bytes) = crate::builder::parser::hex_to_bytes(&key) {
             if let Ok(arr) = bytes.try_into() {
                 self.parse_key(arr);
             } else {

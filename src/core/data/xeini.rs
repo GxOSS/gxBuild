@@ -21,7 +21,7 @@
 */
 
 use crate::builder::builder::NandSkeleton;
-use crate::core::images::gxp::PatchRecord;
+use crate::core::images::gxpatch::PatchRecord;
 use crc32fast::Hasher;
 use log::{info, warn};
 use std::collections::HashMap;
@@ -577,8 +577,8 @@ pub fn apply_xe_ini(
         }
     }
 
-    nand.options.jtag_syscall = ini.jtag.syscall;
-    nand.options.jtag_pairing_2bl = ini.jtag.pairing_2bl;
+    // nand.options.jtag_syscall = ini.jtag.syscall;
+    // nand.options.jtag_pairing_2bl = ini.jtag.pairing_2bl;
 
     // Security and Extra files merged here
     if let Some(smc_data) = pending.security.get("smc.bin") {
@@ -600,7 +600,7 @@ pub fn apply_xe_ini(
         info!("[ini] Assigned FCRT.bin from memory");
     }
 
-    nand.bootloaders.khvpatch = ini.patch.khv.clone();
+    // nand.bootloaders.khvpatch = ini.patch.khv.clone();
 
     // 1f with JTAG ini
     if nand.options.image_profile == "onef" {
@@ -609,26 +609,6 @@ pub fn apply_xe_ini(
         let total_blocks = nand.flashfs.root.block_map.len();
         nand.flashfs = crate::builder::filesystem::flashfs::FlashFS::new();
         nand.flashfs.root.block_map = vec![0; total_blocks];
-    }
-
-    // Overrides
-    if let Some(cba_file) = &nand.options.cba {
-        if let Some(data) = pending.bootloaders.get(&cba_file.to_lowercase()) {
-            nand.bootloaders.cb_a = Some(
-                crate::builder::chain::cb::BootloaderCb::parse(data)
-                    .map_err(|e| IniError::BootloaderError(e.to_string()))?,
-            );
-            info!("[ini] OVERRIDE: Assigned CB_A from '{}'", cba_file);
-        }
-    }
-    if let Some(cbb_file) = &nand.options.cbb {
-        if let Some(data) = pending.bootloaders.get(&cbb_file.to_lowercase()) {
-            nand.bootloaders.cb_b = Some(
-                crate::builder::chain::cb::BootloaderCb::parse(data)
-                    .map_err(|e| IniError::BootloaderError(e.to_string()))?,
-            );
-            info!("[ini] OVERRIDE: Assigned CB_B from '{}'", cbb_file);
-        }
     }
 
     Ok(nand)
