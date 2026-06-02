@@ -1,4 +1,5 @@
 use crate::core::session::InternalCommand;
+use crate::builder::builder::{LayoutCalculator, SouthbridgeType};
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum BuildMode {
@@ -128,21 +129,21 @@ impl Executor {
         }
     }
 
-    pub fn prepare_build(&mut self) -> Result<(), String> {
+    pub fn prepare_build(session: &mut crate::core::session::Session) -> Result<(), String> {
         use std::collections::HashSet;
 
-        let ini_dir = self.ini_dir.clone().unwrap_or_else(|| PathBuf::from("."));
-        let data_dir = self
+        let ini_dir = session.ini_dir.clone().unwrap_or_else(|| PathBuf::from("."));
+        let data_dir = session
             .data_dir
             .clone()
             .unwrap_or_else(|| PathBuf::from("mydata"));
-        let common_dir = self
+        let common_dir = session
             .common_dir
             .clone()
             .unwrap_or_else(|| ini_dir.join("../common"));
         let payloads_dir = ini_dir.join("../payloads");
         let smc_dir = ini_dir.join("../smc");
-        let output_path = self
+        let output_path = session
             .output_path
             .clone()
             .unwrap_or_else(|| PathBuf::from("updflash.bin"));
@@ -153,9 +154,9 @@ impl Executor {
             if let Ok(content) = fs::read_to_string(&options_path) {
                 match crate::core::data::optini::parse_options_ini(&content) {
                     Ok(disk_opts) => {
-                        let user_opts = self.options.clone();
-                        self.options = disk_opts;
-                        self.options.merge(user_opts);
+                        let user_opts = session.options.clone();
+                        session.options = disk_opts;
+                        session.options.merge(user_opts);
                     }
                     Err(e) => warn!(
                         "[session] prepare_build: failed to parse options.ini: {}",
@@ -166,25 +167,25 @@ impl Executor {
         }
 
         // Initialize or update logger level based on FINAL merged options
-        let is_verbose = self.options.verbose.unwrap_or(false);
+        let is_verbose = session.options.verbose.unwrap_or(false);
         let _ = crate::core::logger::init_logger("build", is_verbose);
 
-        if let Some(nand) = &mut self.active_nand {
-            nand.options.gxunsafe = self.options.gxunsafe.unwrap_or(false);
-            nand.options.verbose = self.options.verbose.unwrap_or(false);
+        if let Some(nand) = &mut session.active_nand {
+            nand.options.gxunsafe = session.options.gxunsafe.unwrap_or(false);
+            nand.options.verbose = session.options.verbose.unwrap_or(false);
         }
 
-        let build_type = self
+        let build_type = session
             .build_type
             .clone()
             .ok_or("prepare_build: build_type not set")?;
-        let console = self
+        let console = session
             .console_type
             .clone()
             .ok_or("prepare_build: console_type not set")?;
 
         // Resolve INI filename: _<type>[_<ext>].ini
-        let ini_suffix = self
+        let ini_suffix = session
             .ini_ext
             .as_ref()
             .map(|e| format!("_{}", e))
@@ -193,14 +194,14 @@ impl Executor {
         let ini_path = ini_dir.join(&ini_filename);
 
         // Console section, e.g. "trinity" or "trinity_ext"
-        let console_section = match &self.bl_ext {
+        let console_section = match &session.bl_ext {
             Some(ext) => format!("{}_{}", console, ext),
             None => console.clone(),
         };
 
         // Pre-parse INI to know which asset filenames we need
         let mut target_filenames: HashSet<String> = HashSet::new();
-        if !self.build_ini_loaded {
+        if !session.build_ini_loaded {
             match crate::core::data::xeini::parse_xe_ini(&ini_path, &console_section) {
                 Ok(ini) => {
                     for e in ini.main {
@@ -227,8 +228,8 @@ impl Executor {
         );
 
         // Enqueue FinalizeFlashfs / FinalizeMobile early (priority ordering handles sequencing)
-        self.enqueue(InternalCommand::FinalizeFlashfs);
-        self.enqueue(InternalCommand::FinalizeMobile);
+        session.enqueue(InternalCommand::FinalizeFlashfs);
+        session.enqueue(InternalCommand::FinalizeMobile);
 
         // Build the search path list: ini â†’ ini/flashfs â†’ ini/data â†’ common
         let ini_flashfs = ini_dir.join("flashfs");
@@ -251,7 +252,7 @@ impl Executor {
             for dir in &search_dirs {
                 let candidate = dir.join(filename);
                 if candidate.exists() {
-                    self.enqueue(InternalCommand::Update { path: candidate });
+                    session.enqueue(InternalCommand::Update { path: candidate });
                     if filename.starts_with("cf_") {
                         cf_found = true;
                     }
@@ -267,7 +268,7 @@ impl Executor {
         if !cf_found || !cg_found {
             let xboxupd = ini_dir.join("xboxupd.bin");
             if xboxupd.exists() {
-                self.enqueue(InternalCommand::Update { path: xboxupd });
+                session.enqueue(InternalCommand::Update { path: xboxupd });
             } else if let Ok(entries) = fs::read_dir(&ini_dir) {
                 for entry in entries.flatten() {
                     let p = entry.path();
@@ -278,7 +279,7 @@ impl Executor {
                             .to_string_lossy()
                             .to_lowercase();
                         if name.starts_with("su") {
-                            self.enqueue(InternalCommand::Update { path: p });
+                            session.enqueue(InternalCommand::Update { path: p });
                         }
                     }
                 }
@@ -286,7 +287,7 @@ impl Executor {
         }
 
         // NAND image (data dir)
-        let nand_needed = self.active_nand.is_none();
+        let nand_needed = session.active_nand.is_none();
 
         if nand_needed {
             let nand_candidates = [
@@ -302,7 +303,7 @@ impl Executor {
             let mut nand_found = false;
             for p in &nand_candidates {
                 if p.exists() {
-                    self.enqueue(InternalCommand::ParseImage {
+                    session.enqueue(InternalCommand::ParseImage {
                         path: p.clone(),
                         key: None,
                     });
@@ -320,12 +321,12 @@ impl Executor {
                     "corona4g" | "winchester" => crate::core::images::blocks::NandLayout::Emmc,
                     _ => crate::core::images::blocks::NandLayout::Sb,
                 };
-                self.enqueue(InternalCommand::CreateImage { layout });
+                session.enqueue(InternalCommand::CreateImage { layout });
             }
         }
 
         // CPU key (cpukey.txt / cpukey.bin in data dir)
-        if self.pending_key.is_none() && self.options.cpukey.is_none() {
+        if session.pending_key.is_none() && session.options.cpukey.is_none() {
             let key_txt = data_dir.join("cpukey.txt");
             let key_bin = data_dir.join("cpukey.bin");
             if key_bin.exists() {
@@ -333,14 +334,14 @@ impl Executor {
                     if bytes.len() >= 16 {
                         let mut k = [0u8; 16];
                         k.copy_from_slice(&bytes[..16]);
-                        self.parse_keybin(Some(k));
+                        session.parse_keybin(Some(k));
                     }
                 }
             } else if key_txt.exists() {
                 if let Ok(text) = fs::read_to_string(&key_txt) {
                     let clean = text.trim();
                     if clean.len() >= 32 {
-                        self.set_cpukey(clean.to_string());
+                        session.set_cpukey(clean.to_string());
                     }
                 }
             }
@@ -354,20 +355,20 @@ impl Executor {
             "kv.bin",
             "keyvault.bin",
         ] {
-            if name == &"fcrt.bin" && self.options.nofcrt.unwrap_or(false) {
+            if name == &"fcrt.bin" && session.options.nofcrt.unwrap_or(false) {
                 continue;
             }
             let p = data_dir.join(name);
             if p.exists() {
                 if let Ok(data) = fs::read(&p) {
-                    self.pending_assets.insert(name.to_string(), data);
+                    session.pending_assets.insert(name.to_string(), data);
                 }
             }
         }
 
         // Enqueue INI parsing (Only if not already loaded via string)
-        if !self.build_ini_loaded {
-            self.parse_ini(
+        if !session.build_ini_loaded {
+            session.parse_ini(
                 &ini_path,
                 console_section,
                 &ini_dir,
@@ -379,7 +380,7 @@ impl Executor {
         }
 
         // Addon patches
-        let addons = self.addons.clone();
+        let addons = session.addons.clone();
         for addon in &addons {
             let addon_path = if PathBuf::from(addon).is_absolute() {
                 PathBuf::from(addon)
@@ -392,7 +393,7 @@ impl Executor {
                 }
             };
             if addon_path.exists() {
-                self.enqueue(InternalCommand::ApplyPatch {
+                session.enqueue(InternalCommand::ApplyPatch {
                     path: addon_path,
                     ptype: 2,
                     target: None,
@@ -403,31 +404,31 @@ impl Executor {
         }
 
         // Final build command
-        self.build(output_path, 0);
+        session.build(output_path, 0);
 
         Ok(())
     }
 
     /// Pulls defaults from NAND into session options.
-    pub fn extract_options_from_nand(&mut self) {
-        if let Some(nand) = &mut self.active_nand {
+    pub fn extract_options_from_nand(&mut session) {
+        if let Some(nand) = &mut session.active_nand {
             info!("[session] Extracting hardware defaults from active NAND image...");
 
             // CPU Key
-            if self.options.cpukey.is_none() {
+            if session.options.cpukey.is_none() {
                 if let Some(key) = nand.cpukey {
-                    self.options.cpukey = Some(key.iter().map(|b| format!("{:02x}", b)).collect());
+                    session.options.cpukey = Some(key.iter().map(|b| format!("{:02x}", b)).collect());
                 }
             }
 
             // Motherboard / Console Type mapping
-            if self.options.ctype.is_none() {
-                self.options.ctype = Some(format!("{:?}", nand.options.motherboard).to_lowercase());
+            if session.options.ctype.is_none() {
+                session.options.ctype = Some(format!("{:?}", nand.options.motherboard).to_lowercase());
             }
 
-            if self.options.cfldv.is_none() {
-                if let Ok(ldv) = Self::resolve_cf_ldv(&self.options, nand) {
-                    self.options.cfldv = Some(ldv.to_string());
+            if session.options.cfldv.is_none() {
+                if let Ok(ldv) = session::resolve_cf_ldv(&session.options, nand) {
+                    session.options.cfldv = Some(ldv.to_string());
                 }
             }
 
@@ -444,11 +445,11 @@ impl Executor {
                 }
 
                 if let Some(meta) = &kv.metadata {
-                    if self.options.gameregion.is_none() {
-                        self.options.gameregion = Some(format!("0x{:04X}", meta.region));
+                    if session.options.gameregion.is_none() {
+                        session.options.gameregion = Some(format!("0x{:04X}", meta.region));
                     }
-                    if self.options.dvdkey.is_none() {
-                        self.options.dvdkey =
+                    if session.options.dvdkey.is_none() {
+                        session.options.dvdkey =
                             Some(meta.dvd_key.iter().map(|b| format!("{:02x}", b)).collect());
                     }
                 }
@@ -458,31 +459,31 @@ impl Executor {
 
     /// Pushes the final merged session options back into the NAND skeleton's
     /// Keyvault and SMC buffers before a build.
-    pub fn sync_options_to_nand(&mut self) -> Result<(), String> {
-        if let Some(nand) = &mut self.active_nand {
+    pub fn sync_options_to_nand(&mut session) -> Result<(), String> {
+        if let Some(nand) = &mut session.active_nand {
             info!("[session] Syncing merged options to NAND components...");
 
             //  Standard/Core Overrides
-            if let Some(noremap) = self.options.noremap {
+            if let Some(noremap) = session.options.noremap {
                 nand.options.noremap = noremap;
             }
-            if let Some(cba) = &self.options.cba {
+            if let Some(cba) = &session.options.cba {
                 nand.options.cba = Some(cba.clone());
             }
-            if let Some(cbb) = &self.options.cbb {
+            if let Some(cbb) = &session.options.cbb {
                 nand.options.cbb = Some(cbb.clone());
             }
 
-            nand.options.gxunsafe = self.options.gxunsafe.unwrap_or(false);
-            nand.options.verbose = self.options.verbose.unwrap_or(false);
-            nand.options.nomobile = self.options.nomobile.unwrap_or(false);
-            nand.options.nofcrt = self.options.nofcrt.unwrap_or(false);
-            nand.options.dualpatchslots = self.options.dualpatchslots.unwrap_or(false);
-            nand.options.cygnos = self.options.cygnos.unwrap_or(false);
-            nand.options.demon = self.options.demon.unwrap_or(false);
+            nand.options.gxunsafe = session.options.gxunsafe.unwrap_or(false);
+            nand.options.verbose = session.options.verbose.unwrap_or(false);
+            nand.options.nomobile = session.options.nomobile.unwrap_or(false);
+            nand.options.nofcrt = session.options.nofcrt.unwrap_or(false);
+            nand.options.dualpatchslots = session.options.dualpatchslots.unwrap_or(false);
+            nand.options.cygnos = session.options.cygnos.unwrap_or(false);
+            nand.options.demon = session.options.demon.unwrap_or(false);
 
             //  CPU Key
-            if let Some(key_str) = &self.options.cpukey {
+            if let Some(key_str) = &session.options.cpukey {
                 if let Ok(key_bytes) = crate::builder::builder::hex_to_bytes(key_str) {
                     if key_bytes.len() == 16 {
                         let mut arr = [0u8; 16];
@@ -495,9 +496,9 @@ impl Executor {
             let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
 
             //  Per-box LDV / Pairing Sync for CB + CF (independent)
-            let pairing = Self::resolve_pairing(&self.options, nand);
-            let cb_ldv = Self::resolve_cb_ldv(&self.options, nand)?;
-            let cf_ldv = Self::resolve_cf_ldv(&self.options, nand)?;
+            let pairing = Self::resolve_pairing(&session.options, nand);
+            let cb_ldv = Self::resolve_cb_ldv(&session.options, nand)?;
+            let cf_ldv = Self::resolve_cf_ldv(&session.options, nand)?;
             Self::sync_per_box_settings(nand, pairing, cb_ldv, cf_ldv);
 
             //  Keyvault Overrides (Region, DVD Key)
@@ -513,7 +514,7 @@ impl Executor {
                 }
 
                 if kv.is_decrypted {
-                    if let Some(dvdkey_str) = &self.options.dvdkey {
+                    if let Some(dvdkey_str) = &session.options.dvdkey {
                         if let Ok(key_bytes) = crate::builder::builder::hex_to_bytes(dvdkey_str) {
                             if key_bytes.len() == 16 {
                                 let mut arr = [0u8; 16];
@@ -523,28 +524,28 @@ impl Executor {
                         }
                     }
 
-                    if let Some(region_str) = &self.options.gameregion {
+                    if let Some(region_str) = &session.options.gameregion {
                         let region = Self::parse_u16_hex_or_dec(region_str)?;
                         kv.set_region(region)?;
                     }
 
-                    if let Some(serial) = &self.options.serial {
+                    if let Some(serial) = &session.options.serial {
                         kv.set_serial(serial)?;
                     }
 
-                    if let Some(osig) = &self.options.osig {
+                    if let Some(osig) = &session.options.osig {
                         kv.set_osig(osig)?;
                     }
 
-                    if let Some(mfdate) = &self.options.mfdate {
+                    if let Some(mfdate) = &session.options.mfdate {
                         kv.set_mf_date(mfdate)?;
                     }
 
-                    if let Some(fcrt) = self.options.fcrt {
+                    if let Some(fcrt) = session.options.fcrt {
                         kv.apply_fcrt_patch(fcrt)?;
                     }
 
-                    if let Some(cid_str) = &self.options.consoleid {
+                    if let Some(cid_str) = &session.options.consoleid {
                         if let Ok(bytes) = crate::builder::builder::hex_to_bytes(cid_str) {
                             if bytes.len() == 5 {
                                 let mut arr = [0u8; 5];
@@ -569,7 +570,7 @@ impl Executor {
             };
 
             // MAC Address
-            if let Some(mac_str) = &self.options.macid {
+            if let Some(mac_str) = &session.options.macid {
                 let clean_mac = mac_str.replace(":", "");
                 if let Ok(bytes) = crate::builder::builder::hex_to_bytes(&clean_mac) {
                     if bytes.len() == 6 {
@@ -581,17 +582,17 @@ impl Executor {
             }
 
             // Regions (SMC sync)
-            let video = if let Some(s) = &self.options.avregion {
+            let video = if let Some(s) = &session.options.avregion {
                 Self::parse_u16_hex_or_dec(s)?
             } else {
                 (smc_config.data[0x22A] as u16) << 8 | smc_config.data[0x22B] as u16
             };
-            let game = if let Some(s) = &self.options.gameregion {
+            let game = if let Some(s) = &session.options.gameregion {
                 Self::parse_u16_hex_or_dec(s)?
             } else {
                 (smc_config.data[0x22C] as u16) << 8 | smc_config.data[0x22D] as u16
             };
-            let dvd = if let Some(s) = &self.options.dvdregion {
+            let dvd = if let Some(s) = &session.options.dvdregion {
                 s.parse::<u8>().unwrap_or(0xFF)
             } else {
                 smc_config.data[0x237]
@@ -599,17 +600,17 @@ impl Executor {
             smc_config.set_regions(video, game, dvd);
 
             // Thermals (Targets)
-            let cpu_t = if let Some(s) = &self.options.cputemp {
+            let cpu_t = if let Some(s) = &session.options.cputemp {
                 Self::parse_u8_hex_or_dec(s)?
             } else {
                 smc_config.data[0x29]
             };
-            let gpu_t = if let Some(s) = &self.options.gputemp {
+            let gpu_t = if let Some(s) = &session.options.gputemp {
                 Self::parse_u8_hex_or_dec(s)?
             } else {
                 smc_config.data[0x2A]
             };
-            let ram_t = if let Some(s) = &self.options.edramtemp {
+            let ram_t = if let Some(s) = &session.options.edramtemp {
                 Self::parse_u8_hex_or_dec(s)?
             } else {
                 smc_config.data[0x2B]
@@ -617,17 +618,17 @@ impl Executor {
             smc_config.set_thermal_targets(cpu_t, gpu_t, ram_t);
 
             // Thermals (Max/Limits)
-            let cpu_m = if let Some(s) = &self.options.overcputemp {
+            let cpu_m = if let Some(s) = &session.options.overcputemp {
                 Self::parse_u8_hex_or_dec(s)?
             } else {
                 smc_config.data[0x2C]
             };
-            let gpu_m = if let Some(s) = &self.options.overgputemp {
+            let gpu_m = if let Some(s) = &session.options.overgputemp {
                 Self::parse_u8_hex_or_dec(s)?
             } else {
                 smc_config.data[0x2D]
             };
-            let ram_m = if let Some(s) = &self.options.overedramtemp {
+            let ram_m = if let Some(s) = &session.options.overedramtemp {
                 Self::parse_u8_hex_or_dec(s)?
             } else {
                 smc_config.data[0x2E]
@@ -635,17 +636,17 @@ impl Executor {
             smc_config.set_thermal_limits(cpu_m, gpu_m, ram_m);
 
             //  Fans
-            if let Some(s) = &self.options.cpufan {
+            if let Some(s) = &session.options.cpufan {
                 let speed = Self::parse_u8_hex_or_dec(s)?;
                 smc_config.set_fan_speed(false, speed != 0, speed);
             }
-            if let Some(s) = &self.options.gpufan {
+            if let Some(s) = &session.options.gpufan {
                 let speed = Self::parse_u8_hex_or_dec(s)?;
                 smc_config.set_fan_speed(true, speed != 0, speed);
             }
 
             // 3f. Reset/XeLL Buttons
-            if let Some(s) = &self.options.xellbutton {
+            if let Some(s) = &session.options.xellbutton {
                 if s.len() == 4 {
                     smc_config.set_reset_code(s.as_bytes().try_into().unwrap());
                 }
@@ -753,7 +754,7 @@ impl Executor {
     }
 
     pub fn execute_command(
-        &mut session: crate::core::session::Session,
+        &mut session: &mut crate::core::session::Session,
         command: InternalCommand,
     ) -> Result<(), String> {
         match command {
@@ -977,7 +978,7 @@ impl Executor {
             } => {
                 info!("[session] Building NAND image to '{}'...", output.display());
                 // Sync options before build
-                session.sync_options_to_nand()?;
+                self.sync_options_to_nand()?;
 
                 if let Some(nand) = &session.active_nand {
                     let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
@@ -1275,7 +1276,7 @@ impl Executor {
                                         info!("[session] LBA Map: {} total blocks, {} bad blocks remapped", lba_map.logical_to_physical.len(), lba_map.bad_blocks.len());
                                         nand.lba_map = Some(lba_map);
                                         session.active_nand = Some(nand);
-                                        session.extract_options_from_nand();
+                                        self.extract_options_from_nand();
                                         info!("[session] Successfully parsed NAND from {:?} (Layout: {:?})", path, layout);
                                     }
                                     Err(e) => return Err(format!("Failed to interpret clean NAND: {}", e)),
@@ -1472,7 +1473,7 @@ impl Executor {
                 }
             }
             InternalCommand::ApplySmcSignature { json } => {
-                if let Err(e) = session.apply_smc_signature_batch(&json) {
+                if let Err(e) = self.apply_smc_signature_batch(&json) {
                     return Err(format!("Failed to apply SMC signature patch: {}", e));
                 }
             }
@@ -1564,7 +1565,7 @@ impl Executor {
             }
             InternalCommand::List => {
                 if let Some(nand) = &session.active_nand {
-                    nand.header.print_info();
+                    // nand.header.print_info();
                     info!(
                         "[session] Bootloaders Present: CB: {} | CD: {} | CE: {}",
                         nand.bootloaders.cb.is_some(),
@@ -1622,7 +1623,7 @@ impl Executor {
             */
             InternalCommand::ApplyOptions => {
                 info!("[session] Applying session options to active NAND...");
-                session.sync_options_to_nand()?;
+                self.sync_options_to_nand()?;
             }
             InternalCommand::SessionInit { base, common } => {
                 info!(
@@ -1684,7 +1685,7 @@ impl Executor {
                             );
                         }
                     }
-                    session.execute_command(queued_cmd.command)?;
+                    self.execute_command(queued_cmd.command)?;
                 }
                 info!("[session] SessionRun: queue cleared.");
             }

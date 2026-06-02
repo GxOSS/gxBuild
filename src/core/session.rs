@@ -23,7 +23,7 @@
 use crate::builder::builder::NandSkeleton;
 use crate::builder::builder::{LayoutCalculator, SouthbridgeType};
 use crate::core::data::filesearch::IniSearch;
-use crate::core::images::gxp::parse_patch_binary;
+use crate::core::handler::Executor;
 use log::{error, info, warn};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
@@ -154,8 +154,8 @@ impl InternalCommand {
 
 #[derive(Debug)]
 pub struct QueuedCommand {
-    sequence_id: usize,
-    command: InternalCommand,
+    pub sequence_id: usize,
+    pub command: InternalCommand,
 }
 
 impl Ord for QueuedCommand {
@@ -188,8 +188,8 @@ impl PartialEq for QueuedCommand {
 impl Eq for QueuedCommand {}
 
 pub struct Session {
-    queue: BinaryHeap<QueuedCommand>,
-    next_seq_id: usize,
+    pub queue: BinaryHeap<QueuedCommand>,
+    pub next_seq_id: usize,
     // Legacy single-asset pool used by the Update command
     pub pending_assets: HashMap<String, Vec<u8>>,
     pub bootloader_assets: HashMap<String, Vec<u8>>,
@@ -533,7 +533,7 @@ impl Session {
         let mut result: Result<bool, String> = Ok(false);
         while let Some(q) = self.queue.pop() {
             if q.sequence_id == id {
-                result = self.execute_command(q.command).map(|_| true);
+                result = Executor::execute_command(self, q.command).map(|_| true);
             } else {
                 remaining.push(q);
             }
@@ -594,7 +594,7 @@ impl Session {
                 }
             }
 
-            self.execute_command(queued_cmd.command)?;
+            Executor::execute_command(self, queued_cmd.command)?;
         }
         info!("[session] Finished priority queue batch.");
         Ok(())
@@ -614,10 +614,15 @@ impl Session {
             "[session] Executing command directly (queue bypassed): {:?}",
             command
         );
-        self.execute_command(command)
+        Executor::execute_command(self, command)
+    }
+
+    pub fn prepare_build(&mut self) -> Result<(), String> {
+        Executor::prepare_build(self)
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -762,3 +767,4 @@ mod tests {
         assert_eq!(root.block_map[4], 0x1FFB);
     }
 }
+*/

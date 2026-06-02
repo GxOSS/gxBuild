@@ -1,3 +1,27 @@
+use log::{debug, error, info, warn};
+use thiserror::Error;
+use zerocopy::byteorder::{I16, U16, U32};
+use zerocopy::FromBytes;
+
+use crate::builder::chain::smc::smc_crypt;
+use crate::builder::chain::*;
+use crate::builder::chain::{
+    cb::BootloaderCb, cd::BootloaderCd, ce::BootloaderCe, cf::BootloaderCf, cg::BootloaderCg,
+    sc::BootloaderSc,
+};
+use crate::builder::filesystem::corona::{self, CoronaFsSlots};
+use crate::builder::filesystem::flashfs::FlashFS;
+use crate::builder::filesystem::mobile::MobileStore;
+use crate::builder::types::*;
+use crate::core::images::blocks::*;
+use crate::core::images::gxp::{apply_records, GxpBinary, GxpPatchType, PatchRecord};
+use crate::crypto::{calculate_smc_hash, hmac_sha, Rc4};
+// Re-export for backward compatibility
+pub use crate::builder::types::{
+    BuildMode, BuildOptions, LayoutCalculator, MotherboardType, NandBootloaders, NandExtra,
+    NandHeader, NandHeaderPrefix, NandUpdate, PayloadEntry, PayloadList, SouthbridgeType,
+};
+
 pub struct BlDiscovery {
     pub magic: String,
     pub version: u16,
