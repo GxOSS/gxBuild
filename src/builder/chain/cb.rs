@@ -142,18 +142,17 @@ impl BootloaderCb {
             "[cb] PD raw bytes at self.data[0x10..0x13]: {:02x?}",
             pd_raw
         );
-        
+
         let mut pairing_data = pd_raw;
         pairing_data.reverse();
 
         let ldv_raw = self.data.get(0x13).copied().unwrap_or(0);
         let mut lockdown_value = if ldv_raw <= 16 { ldv_raw } else { 0 };
-        
+
         info!(
             "[cb] populate_metadata: PD={:02x?} LDV={} (raw={} at self.data[0x13])",
             pairing_data, lockdown_value, ldv_raw
         );
-
 
         // 15432 CB_X
 
@@ -412,7 +411,10 @@ impl BootloaderCb {
         let mut decrypt_key = [0u8; 16];
         decrypt_key.copy_from_slice(&derived_key[..16]);
         self.derived_key = Some(decrypt_key);
-        info!("[builder] Decrypting CB using derived key: {:02x?}", decrypt_key);
+        info!(
+            "[builder] Decrypting CB using derived key: {:02x?}",
+            decrypt_key
+        );
 
         let mut rc4 = Rc4::new(&decrypt_key).map_err(|e| CbError::Rc4Init(e.to_string()))?;
         rc4.crypt(&mut self.data[0x10..payload_len])
@@ -447,7 +449,10 @@ impl BootloaderCb {
         let mut decrypt_key = [0u8; 16];
         decrypt_key.copy_from_slice(&derived_key[..16]);
         self.derived_key = Some(decrypt_key);
-        info!("[builder] Decrypting CB (MFG zero-key) using derived key: {:02x?}", decrypt_key);
+        info!(
+            "[builder] Decrypting CB (MFG zero-key) using derived key: {:02x?}",
+            decrypt_key
+        );
 
         let mut rc4 = Rc4::new(&decrypt_key).map_err(|e| CbError::Rc4Init(e.to_string()))?;
         rc4.crypt(&mut self.data[0x10..payload_len])

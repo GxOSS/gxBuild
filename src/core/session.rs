@@ -23,7 +23,7 @@
 use crate::builder::builder::NandSkeleton;
 use crate::core::data::filesearch::IniSearch;
 use crate::core::handler::Executor;
-use log::{info, error};
+use log::{error, info};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::fs;

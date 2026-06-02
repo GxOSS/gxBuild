@@ -20,18 +20,18 @@
   3. This notice may not be removed or altered from any source distribution.
 */
 
-use crate::core::logger;
-use thiserror::Error;
 use crate::builder::ecc::handle_extract_ecc;
 use crate::core::interface::rhai::GxScriptEngine;
-use clap::ValueEnum;
-use log::{error, info, warn};
-use crate::core::session::Session;
+use crate::core::logger;
 use crate::core::session::InternalCommand;
-use std::path::PathBuf;
+use crate::core::session::Session;
+use clap::ValueEnum;
 use clap::{CommandFactory, Parser, Subcommand};
+use log::{error, info, warn};
+use std::path::PathBuf;
 #[cfg(feature = "rhai")]
 use std::sync::{Arc, Mutex};
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum CliError {
@@ -62,7 +62,6 @@ pub enum CliError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
-
 
 #[derive(Parser, Debug)]
 #[command(

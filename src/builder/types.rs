@@ -347,7 +347,6 @@ pub fn layout_calculator(
     }
 }
 
-
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum BuildMode {
     Normal,
@@ -386,5 +385,3 @@ impl Default for BuildOptions {
         }
     }
 }
-
-

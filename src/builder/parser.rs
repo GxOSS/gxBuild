@@ -1,7 +1,7 @@
-use log::info;
-use thiserror::Error;
 use crate::builder::types::*;
 use crate::crypto::{hmac_sha, Rc4};
+use log::info;
+use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum BuilderError {
     #[error("I/O error: {0}")]
@@ -233,5 +233,3 @@ where
     }
     None
 }
-
-

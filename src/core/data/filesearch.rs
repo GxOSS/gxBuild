@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-use crate::core::images::gxpatch::{parse_patch_binary, apply_records};
+use crate::core::images::gxpatch::{apply_records, parse_patch_binary};
 
 #[derive(Error, Debug)]
 pub enum FilesearchError {
@@ -897,23 +897,14 @@ impl IniSearch {
                         if !nochainpatch {
                             if Some(&lower_name) == target_cb.as_ref() {
                                 if let Some(ref cb_patch) = parsed_patch.cb {
-                                    let _ = apply_records(
-                                        &cb_patch.records,
-                                        &mut c,
-                                    );
+                                    let _ = apply_records(&cb_patch.records, &mut c);
                                 } else if let Some(ref cbb_patch) = parsed_patch.cb_b {
-                                    let _ = apply_records(
-                                        &cbb_patch.records,
-                                        &mut c,
-                                    );
+                                    let _ = apply_records(&cbb_patch.records, &mut c);
                                 }
                             } else if lower_name.starts_with("cd_") || lower_name.starts_with("sd_")
                             {
                                 if let Some(ref cd_patch) = parsed_patch.cd {
-                                    let _ = apply_records(
-                                        &cd_patch.records,
-                                        &mut c,
-                                    );
+                                    let _ = apply_records(&cd_patch.records, &mut c);
                                 }
                             }
                         }

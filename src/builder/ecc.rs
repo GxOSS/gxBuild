@@ -20,11 +20,11 @@
   3. This notice may not be removed or altered from any source distribution.
 */
 
-use crate::builder::parser::{BuilderError, Result};
 use crate::builder::chain::{
     cb::BootloaderCb, cd::BootloaderCd, ce::BootloaderCe, cf::BootloaderCf, cg::BootloaderCg,
     sc::BootloaderSc, smc::RawSmc, BootloaderHeader, XenonBlType,
 };
+use crate::builder::parser::{BuilderError, Result};
 use crate::builder::types::{NandBootloaders, NandExtra, NandHeader, NandUpdate};
 use crate::core::images::blocks::ecc_verify_and_correct;
 use crate::core::images::blocks::NandLayout;

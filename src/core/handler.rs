@@ -1,15 +1,14 @@
-use crate::core::session::InternalCommand;
-use crate::builder::types::{layout_calculator, SouthbridgeType};
 use crate::builder::builder::NandSkeleton;
+use crate::builder::parser::hex_to_bytes;
+use crate::builder::types::{layout_calculator, SouthbridgeType};
 use crate::core::data::filesearch::IniSearch;
+use crate::core::images::gxpatch::parse_patch_binary;
+use crate::core::session::InternalCommand;
+use crate::core::session::{QueuedCommand, Session};
 use log::{error, info, warn};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use crate::core::session::{Session, QueuedCommand};
-use crate::core::images::gxpatch::parse_patch_binary;
-use crate::builder::parser::hex_to_bytes;
-
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum BuildMode {
@@ -142,7 +141,10 @@ impl Executor {
     pub fn prepare_build(session: &mut crate::core::session::Session) -> Result<(), String> {
         use std::collections::HashSet;
 
-        let ini_dir = session.ini_dir.clone().unwrap_or_else(|| PathBuf::from("."));
+        let ini_dir = session
+            .ini_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("."));
         let data_dir = session
             .data_dir
             .clone()
@@ -427,13 +429,15 @@ impl Executor {
             // CPU Key
             if session.options.cpukey.is_none() {
                 if let Some(key) = nand.cpukey {
-                    session.options.cpukey = Some(key.iter().map(|b| format!("{:02x}", b)).collect());
+                    session.options.cpukey =
+                        Some(key.iter().map(|b| format!("{:02x}", b)).collect());
                 }
             }
 
             // Motherboard / Console Type mapping
             if session.options.ctype.is_none() {
-                session.options.ctype = Some(format!("{:?}", nand.options.motherboard).to_lowercase());
+                session.options.ctype =
+                    Some(format!("{:?}", nand.options.motherboard).to_lowercase());
             }
 
             if session.options.cfldv.is_none() {
@@ -669,7 +673,10 @@ impl Executor {
             let profile_l = nand.options.image_profile.to_ascii_lowercase();
             let auto_patch_smc = matches!(profile_l.as_str(), "glitch" | "glitch1" | "glitch2");
             if auto_patch_smc {
-                let ini_dir = session.ini_dir.clone().unwrap_or_else(|| PathBuf::from("."));
+                let ini_dir = session
+                    .ini_dir
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from("."));
                 let patch_path = ini_dir.join("../smc/bin/glitch.json");
                 match fs::read_to_string(&patch_path) {
                     Ok(json) => {
@@ -982,10 +989,7 @@ impl Executor {
 
                 info!("[session] Extraction complete.");
             }
-            InternalCommand::Build {
-                output,
-                ..
-            } => {
+            InternalCommand::Build { output, .. } => {
                 info!("[session] Building NAND image to '{}'...", output.display());
                 // Sync options before build
                 Self::sync_options_to_nand(session)?;
@@ -1401,12 +1405,11 @@ impl Executor {
                             } else {
                                 "single"
                             };
-                            let (_, _, phys_fs_block) =
-                                crate::builder::types::layout_calculator(
-                                    sb,
-                                    chain_profile,
-                                    nand.layout,
-                                );
+                            let (_, _, phys_fs_block) = crate::builder::types::layout_calculator(
+                                sb,
+                                chain_profile,
+                                nand.layout,
+                            );
                             if phys_fs_block != 0 {
                                 phys_fs_block as u16
                             } else {
@@ -1763,12 +1766,11 @@ impl Executor {
                             } else {
                                 "single"
                             };
-                            let (_, _, phys_fs_block) =
-                                crate::builder::types::layout_calculator(
-                                    sb,
-                                    chain_profile,
-                                    nand.layout,
-                                );
+                            let (_, _, phys_fs_block) = crate::builder::types::layout_calculator(
+                                sb,
+                                chain_profile,
+                                nand.layout,
+                            );
                             if phys_fs_block != 0 {
                                 phys_fs_block as u16
                             } else {
