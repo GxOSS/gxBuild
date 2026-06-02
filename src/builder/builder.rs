@@ -1670,7 +1670,7 @@ fn parse_bootloader_chain(
                 required_data_blocks + extra_data_blocks + root_blocks_needed;
 
             if required_total_blocks > available_blocks {
-                let patch_slots = if self.options.dualpatchslots || self.update.cf_1.is_some() {
+                let patch_slots = if self.update.cf_1.is_some() {
                     2usize
                 } else {
                     1usize
@@ -1746,6 +1746,7 @@ fn parse_bootloader_chain(
                 }
             };
 
+            /*
             if self.options.dualpatchslots {
                 if cf1.is_none() || cg1.is_none() {
                     return Err(BuilderError::Build(
@@ -1756,6 +1757,9 @@ fn parse_bootloader_chain(
             } else {
                 header.patch_slots.set(desired_patch_slots);
             }
+            */
+
+            header.patch_slots.set(desired_patch_slots);
 
             if cf0_offset + cf0d.len() > logical_image.len() {
                 return Err(BuilderError::CfOverflow {
@@ -1775,7 +1779,7 @@ fn parse_bootloader_chain(
 
             // If there is no second slot, zero it out so stale CF1/CG1 bytes from
             // the input NAND image are not carried into the output.
-            if !self.options.dualpatchslots && cf1.is_none() && header.patch_slots.get() >= 2 {
+            if cf1.is_none() && header.patch_slots.get() >= 2 {
                 let slot1_start = target_cf_offset + 0x10000;
                 let slot1_end = (slot1_start + 0x10000).min(logical_image.len());
                 if slot1_start < logical_image.len() {
@@ -1974,6 +1978,7 @@ fn parse_bootloader_chain(
             .saturating_add(if has_vfuses { 0x60 } else { 0x10 });
 
         let mut khv_len = 0usize;
+        /*
         if let Some(records) = &self.bootloaders.khvpatch {
             if !self.options.khv_apply {
                 let patch_stream = serialize_records(records);
@@ -2002,7 +2007,7 @@ fn parse_bootloader_chain(
                 }
             }
         }
-
+        */
         let mut final_payloads = self.payloads.clone();
         let mut current_payload_offset = (patch_stream_start + khv_len + 0x1F) & !0x1F;
         let mut payload_list = PayloadList::new();
@@ -2061,7 +2066,7 @@ fn parse_bootloader_chain(
         }
 
         header.prefix.entrypoint.set(bootchain_start as u32);
-        header.apply_xebuild_header_flags(&self.options, &self.extra);
+        header.apply_xebuild_header_flags(&self.options);
         let header_bytes = zerocopy::IntoBytes::as_bytes(&header);
         logical_image[..header_bytes.len()].copy_from_slice(header_bytes);
 
@@ -2163,7 +2168,7 @@ fn parse_bootloader_chain(
             }
         }
 
-        if !self.options.nomobile && self.mobile.latest.iter().any(|s| s.is_some()) {
+        if self.mobile.latest.iter().any(|s| s.is_some()) {
             let fs_start: u16 = match layout {
                 NandLayout::Bb => std::cmp::max(4u16, self.flashfs.root.block_number.max(0) as u16),
                 _ => 0x4E,
@@ -2202,6 +2207,7 @@ fn parse_bootloader_chain(
             skel.options.image_profile, skel.options.build_mode
         );
 
+        /*
         let target_pd = if let Some(pairing) = skel.options.jtag_pairing_2bl {
             info!(
                 "[builder] Using JTAG 2BL pairing override: {:02x?}",
@@ -2211,8 +2217,10 @@ fn parse_bootloader_chain(
         } else {
             skel.input_pd
         };
+        */
 
-        if let Some(pd) = target_pd {
+        
+        if let Some(pd) = skel.input_pd {
             info!("[builder] Synchronizing Pairing Data");
             if skel.options.verbose {
                 debug!("[builder] Pairing Data: {:02x?}", pd);
@@ -2411,14 +2419,11 @@ fn parse_bootloader_chain(
         smc.encrypt_with_scramble(scramble_smc);
         skel.extra.smc = smc.data;
 
-        if skel.rebooter.is_some() {
-            skel.assemble_rebooter()
-        } else {
-            skel.assemble_logical()
-        }
+        skel.assemble_logical()
     }
 
     pub fn apply_patch(&mut self, patch: GxpBinary) -> Result<()> {
+        /*
         if let Some(khv) = patch.khv {
             info!(
                 "[builder] Routing {} KHV patch records to options slot...",
@@ -2435,7 +2440,7 @@ fn parse_bootloader_chain(
                     .collect(),
             );
         }
-
+        */
         if let Some(cb_b) = patch.cb_b {
             if patch.header.patch_type == GxpPatchType::Rgh4Section {
                 if let Some(cbb_bl) = &mut self.bootloaders.cb_b {
@@ -2564,7 +2569,7 @@ mod tests {
         retail_header.copyright[0x3F] = 0xBB;
         let mut retail_opts = skeleton.options.clone();
         retail_opts.image_profile = "retail".to_string();
-        retail_header.apply_xebuild_header_flags(&retail_opts, &skeleton.extra);
+        retail_header.apply_xebuild_header_flags(&retail_opts);
         assert_eq!(retail_header.copyright[0x3B], 0);
         assert_eq!(retail_header.copyright[0x3E], 0xAA);
         assert_eq!(retail_header.copyright[0x3F], 0xBB);
@@ -2574,7 +2579,7 @@ mod tests {
         devkit_header.copyright[0x3F] = 0xBB;
         let mut devkit_opts = skeleton.options.clone();
         devkit_opts.image_profile = "devkit".to_string();
-        devkit_header.apply_xebuild_header_flags(&devkit_opts, &skeleton.extra);
+        devkit_header.apply_xebuild_header_flags(&devkit_opts);
         assert_eq!(devkit_header.copyright[0x3B], 0);
         assert_eq!(devkit_header.copyright[0x3E], 0xAA);
         assert_eq!(devkit_header.copyright[0x3F], 0xBB);
@@ -2582,7 +2587,7 @@ mod tests {
         let mut hacked_header = skeleton.header.clone();
         let mut hacked_opts = skeleton.options.clone();
         hacked_opts.image_profile = "glitch2".to_string();
-        hacked_header.apply_xebuild_header_flags(&hacked_opts, &skeleton.extra);
+        hacked_header.apply_xebuild_header_flags(&hacked_opts);
         assert_eq!(hacked_header.copyright[0x3B], 1);
         assert_eq!(hacked_header.copyright[0x3E], 0x00);
         assert_eq!(hacked_header.copyright[0x3F], 0x12);
@@ -2590,7 +2595,7 @@ mod tests {
         let mut xdk_header = skeleton.header.clone();
         let mut xdk_opts = skeleton.options.clone();
         xdk_opts.image_profile = "xdkbuild".to_string();
-        xdk_header.apply_xebuild_header_flags(&xdk_opts, &skeleton.extra);
+        xdk_header.apply_xebuild_header_flags(&xdk_opts);
         assert_eq!(xdk_header.copyright[0x3B], 1);
         assert_eq!(xdk_header.copyright[0x3E], 0x00);
         assert_eq!(xdk_header.copyright[0x3F], 0x12);
