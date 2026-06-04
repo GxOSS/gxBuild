@@ -19,7 +19,7 @@
      misrepresented as being the original software.
   3. This notice may not be removed or altered from any source distribution.
 */
-use crate::builder::builder::NandSkeleton;
+use crate::builder::nand::builder::NandSkeleton;
 use crate::builder::filesystem::flashfs::{FileSystemEntry, FlashFS};
 use crate::core::data::xeini::{strip_flashfs_path_indicator, XeBuildIni};
 use log::{info, warn};

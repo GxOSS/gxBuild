@@ -29,8 +29,6 @@ pub enum OptionsIniError {
     BadOptionsFormat(),
 }
 
-
-
 #[derive(Debug, Clone)]
 pub struct CoreOptions {
     pub noenter: Option<bool>,
@@ -44,15 +42,15 @@ pub struct CoreOptions {
 pub struct CoreBuilderOptions {
     pub nosecurity: Option<bool>,
     pub nosusecurity: Option<bool>,
-    pub noremap: bool,
+    pub noremap: Option<bool>,
     pub nandmu: Option<bool>,
     pub nochainpatch: Option<bool>,
-    pub nofcrt: bool,
-    pub dualpatchslots: bool,
-    pub mfg: bool,
-    pub xsb: bool,
-    pub nomobile: bool,
-    pub full_image: bool,
+    pub nofcrt: Option<bool>,
+    pub dualpatchslots: Option<bool>,
+    pub mfg: Option<bool>,
+    pub xsb: Option<bool>,
+    pub nomobile: Option<bool>,
+    pub full_image: Option<bool>,
     pub noecc: Option<bool>,
 }
 
@@ -63,8 +61,8 @@ pub struct BuilderOptions {
     pub noflashfs: Option<bool>,
     pub xellbutton: Option<String>,
     pub xellbutton2: Option<String>,
-    // pub noecdremap: Option<bool>,
-    // pub smcnocheck: Option<bool>,
+    pub noecdremap: Option<bool>,
+    pub smcnocheck: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -161,19 +159,21 @@ impl OptionsIni {
             core_builder: CoreBuilderOptions {
                 nosecurity: None,
                 nosusecurity: None,
-                noremap: false,
+                noremap: None,
                 nandmu: None,
                 nochainpatch: None,
-                nofcrt: false,
-                dualpatchslots: false,
-                mfg: false,
-                xsb: false,
-                nomobile: false,
-                full_image: false,
+                nofcrt: None,
+                dualpatchslots: None,
+                mfg: None,
+                xsb: None,
+                nomobile: None,
+                full_image: None,
+                noecc: None,
             },
             builder: BuilderOptions {
+                gxunsafe: None,
+                verbose: None,
                 noflashfs: None,
-                noecc: None,
                 xellbutton: None,
                 xellbutton2: None,
                 noecdremap: None,
@@ -254,8 +254,8 @@ impl OptionsIni {
         if let Some(v) = other.core_builder.nosusecurity {
             self.core_builder.nosusecurity = Some(v);
         }
-        if other.core_builder.noremap {
-            self.core_builder.noremap = true;
+        if let Some(v) = other.core_builder.noremap {
+            self.core_builder.noremap = Some(v);
         }
         if let Some(v) = other.core_builder.nandmu {
             self.core_builder.nandmu = Some(v);
@@ -263,31 +263,37 @@ impl OptionsIni {
         if let Some(v) = other.core_builder.nochainpatch {
             self.core_builder.nochainpatch = Some(v);
         }
-        if other.core_builder.nofcrt {
-            self.core_builder.nofcrt = true;
+        if let Some(v) = other.core_builder.nofcrt {
+            self.core_builder.nofcrt = Some(v);
         }
-        if other.core_builder.dualpatchslots {
-            self.core_builder.dualpatchslots = true;
+        if let Some(v) = other.core_builder.dualpatchslots {
+            self.core_builder.dualpatchslots = Some(v);
         }
-        if other.core_builder.mfg {
-            self.core_builder.mfg = true;
+        if let Some(v) = other.core_builder.mfg {
+            self.core_builder.mfg = Some(v);
         }
-        if other.core_builder.xsb {
-            self.core_builder.xsb = true;
+        if let Some(v) = other.core_builder.xsb {
+            self.core_builder.xsb = Some(v);
         }
-        if other.core_builder.nomobile {
-            self.core_builder.nomobile = true;
+        if let Some(v) = other.core_builder.nomobile {
+            self.core_builder.nomobile = Some(v);
         }
-        if other.core_builder.full_image {
-            self.core_builder.full_image = true;
+        if let Some(v) = other.core_builder.full_image {
+            self.core_builder.full_image = Some(v);
+        }
+        if let Some(v) = other.core_builder.noecc {
+            self.core_builder.noecc = Some(v);
         }
 
         // BuilderOptions
+        if let Some(v) = other.builder.gxunsafe {
+            self.builder.gxunsafe = Some(v);
+        }
+        if let Some(v) = other.builder.verbose {
+            self.builder.verbose = Some(v);
+        }
         if let Some(v) = other.builder.noflashfs {
             self.builder.noflashfs = Some(v);
-        }
-        if let Some(v) = other.builder.noecc {
-            self.builder.noecc = Some(v);
         }
         if let Some(v) = other.builder.xellbutton {
             self.builder.xellbutton = Some(v);
@@ -397,13 +403,17 @@ impl OptionsIni {
             "region" | "avregion" => self.keyvault.avregion = Some(v.to_string()),
             "gameregion" => self.keyvault.gameregion = Some(v.to_string()),
             "dvdregion" => self.keyvault.dvdregion = Some(v.to_string()),
-            "unsafe" | "gxunsafe" => self.core.gxunsafe = Some(is_true),
+            "unsafe" | "gxunsafe" => {
+                self.core.gxunsafe = Some(is_true);
+                self.builder.gxunsafe = Some(is_true);
+            }
             "verbose" => {
                 self.core.verbose = Some(is_true);
+                self.builder.verbose = Some(is_true);
                 let _ = crate::core::logger::init_logger("build", is_true);
             }
-            "nomobile" => self.core_builder.nomobile = is_true,
-            "noremap" => self.core_builder.noremap = is_true,
+            "nomobile" => self.core_builder.nomobile = Some(is_true),
+            "noremap" => self.core_builder.noremap = Some(is_true),
             "nandmu" => self.core_builder.nandmu = Some(is_true),
             "cputemp" => self.smc_config.cputemp = Some(v.to_string()),
             "gputemp" => self.smc_config.gputemp = Some(v.to_string()),
@@ -420,7 +430,7 @@ impl OptionsIni {
             "consoleid" => self.keyvault.consoleid = Some(v.to_string()),
             "osig" => self.keyvault.osig = Some(v.to_string()),
             "mfdate" => self.keyvault.mfdate = Some(v.to_string()),
-            "nofcrt" => self.core_builder.nofcrt = is_true,
+            "nofcrt" => self.core_builder.nofcrt = Some(is_true),
             "xellbutton" => self.builder.xellbutton = Some(v.to_string()),
             "xellbutton2" => self.builder.xellbutton2 = Some(v.to_string()),
             "cygnos" => self.jtag.cygnos = Some(is_true),
@@ -431,17 +441,19 @@ impl OptionsIni {
             "olddvd" => self.jtag.olddvd = Some(is_true),
             "nodvd" => self.jtag.nodvd = Some(is_true),
             "dualboot" => self.jtag.dualboot = Some(is_true),
-            "dualpatchslots" => self.core_builder.dualpatchslots = is_true,
+            "dualpatchslots" => self.core_builder.dualpatchslots = Some(is_true),
             "nolog" => self.core.nolog = Some(is_true),
             "noinfo" => self.core.noinfo = Some(is_true),
             "noenter" => self.core.noenter = Some(is_true),
-            "noecc" => self.builder.noecc = Some(is_true),
+            "noecc" => self.core_builder.noecc = Some(is_true),
+            "noecdremap" => self.builder.noecdremap = Some(is_true),
+            "smcnocheck" => self.builder.smcnocheck = Some(is_true),
             "nosecurity" => self.core_builder.nosecurity = Some(is_true),
             "nosusecurity" => self.core_builder.nosusecurity = Some(is_true),
             "nochainpatch" => self.core_builder.nochainpatch = Some(is_true),
-            "mfg" => self.core_builder.mfg = is_true,
-            "xsb" => self.core_builder.xsb = is_true,
-            "full_image" => self.core_builder.full_image = is_true,
+            "mfg" => self.core_builder.mfg = Some(is_true),
+            "xsb" => self.core_builder.xsb = Some(is_true),
+            "full_image" => self.core_builder.full_image = Some(is_true),
             _ => warn!("[session] set_option: unknown key '{}'", key),
         }
     }
@@ -483,27 +495,35 @@ pub fn parse_options_ini(content: &str) -> Result<OptionsIni, OptionsIniError> {
                     "olddvd" => options.jtag.olddvd = Some(value.eq_ignore_ascii_case("true")),
                     "nodvd" => options.jtag.nodvd = Some(value.eq_ignore_ascii_case("true")),
                     "dualboot" => options.jtag.dualboot = Some(value.eq_ignore_ascii_case("true")),
-                    "nomobile" => options.core_builder.nomobile = value.eq_ignore_ascii_case("true"),
-                    "noremap" => options.core_builder.noremap = value.eq_ignore_ascii_case("true"),
+                    "nomobile" => {
+                        options.core_builder.nomobile = Some(value.eq_ignore_ascii_case("true"))
+                    }
+                    "noremap" => options.core_builder.noremap = Some(value.eq_ignore_ascii_case("true")),
                     "noecdremap" => options.builder.noecdremap = Some(value.eq_ignore_ascii_case("true")),
                     "nandmu" => options.core_builder.nandmu = Some(value.eq_ignore_ascii_case("true")),
                     "nosecurity" => options.core_builder.nosecurity = Some(value.eq_ignore_ascii_case("true")),
                     "nosusecurity" => {
                         options.core_builder.nosusecurity = Some(value.eq_ignore_ascii_case("true"))
                     }
-                    "noecc" => options.builder.noecc = Some(value.eq_ignore_ascii_case("true")),
+                    "noecc" => options.core_builder.noecc = Some(value.eq_ignore_ascii_case("true")),
                     "noflashfs" => options.builder.noflashfs = Some(value.eq_ignore_ascii_case("true")),
                     "dualpatchslots" => {
-                        options.core_builder.dualpatchslots = value.eq_ignore_ascii_case("true")
+                        options.core_builder.dualpatchslots = Some(value.eq_ignore_ascii_case("true"))
                     }
                     "smcnocheck" => options.builder.smcnocheck = Some(value.eq_ignore_ascii_case("true")),
                     "noenter" => options.core.noenter = Some(value.eq_ignore_ascii_case("true")),
                     "nolog" => options.core.nolog = Some(value.eq_ignore_ascii_case("true")),
                     "noinfo" => options.core.noinfo = Some(value.eq_ignore_ascii_case("true")),
                     "gxunsafe" | "unsafe" => {
-                        options.core.gxunsafe = Some(value.eq_ignore_ascii_case("true"))
+                        let b = value.eq_ignore_ascii_case("true");
+                        options.core.gxunsafe = Some(b);
+                        options.builder.gxunsafe = Some(b);
                     }
-                    "verbose" => options.core.verbose = Some(value.eq_ignore_ascii_case("true")),
+                    "verbose" => {
+                        let b = value.eq_ignore_ascii_case("true");
+                        options.core.verbose = Some(b);
+                        options.builder.verbose = Some(b);
+                    }
                     "nochainpatch" => {
                         options.core_builder.nochainpatch = Some(value.eq_ignore_ascii_case("true"))
                     }
@@ -523,10 +543,12 @@ pub fn parse_options_ini(content: &str) -> Result<OptionsIni, OptionsIniError> {
                     "consoleid" => options.keyvault.consoleid = Some(value.clone()),
                     "osig" => options.keyvault.osig = Some(value.clone()),
                     "mfdate" => options.keyvault.mfdate = Some(value.clone()),
-                    "nofcrt" => options.core_builder.nofcrt = value.eq_ignore_ascii_case("true"),
-                    "mfg" => options.core_builder.mfg = value.eq_ignore_ascii_case("true"),
-                    "xsb" => options.core_builder.xsb = value.eq_ignore_ascii_case("true"),
-                    "full_image" => options.core_builder.full_image = value.eq_ignore_ascii_case("true"),
+                    "nofcrt" => options.core_builder.nofcrt = Some(value.eq_ignore_ascii_case("true")),
+                    "mfg" => options.core_builder.mfg = Some(value.eq_ignore_ascii_case("true")),
+                    "xsb" => options.core_builder.xsb = Some(value.eq_ignore_ascii_case("true")),
+                    "full_image" => {
+                        options.core_builder.full_image = Some(value.eq_ignore_ascii_case("true"))
+                    }
                     _ => warn!("[ini] Unknown option: {}", key),
                 },
                 _ => {}

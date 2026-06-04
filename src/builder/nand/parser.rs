@@ -11,7 +11,6 @@ use crate::builder::chain::{
 };
 use crate::builder::filesystem::corona::{self};
 use crate::builder::filesystem::flashfs::FlashFS;
-use crate::builder::filesystem::mobile::MobileStore;
 use crate::core::images::blocks::*;
 
 
@@ -101,7 +100,6 @@ impl NandSkeleton {
                 Vec::new()
             }
         };
-        lba_map
 
         let mut extra = NandExtra {
             smc: smc_data,
@@ -162,7 +160,7 @@ impl NandSkeleton {
 
         Ok(NandSkeleton {
             cpukey: None,
-            image,
+            build_options: BuildOptions::default(),
             options: NandConfig {
                 layout,
                 image_profile: (if bootloaders.cb_b.is_some() {
@@ -176,31 +174,29 @@ impl NandSkeleton {
                 total_blocks,
                 khv_header_size: 0x4000,
             },
-            build_options: BuildOptions {
-                noflashfs: None,
-                xellbutton: None,
-                xellbutton2: None,
-                gxunsafe: false,
-                verbose: false,
-            },
             header,
+            image,
             extra,
             kv: Some(kv),
             bootloaders,
-            update: None,
+            update: Some(update),
             payloads: None,
-            flashfs: None,
+            flashfs: Some(final_flashfs),
             mobile: None,
-            corona_fs: None,
+            corona_fs: Some(corona_fs),
         })
     }
 
     pub fn parse_encrypted_chain(&self) -> Result<(NandBootloaders, NandUpdate)> {
+        let flashfs = self
+            .flashfs
+            .as_ref()
+            .ok_or_else(|| BuilderError::Build("Missing FlashFS".to_string()))?;
         Self::parse_bootloader_chain(
             &self.image,
             self.header.cb_offset() as usize,
             self.header.cf_offset.get() as usize,
-            &self.flashfs,
+            flashfs,
         )
     }
 
@@ -308,6 +304,7 @@ impl NandSkeleton {
             smc_config: config_data,
             keyvault: kv.data.clone(),
             fcrt: None,
+            lba_map: LbaMap::new(0x400),
             // power_on_cause_a: 0,
             // power_on_cause_b: 0,
         };
@@ -384,60 +381,7 @@ impl NandSkeleton {
         }
 
         let total_blocks = layout.total_blocks(image.len());
-        let lba_map = LbaMap::from_layout(layout, total_blocks);
-
-        let mut input_ldv_cb = None;
-        let mut input_pd = None;
-
-        if let Some(cb_b) = bl_mut.cb_b.as_ref() {
-            info!(
-                "[builder] Input CB_B: data_len={}, metadata={}",
-                cb_b.data.len(),
-                cb_b.metadata.is_some()
-            );
-            if let Some(meta) = &cb_b.metadata {
-                input_ldv_cb = Some(meta.lockdown_value);
-                input_pd = Some(meta.pairing_data);
-                info!("[builder] Captured input CB_B LDV={}", meta.lockdown_value);
-            } else {
-                warn!("[builder] Input CB_B metadata is None after decryption!");
-            }
-        } else if let Some(cb) = bl_mut.cb.as_ref() {
-            info!(
-                "[builder] Input CB (single): data_len={}, metadata={}",
-                cb.data.len(),
-                cb.metadata.is_some()
-            );
-            if let Some(meta) = &cb.metadata {
-                input_ldv_cb = Some(meta.lockdown_value);
-                input_pd = Some(meta.pairing_data);
-                info!("[builder] Captured input CB LDV={}", meta.lockdown_value);
-            } else {
-                warn!("[builder] Input CB metadata is None after decryption!");
-            }
-        }
-
-        if input_pd.is_none() {
-            input_pd = update
-                .cf_0
-                .as_ref()
-                .and_then(|cf| cf.metadata.as_ref().map(|m| m.pairing_data));
-        }
-
-        let ldv0 = update
-            .cf_0
-            .as_ref()
-            .and_then(|cf| cf.metadata.as_ref().map(|m| m.lockdown_value));
-        let ldv1 = update
-            .cf_1
-            .as_ref()
-            .and_then(|cf| cf.metadata.as_ref().map(|m| m.lockdown_value));
-        let input_ldv_cf = match (ldv0, ldv1) {
-            (Some(a), Some(b)) => Some(a.max(b)),
-            (Some(a), None) => Some(a),
-            (None, Some(b)) => Some(b),
-            _ => None,
-        };
+        extra.lba_map = LbaMap::from_layout(layout, total_blocks);
 
         let corona_fs = if layout == NandLayout::Emmc {
             corona::load_slots(&image)
@@ -447,13 +391,9 @@ impl NandSkeleton {
 
         Ok(NandSkeleton {
             cpukey: Some(cpukey),
-            image,
-            lba_map: Some(lba_map),
-            layout,
-            total_blocks,
-            options: BuildOptions {
+            build_options: BuildOptions::default(),
+            options: NandConfig {
                 layout,
-                lba_map: LbaMap::from_layout(layout, total_blocks),
                 image_profile: (if bl_mut.cb_b.is_some() {
                     "split"
                 } else {
@@ -462,24 +402,19 @@ impl NandSkeleton {
                 .to_string(),
                 build_mode: BuildMode::Normal,
                 motherboard,
-                gxunsafe: false,
-                verbose: false,
-                ..Default::default()
+                total_blocks,
+                khv_header_size: 0x4000,
             },
             header,
+            image,
             extra,
             kv: Some(kv),
             bootloaders: bl_mut,
-            rebooter: None,
-            update,
-            rebooter_update: None,
-            payloads: Vec::new(),
-            flashfs: final_flashfs,
-            mobile: MobileStore::new(),
-            corona_fs,
-            input_ldv_cb,
-            input_ldv_cf,
-            input_pd,
+            update: Some(update),
+            payloads: None,
+            flashfs: Some(final_flashfs),
+            mobile: None,
+            corona_fs: Some(corona_fs),
         })
     }
 

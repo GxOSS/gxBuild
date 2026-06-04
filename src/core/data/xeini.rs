@@ -20,7 +20,7 @@
   3. This notice may not be removed or altered from any source distribution.
 */
 
-use crate::builder::builder::NandSkeleton;
+use crate::builder::nand::builder::NandSkeleton;
 use crate::core::images::gxpatch::PatchRecord;
 use crc32fast::Hasher;
 use log::{info, warn};
