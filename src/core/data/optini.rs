@@ -29,60 +29,48 @@ pub enum OptionsIniError {
     BadOptionsFormat(),
 }
 
+
+
+#[derive(Debug, Clone)]
 pub struct CoreOptions {
-    pub mfg: bool,
-    pub noremap: bool,
-    pub xsb: bool,
-    pub nomobile: bool,
-    pub nofcrt: bool,
-    pub dualpatchslots: bool,
-    pub gxunsafe: bool,
-    pub full_image: bool,
-    pub cygnos: bool,
-    pub demon: bool,
-}
-
-impl Default for CoreOptions {
-    fn default() -> Self {
-        CoreOptions {
-            mfg: false,
-            noremap: false,
-            xsb: false,
-            nomobile: false,
-            nofcrt: false,
-            dualpatchslots: false,
-            gxunsafe: false,
-            full_image: false,
-            cygnos: false,
-            demon: false,
-        }
-    }
-}
-
-pub struct JtagOptions {
-    pub jtag_syscall: Option<u16>,
-    pub jtag_pairing_2bl: Option<[u8; 3]>,
-}
-
-impl Default for JtagOptions {
-    fn default() -> Self {
-        JtagOptions {
-            jtag_syscall: None,
-            jtag_pairing_2bl: None,
-        }
-    }
+    pub noenter: Option<bool>,
+    pub nolog: Option<bool>,
+    pub noinfo: Option<bool>,
+    pub gxunsafe: Option<bool>,
+    pub verbose: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
-pub struct OptionsIni {
-    pub ctype: Option<String>, // console?
+pub struct CoreBuilderOptions {
+    pub nosecurity: Option<bool>,
+    pub nosusecurity: Option<bool>,
+    pub noremap: bool,
+    pub nandmu: Option<bool>,
+    pub nochainpatch: Option<bool>,
+    pub nofcrt: bool,
+    pub dualpatchslots: bool,
+    pub mfg: bool,
+    pub xsb: bool,
+    pub nomobile: bool,
+    pub full_image: bool,
+    pub noecc: Option<bool>,
+}
 
-    pub _1blkey: Option<String>,
-    pub cpukey: Option<String>,
-    pub cfldv: Option<String>,
-
+#[derive(Debug, Clone)]
+pub struct BuilderOptions {
+    pub gxunsafe: Option<bool>,
+    pub verbose: Option<bool>,
+    pub noflashfs: Option<bool>,
     pub xellbutton: Option<String>,
     pub xellbutton2: Option<String>,
+    // pub noecdremap: Option<bool>,
+    // pub smcnocheck: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+pub struct JtagOptions {
+    pub jtag_syscall: Option<u16>,
+    pub jtag_pairing_2bl: Option<[u8; 3]>,
     pub cygnos: Option<bool>,
     pub demon: Option<bool>,
     pub smcnoeject: Option<bool>,
@@ -91,24 +79,27 @@ pub struct OptionsIni {
     pub olddvd: Option<bool>,
     pub nodvd: Option<bool>,
     pub dualboot: Option<bool>,
+}
 
-    pub nochainpatch: Option<bool>,
-    pub nomobile: Option<bool>,
-    pub noflashfs: Option<bool>,
-    pub dualpatchslots: Option<bool>,
-    pub nandmu: Option<bool>,
-    pub full_image: Option<bool>,
-    pub xsb: Option<bool>,
-    pub nofcrt: Option<bool>,
+impl Default for JtagOptions {
+    fn default() -> Self {
+        JtagOptions {
+            jtag_syscall: None,
+            jtag_pairing_2bl: None,
+            cygnos: None,
+            demon: None,
+            smcnoeject: None,
+            smcnoblink: None,
+            patchsmc: None,
+            olddvd: None,
+            nodvd: None,
+            dualboot: None,
+        }
+    }
+}
 
-    pub noremap: Option<bool>,
-    pub noecdremap: Option<bool>,
-    pub smcnocheck: Option<bool>,
-
-    pub nosecurity: Option<bool>,
-    pub nosusecurity: Option<bool>,
-    pub noecc: Option<bool>,
-
+#[derive(Debug, Clone)]
+pub struct SmcConfigOptions {
     pub cputemp: Option<String>,
     pub gputemp: Option<String>,
     pub edramtemp: Option<String>,
@@ -117,7 +108,10 @@ pub struct OptionsIni {
     pub overedramtemp: Option<String>,
     pub cpufan: Option<String>,
     pub gpufan: Option<String>,
+}
 
+#[derive(Debug, Clone)]
+pub struct KeyvaultOptions {
     pub avregion: Option<String>,
     pub gameregion: Option<String>,
     pub dvdregion: Option<String>,
@@ -127,283 +121,329 @@ pub struct OptionsIni {
     pub osig: Option<String>,
     pub mfdate: Option<String>,
     pub dvdkey: Option<String>,
+}
 
-    pub noenter: Option<bool>,
-    pub nolog: Option<bool>,
-    pub noinfo: Option<bool>,
-    pub gxunsafe: Option<bool>,
-    pub verbose: Option<bool>,
+#[derive(Debug, Clone)]
+pub struct GxBuildKeys {
+    pub ctype: Option<String>,
+    pub _1blkey: Option<String>,
+    pub cpukey: Option<String>,
+    pub cfldv: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OptionsIni {
+    pub keys: GxBuildKeys,
+    pub core: CoreOptions,
+    pub core_builder: CoreBuilderOptions,
+    pub builder: BuilderOptions,
+    pub jtag: JtagOptions,
+    pub smc_config: SmcConfigOptions,
+    pub keyvault: KeyvaultOptions,
 }
 
 impl OptionsIni {
     pub fn new() -> Self {
         OptionsIni {
-            ctype: None, // console?
-
-            _1blkey: None,
-            cpukey: None,
-            cfldv: None,
-
-            xellbutton: None,
-            xellbutton2: None,
-            cygnos: None,
-            demon: None,
-            smcnoeject: None,
-            smcnoblink: None,
-            patchsmc: None,
-            olddvd: None,
-            nodvd: None,
-            dualboot: None,
-
-            nochainpatch: None,
-            nomobile: None,
-            noflashfs: None,
-            dualpatchslots: None,
-            nandmu: None,
-            full_image: None,
-            xsb: None,
-            nofcrt: None,
-
-            noremap: None,
-            noecdremap: None,
-            smcnocheck: None,
-
-            nosecurity: None,
-            nosusecurity: None,
-            noecc: None,
-
-            cputemp: None,
-            gputemp: None,
-            edramtemp: None,
-            overcputemp: None,
-            overgputemp: None,
-            overedramtemp: None,
-            cpufan: None,
-            gpufan: None,
-
-            avregion: None,
-            gameregion: None,
-            dvdregion: None,
-            macid: None,
-            serial: None,
-            consoleid: None,
-            osig: None,
-            mfdate: None,
-            dvdkey: None,
-
-            noenter: None,
-            nolog: None,
-            noinfo: None,
-            gxunsafe: None,
-            verbose: None,
+            keys: GxBuildKeys {
+                ctype: None,
+                _1blkey: None,
+                cpukey: None,
+                cfldv: None,
+            },
+            core: CoreOptions {
+                noenter: None,
+                nolog: None,
+                noinfo: None,
+                gxunsafe: None,
+                verbose: None,
+            },
+            core_builder: CoreBuilderOptions {
+                nosecurity: None,
+                nosusecurity: None,
+                noremap: false,
+                nandmu: None,
+                nochainpatch: None,
+                nofcrt: false,
+                dualpatchslots: false,
+                mfg: false,
+                xsb: false,
+                nomobile: false,
+                full_image: false,
+            },
+            builder: BuilderOptions {
+                noflashfs: None,
+                noecc: None,
+                xellbutton: None,
+                xellbutton2: None,
+                noecdremap: None,
+                smcnocheck: None,
+            },
+            jtag: JtagOptions {
+                jtag_syscall: None,
+                jtag_pairing_2bl: None,
+                cygnos: None,
+                demon: None,
+                smcnoeject: None,
+                smcnoblink: None,
+                patchsmc: None,
+                olddvd: None,
+                nodvd: None,
+                dualboot: None,
+            },
+            smc_config: SmcConfigOptions {
+                cputemp: None,
+                gputemp: None,
+                edramtemp: None,
+                overcputemp: None,
+                overgputemp: None,
+                overedramtemp: None,
+                cpufan: None,
+                gpufan: None,
+            },
+            keyvault: KeyvaultOptions {
+                avregion: None,
+                gameregion: None,
+                dvdregion: None,
+                macid: None,
+                serial: None,
+                consoleid: None,
+                osig: None,
+                mfdate: None,
+                dvdkey: None,
+            },
         }
     }
 
     pub fn merge(&mut self, other: OptionsIni) {
-        if let Some(v) = other.ctype {
-            self.ctype = Some(v);
+        // GxBuildKeys
+        if let Some(v) = other.keys.ctype {
+            self.keys.ctype = Some(v);
         }
-        if let Some(v) = other._1blkey {
-            self._1blkey = Some(v);
+        if let Some(v) = other.keys._1blkey {
+            self.keys._1blkey = Some(v);
         }
-        if let Some(v) = other.cpukey {
-            self.cpukey = Some(v);
+        if let Some(v) = other.keys.cpukey {
+            self.keys.cpukey = Some(v);
         }
-        if let Some(v) = other.cfldv {
-            self.cfldv = Some(v);
+        if let Some(v) = other.keys.cfldv {
+            self.keys.cfldv = Some(v);
         }
-        if let Some(v) = other.dvdkey {
-            self.dvdkey = Some(v);
+
+        // CoreOptions
+        if let Some(v) = other.core.noenter {
+            self.core.noenter = Some(v);
         }
-        if let Some(v) = other.xellbutton {
-            self.xellbutton = Some(v);
+        if let Some(v) = other.core.nolog {
+            self.core.nolog = Some(v);
         }
-        if let Some(v) = other.xellbutton2 {
-            self.xellbutton2 = Some(v);
+        if let Some(v) = other.core.noinfo {
+            self.core.noinfo = Some(v);
         }
-        if let Some(v) = other.cygnos {
-            self.cygnos = Some(v);
+        if let Some(v) = other.core.gxunsafe {
+            self.core.gxunsafe = Some(v);
         }
-        if let Some(v) = other.demon {
-            self.demon = Some(v);
+        if let Some(v) = other.core.verbose {
+            self.core.verbose = Some(v);
         }
-        if let Some(v) = other.smcnoeject {
-            self.smcnoeject = Some(v);
+
+        // CoreBuilderOptions
+        if let Some(v) = other.core_builder.nosecurity {
+            self.core_builder.nosecurity = Some(v);
         }
-        if let Some(v) = other.smcnoblink {
-            self.smcnoblink = Some(v);
+        if let Some(v) = other.core_builder.nosusecurity {
+            self.core_builder.nosusecurity = Some(v);
         }
-        if let Some(v) = other.patchsmc {
-            self.patchsmc = Some(v);
+        if other.core_builder.noremap {
+            self.core_builder.noremap = true;
         }
-        if let Some(v) = other.olddvd {
-            self.olddvd = Some(v);
+        if let Some(v) = other.core_builder.nandmu {
+            self.core_builder.nandmu = Some(v);
         }
-        if let Some(v) = other.nodvd {
-            self.nodvd = Some(v);
+        if let Some(v) = other.core_builder.nochainpatch {
+            self.core_builder.nochainpatch = Some(v);
         }
-        if let Some(v) = other.dualboot {
-            self.dualboot = Some(v);
+        if other.core_builder.nofcrt {
+            self.core_builder.nofcrt = true;
         }
-        if let Some(v) = other.nomobile {
-            self.nomobile = Some(v);
+        if other.core_builder.dualpatchslots {
+            self.core_builder.dualpatchslots = true;
         }
-        if let Some(v) = other.noremap {
-            self.noremap = Some(v);
+        if other.core_builder.mfg {
+            self.core_builder.mfg = true;
         }
-        if let Some(v) = other.noecdremap {
-            self.noecdremap = Some(v);
+        if other.core_builder.xsb {
+            self.core_builder.xsb = true;
         }
-        if let Some(v) = other.nandmu {
-            self.nandmu = Some(v);
+        if other.core_builder.nomobile {
+            self.core_builder.nomobile = true;
         }
-        if let Some(v) = other.nosecurity {
-            self.nosecurity = Some(v);
+        if other.core_builder.full_image {
+            self.core_builder.full_image = true;
         }
-        if let Some(v) = other.nosusecurity {
-            self.nosusecurity = Some(v);
+
+        // BuilderOptions
+        if let Some(v) = other.builder.noflashfs {
+            self.builder.noflashfs = Some(v);
         }
-        if let Some(v) = other.noecc {
-            self.noecc = Some(v);
+        if let Some(v) = other.builder.noecc {
+            self.builder.noecc = Some(v);
         }
-        if let Some(v) = other.noflashfs {
-            self.noflashfs = Some(v);
+        if let Some(v) = other.builder.xellbutton {
+            self.builder.xellbutton = Some(v);
         }
-        if let Some(v) = other.dualpatchslots {
-            self.dualpatchslots = Some(v);
+        if let Some(v) = other.builder.xellbutton2 {
+            self.builder.xellbutton2 = Some(v);
         }
-        if let Some(v) = other.smcnocheck {
-            self.smcnocheck = Some(v);
+        if let Some(v) = other.builder.noecdremap {
+            self.builder.noecdremap = Some(v);
         }
-        if let Some(v) = other.noenter {
-            self.noenter = Some(v);
+        if let Some(v) = other.builder.smcnocheck {
+            self.builder.smcnocheck = Some(v);
         }
-        if let Some(v) = other.nolog {
-            self.nolog = Some(v);
+
+        // JtagOptions
+        if let Some(v) = other.jtag.jtag_syscall {
+            self.jtag.jtag_syscall = Some(v);
         }
-        if let Some(v) = other.noinfo {
-            self.noinfo = Some(v);
+        if let Some(v) = other.jtag.jtag_pairing_2bl {
+            self.jtag.jtag_pairing_2bl = Some(v);
         }
-        if let Some(v) = other.gxunsafe {
-            self.gxunsafe = Some(v);
+        if let Some(v) = other.jtag.cygnos {
+            self.jtag.cygnos = Some(v);
         }
-        if let Some(v) = other.verbose {
-            self.verbose = Some(v);
+        if let Some(v) = other.jtag.demon {
+            self.jtag.demon = Some(v);
         }
-        if let Some(v) = other.nochainpatch {
-            self.nochainpatch = Some(v);
+        if let Some(v) = other.jtag.smcnoeject {
+            self.jtag.smcnoeject = Some(v);
         }
-        if let Some(v) = other.cputemp {
-            self.cputemp = Some(v);
+        if let Some(v) = other.jtag.smcnoblink {
+            self.jtag.smcnoblink = Some(v);
         }
-        if let Some(v) = other.gputemp {
-            self.gputemp = Some(v);
+        if let Some(v) = other.jtag.patchsmc {
+            self.jtag.patchsmc = Some(v);
         }
-        if let Some(v) = other.edramtemp {
-            self.edramtemp = Some(v);
+        if let Some(v) = other.jtag.olddvd {
+            self.jtag.olddvd = Some(v);
         }
-        if let Some(v) = other.overcputemp {
-            self.overcputemp = Some(v);
+        if let Some(v) = other.jtag.nodvd {
+            self.jtag.nodvd = Some(v);
         }
-        if let Some(v) = other.overgputemp {
-            self.overgputemp = Some(v);
+        if let Some(v) = other.jtag.dualboot {
+            self.jtag.dualboot = Some(v);
         }
-        if let Some(v) = other.overedramtemp {
-            self.overedramtemp = Some(v);
+
+        // SmcConfigOptions
+        if let Some(v) = other.smc_config.cputemp {
+            self.smc_config.cputemp = Some(v);
         }
-        if let Some(v) = other.cpufan {
-            self.cpufan = Some(v);
+        if let Some(v) = other.smc_config.gputemp {
+            self.smc_config.gputemp = Some(v);
         }
-        if let Some(v) = other.gpufan {
-            self.gpufan = Some(v);
+        if let Some(v) = other.smc_config.edramtemp {
+            self.smc_config.edramtemp = Some(v);
         }
-        if let Some(v) = other.avregion {
-            self.avregion = Some(v);
+        if let Some(v) = other.smc_config.overcputemp {
+            self.smc_config.overcputemp = Some(v);
         }
-        if let Some(v) = other.gameregion {
-            self.gameregion = Some(v);
+        if let Some(v) = other.smc_config.overgputemp {
+            self.smc_config.overgputemp = Some(v);
         }
-        if let Some(v) = other.dvdregion {
-            self.dvdregion = Some(v);
+        if let Some(v) = other.smc_config.overedramtemp {
+            self.smc_config.overedramtemp = Some(v);
         }
-        if let Some(v) = other.macid {
-            self.macid = Some(v);
+        if let Some(v) = other.smc_config.cpufan {
+            self.smc_config.cpufan = Some(v);
         }
-        if let Some(v) = other.full_image {
-            self.full_image = Some(v);
+        if let Some(v) = other.smc_config.gpufan {
+            self.smc_config.gpufan = Some(v);
         }
-        if let Some(v) = other.xsb {
-            self.xsb = Some(v);
+
+        // KeyvaultOptions
+        if let Some(v) = other.keyvault.avregion {
+            self.keyvault.avregion = Some(v);
         }
-        if let Some(v) = other.serial {
-            self.serial = Some(v);
+        if let Some(v) = other.keyvault.gameregion {
+            self.keyvault.gameregion = Some(v);
         }
-        if let Some(v) = other.consoleid {
-            self.consoleid = Some(v);
+        if let Some(v) = other.keyvault.dvdregion {
+            self.keyvault.dvdregion = Some(v);
         }
-        if let Some(v) = other.osig {
-            self.osig = Some(v);
+        if let Some(v) = other.keyvault.macid {
+            self.keyvault.macid = Some(v);
         }
-        if let Some(v) = other.mfdate {
-            self.mfdate = Some(v);
+        if let Some(v) = other.keyvault.serial {
+            self.keyvault.serial = Some(v);
         }
-        if let Some(v) = other.nofcrt {
-            self.nofcrt = Some(v);
+        if let Some(v) = other.keyvault.consoleid {
+            self.keyvault.consoleid = Some(v);
+        }
+        if let Some(v) = other.keyvault.osig {
+            self.keyvault.osig = Some(v);
+        }
+        if let Some(v) = other.keyvault.mfdate {
+            self.keyvault.mfdate = Some(v);
+        }
+        if let Some(v) = other.keyvault.dvdkey {
+            self.keyvault.dvdkey = Some(v);
         }
     }
+
     pub fn set_option(&mut self, key: &str, value: &str) {
-        let mut o = crate::core::data::optini::OptionsIni::new();
         let v = value;
         let is_true = v.eq_ignore_ascii_case("true");
         match key.to_lowercase().as_str() {
-            "region" | "avregion" => o.avregion = Some(v.to_string()),
-            "gameregion" => o.gameregion = Some(v.to_string()),
-            "dvdregion" => o.dvdregion = Some(v.to_string()),
-            "unsafe" | "gxunsafe" => o.gxunsafe = Some(is_true),
+            "region" | "avregion" => self.keyvault.avregion = Some(v.to_string()),
+            "gameregion" => self.keyvault.gameregion = Some(v.to_string()),
+            "dvdregion" => self.keyvault.dvdregion = Some(v.to_string()),
+            "unsafe" | "gxunsafe" => self.core.gxunsafe = Some(is_true),
             "verbose" => {
-                o.verbose = Some(is_true);
+                self.core.verbose = Some(is_true);
                 let _ = crate::core::logger::init_logger("build", is_true);
             }
-            "nomobile" => o.nomobile = Some(is_true),
-            "noremap" => o.noremap = Some(is_true),
-            "nandmu" => o.nandmu = Some(is_true),
-            "cputemp" => o.cputemp = Some(v.to_string()),
-            "gputemp" => o.gputemp = Some(v.to_string()),
-            "edramtemp" => o.edramtemp = Some(v.to_string()),
-            "overcputemp" => o.overcputemp = Some(v.to_string()),
-            "overgputemp" => o.overgputemp = Some(v.to_string()),
-            "overedramtemp" => o.overedramtemp = Some(v.to_string()),
-            "cpufan" => o.cpufan = Some(v.to_string()),
-            "gpufan" => o.gpufan = Some(v.to_string()),
-            "macid" | "mac" => o.macid = Some(v.to_string()),
-            "dvdkey" => o.dvdkey = Some(v.to_string()),
-            "cfldv" => o.cfldv = Some(v.to_string()),
-            "serial" => o.serial = Some(v.to_string()),
-            "consoleid" => o.consoleid = Some(v.to_string()),
-            "osig" => o.osig = Some(v.to_string()),
-            "mfdate" => o.mfdate = Some(v.to_string()),
-            "nofcrt" => o.nofcrt = Some(is_true),
-            "xellbutton" => o.xellbutton = Some(v.to_string()),
-            "xellbutton2" => o.xellbutton2 = Some(v.to_string()),
-            "cygnos" => o.cygnos = Some(is_true),
-            "demon" => o.demon = Some(is_true),
-            "smcnoeject" => o.smcnoeject = Some(is_true),
-            "smcnoblink" => o.smcnoblink = Some(is_true),
-            "patchsmc" => o.patchsmc = Some(is_true),
-            "olddvd" => o.olddvd = Some(is_true),
-            "nodvd" => o.nodvd = Some(is_true),
-            "dualboot" => o.dualboot = Some(is_true),
-            "dualpatchslots" => o.dualpatchslots = Some(is_true),
-            "nolog" => o.nolog = Some(is_true),
-            "noinfo" => o.noinfo = Some(is_true),
-            "noenter" => o.noenter = Some(is_true),
-            "noecc" => o.noecc = Some(is_true),
-            "nosecurity" => o.nosecurity = Some(is_true),
-            "nosusecurity" => o.nosusecurity = Some(is_true),
-            "nochainpatch" => o.nochainpatch = Some(is_true),
+            "nomobile" => self.core_builder.nomobile = is_true,
+            "noremap" => self.core_builder.noremap = is_true,
+            "nandmu" => self.core_builder.nandmu = Some(is_true),
+            "cputemp" => self.smc_config.cputemp = Some(v.to_string()),
+            "gputemp" => self.smc_config.gputemp = Some(v.to_string()),
+            "edramtemp" => self.smc_config.edramtemp = Some(v.to_string()),
+            "overcputemp" => self.smc_config.overcputemp = Some(v.to_string()),
+            "overgputemp" => self.smc_config.overgputemp = Some(v.to_string()),
+            "overedramtemp" => self.smc_config.overedramtemp = Some(v.to_string()),
+            "cpufan" => self.smc_config.cpufan = Some(v.to_string()),
+            "gpufan" => self.smc_config.gpufan = Some(v.to_string()),
+            "macid" | "mac" => self.keyvault.macid = Some(v.to_string()),
+            "dvdkey" => self.keyvault.dvdkey = Some(v.to_string()),
+            "cfldv" => self.keys.cfldv = Some(v.to_string()),
+            "serial" => self.keyvault.serial = Some(v.to_string()),
+            "consoleid" => self.keyvault.consoleid = Some(v.to_string()),
+            "osig" => self.keyvault.osig = Some(v.to_string()),
+            "mfdate" => self.keyvault.mfdate = Some(v.to_string()),
+            "nofcrt" => self.core_builder.nofcrt = is_true,
+            "xellbutton" => self.builder.xellbutton = Some(v.to_string()),
+            "xellbutton2" => self.builder.xellbutton2 = Some(v.to_string()),
+            "cygnos" => self.jtag.cygnos = Some(is_true),
+            "demon" => self.jtag.demon = Some(is_true),
+            "smcnoeject" => self.jtag.smcnoeject = Some(is_true),
+            "smcnoblink" => self.jtag.smcnoblink = Some(is_true),
+            "patchsmc" => self.jtag.patchsmc = Some(is_true),
+            "olddvd" => self.jtag.olddvd = Some(is_true),
+            "nodvd" => self.jtag.nodvd = Some(is_true),
+            "dualboot" => self.jtag.dualboot = Some(is_true),
+            "dualpatchslots" => self.core_builder.dualpatchslots = is_true,
+            "nolog" => self.core.nolog = Some(is_true),
+            "noinfo" => self.core.noinfo = Some(is_true),
+            "noenter" => self.core.noenter = Some(is_true),
+            "noecc" => self.builder.noecc = Some(is_true),
+            "nosecurity" => self.core_builder.nosecurity = Some(is_true),
+            "nosusecurity" => self.core_builder.nosusecurity = Some(is_true),
+            "nochainpatch" => self.core_builder.nochainpatch = Some(is_true),
+            "mfg" => self.core_builder.mfg = is_true,
+            "xsb" => self.core_builder.xsb = is_true,
+            "full_image" => self.core_builder.full_image = is_true,
             _ => warn!("[session] set_option: unknown key '{}'", key),
         }
-        self.merge(o);
     }
 }
 
@@ -428,62 +468,65 @@ pub fn parse_options_ini(content: &str) -> Result<OptionsIni, OptionsIniError> {
                 .collect();
             match parts.as_slice() {
                 [key, value] => match key.to_lowercase().as_str() {
-                    "type" => options.ctype = Some(value.clone()),
-                    "1blkey" => options._1blkey = Some(value.clone()),
-                    "cpukey" => options.cpukey = Some(value.clone()),
-                    "cfldv" => options.cfldv = Some(value.clone()),
-                    "dvdkey" => options.dvdkey = Some(value.clone()),
-                    "xellbutton" => options.xellbutton = Some(value.clone()),
-                    "xellbutton2" => options.xellbutton2 = Some(value.clone()),
-                    "cygnos" => options.cygnos = Some(value.eq_ignore_ascii_case("true")),
-                    "demon" => options.demon = Some(value.eq_ignore_ascii_case("true")),
-                    "smcnoeject" => options.smcnoeject = Some(value.eq_ignore_ascii_case("true")),
-                    "smcnoblink" => options.smcnoblink = Some(value.eq_ignore_ascii_case("true")),
-                    "patchsmc" => options.patchsmc = Some(value.eq_ignore_ascii_case("true")),
-                    "olddvd" => options.olddvd = Some(value.eq_ignore_ascii_case("true")),
-                    "nodvd" => options.nodvd = Some(value.eq_ignore_ascii_case("true")),
-                    "dualboot" => options.dualboot = Some(value.eq_ignore_ascii_case("true")),
-                    "nomobile" => options.nomobile = Some(value.eq_ignore_ascii_case("true")),
-                    "noremap" => options.noremap = Some(value.eq_ignore_ascii_case("true")),
-                    "noecdremap" => options.noecdremap = Some(value.eq_ignore_ascii_case("true")),
-                    "nandmu" => options.nandmu = Some(value.eq_ignore_ascii_case("true")),
-                    "nosecurity" => options.nosecurity = Some(value.eq_ignore_ascii_case("true")),
+                    "type" => options.keys.ctype = Some(value.clone()),
+                    "1blkey" => options.keys._1blkey = Some(value.clone()),
+                    "cpukey" => options.keys.cpukey = Some(value.clone()),
+                    "cfldv" => options.keys.cfldv = Some(value.clone()),
+                    "dvdkey" => options.keyvault.dvdkey = Some(value.clone()),
+                    "xellbutton" => options.builder.xellbutton = Some(value.clone()),
+                    "xellbutton2" => options.builder.xellbutton2 = Some(value.clone()),
+                    "cygnos" => options.jtag.cygnos = Some(value.eq_ignore_ascii_case("true")),
+                    "demon" => options.jtag.demon = Some(value.eq_ignore_ascii_case("true")),
+                    "smcnoeject" => options.jtag.smcnoeject = Some(value.eq_ignore_ascii_case("true")),
+                    "smcnoblink" => options.jtag.smcnoblink = Some(value.eq_ignore_ascii_case("true")),
+                    "patchsmc" => options.jtag.patchsmc = Some(value.eq_ignore_ascii_case("true")),
+                    "olddvd" => options.jtag.olddvd = Some(value.eq_ignore_ascii_case("true")),
+                    "nodvd" => options.jtag.nodvd = Some(value.eq_ignore_ascii_case("true")),
+                    "dualboot" => options.jtag.dualboot = Some(value.eq_ignore_ascii_case("true")),
+                    "nomobile" => options.core_builder.nomobile = value.eq_ignore_ascii_case("true"),
+                    "noremap" => options.core_builder.noremap = value.eq_ignore_ascii_case("true"),
+                    "noecdremap" => options.builder.noecdremap = Some(value.eq_ignore_ascii_case("true")),
+                    "nandmu" => options.core_builder.nandmu = Some(value.eq_ignore_ascii_case("true")),
+                    "nosecurity" => options.core_builder.nosecurity = Some(value.eq_ignore_ascii_case("true")),
                     "nosusecurity" => {
-                        options.nosusecurity = Some(value.eq_ignore_ascii_case("true"))
+                        options.core_builder.nosusecurity = Some(value.eq_ignore_ascii_case("true"))
                     }
-                    "noecc" => options.noecc = Some(value.eq_ignore_ascii_case("true")),
-                    "noflashfs" => options.noflashfs = Some(value.eq_ignore_ascii_case("true")),
+                    "noecc" => options.builder.noecc = Some(value.eq_ignore_ascii_case("true")),
+                    "noflashfs" => options.builder.noflashfs = Some(value.eq_ignore_ascii_case("true")),
                     "dualpatchslots" => {
-                        options.dualpatchslots = Some(value.eq_ignore_ascii_case("true"))
+                        options.core_builder.dualpatchslots = value.eq_ignore_ascii_case("true")
                     }
-                    "smcnocheck" => options.smcnocheck = Some(value.eq_ignore_ascii_case("true")),
-                    "noenter" => options.noenter = Some(value.eq_ignore_ascii_case("true")),
-                    "nolog" => options.nolog = Some(value.eq_ignore_ascii_case("true")),
-                    "noinfo" => options.noinfo = Some(value.eq_ignore_ascii_case("true")),
+                    "smcnocheck" => options.builder.smcnocheck = Some(value.eq_ignore_ascii_case("true")),
+                    "noenter" => options.core.noenter = Some(value.eq_ignore_ascii_case("true")),
+                    "nolog" => options.core.nolog = Some(value.eq_ignore_ascii_case("true")),
+                    "noinfo" => options.core.noinfo = Some(value.eq_ignore_ascii_case("true")),
                     "gxunsafe" | "unsafe" => {
-                        options.gxunsafe = Some(value.eq_ignore_ascii_case("true"))
+                        options.core.gxunsafe = Some(value.eq_ignore_ascii_case("true"))
                     }
-                    "verbose" => options.verbose = Some(value.eq_ignore_ascii_case("true")),
+                    "verbose" => options.core.verbose = Some(value.eq_ignore_ascii_case("true")),
                     "nochainpatch" => {
-                        options.nochainpatch = Some(value.eq_ignore_ascii_case("true"))
+                        options.core_builder.nochainpatch = Some(value.eq_ignore_ascii_case("true"))
                     }
-                    "cputemp" => options.cputemp = Some(value.clone()),
-                    "gputemp" => options.gputemp = Some(value.clone()),
-                    "edramtemp" => options.edramtemp = Some(value.clone()),
-                    "overcputemp" => options.overcputemp = Some(value.clone()),
-                    "overgputemp" => options.overgputemp = Some(value.clone()),
-                    "overedramtemp" => options.overedramtemp = Some(value.clone()),
-                    "cpufan" => options.cpufan = Some(value.clone()),
-                    "gpufan" => options.gpufan = Some(value.clone()),
-                    "avregion" => options.avregion = Some(value.clone()),
-                    "gameregion" => options.gameregion = Some(value.clone()),
-                    "dvdregion" => options.dvdregion = Some(value.clone()),
-                    "macid" => options.macid = Some(value.clone()),
-                    "serial" => options.serial = Some(value.clone()),
-                    "consoleid" => options.consoleid = Some(value.clone()),
-                    "osig" => options.osig = Some(value.clone()),
-                    "mfdate" => options.mfdate = Some(value.clone()),
-                    "nofcrt" => options.nofcrt = Some(value.eq_ignore_ascii_case("true")),
+                    "cputemp" => options.smc_config.cputemp = Some(value.clone()),
+                    "gputemp" => options.smc_config.gputemp = Some(value.clone()),
+                    "edramtemp" => options.smc_config.edramtemp = Some(value.clone()),
+                    "overcputemp" => options.smc_config.overcputemp = Some(value.clone()),
+                    "overgputemp" => options.smc_config.overgputemp = Some(value.clone()),
+                    "overedramtemp" => options.smc_config.overedramtemp = Some(value.clone()),
+                    "cpufan" => options.smc_config.cpufan = Some(value.clone()),
+                    "gpufan" => options.smc_config.gpufan = Some(value.clone()),
+                    "avregion" => options.keyvault.avregion = Some(value.clone()),
+                    "gameregion" => options.keyvault.gameregion = Some(value.clone()),
+                    "dvdregion" => options.keyvault.dvdregion = Some(value.clone()),
+                    "macid" => options.keyvault.macid = Some(value.clone()),
+                    "serial" => options.keyvault.serial = Some(value.clone()),
+                    "consoleid" => options.keyvault.consoleid = Some(value.clone()),
+                    "osig" => options.keyvault.osig = Some(value.clone()),
+                    "mfdate" => options.keyvault.mfdate = Some(value.clone()),
+                    "nofcrt" => options.core_builder.nofcrt = value.eq_ignore_ascii_case("true"),
+                    "mfg" => options.core_builder.mfg = value.eq_ignore_ascii_case("true"),
+                    "xsb" => options.core_builder.xsb = value.eq_ignore_ascii_case("true"),
+                    "full_image" => options.core_builder.full_image = value.eq_ignore_ascii_case("true"),
                     _ => warn!("[ini] Unknown option: {}", key),
                 },
                 _ => {}

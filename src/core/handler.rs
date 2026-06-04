@@ -68,7 +68,7 @@ impl Executor {
         options: &crate::core::data::optini::OptionsIni,
         nand: &NandSkeleton,
     ) -> Result<u8, String> {
-        if let Some(cfldv_option) = &options.cfldv {
+        if let Some(cfldv_option) = &options.keys.cfldv {
             return Self::parse_u8_hex_or_dec(cfldv_option);
         }
 
@@ -179,12 +179,12 @@ impl Executor {
         }
 
         // Initialize or update logger level based on FINAL merged options
-        let is_verbose = session.options.verbose.unwrap_or(false);
+        let is_verbose = session.options.core.verbose.unwrap_or(false);
         let _ = crate::core::logger::init_logger("build", is_verbose);
 
         if let Some(nand) = &mut session.active_nand {
-            nand.options.gxunsafe = session.options.gxunsafe.unwrap_or(false);
-            nand.options.verbose = session.options.verbose.unwrap_or(false);
+            nand.options.gxunsafe = session.options.core.gxunsafe.unwrap_or(false);
+            nand.options.verbose = session.options.core.verbose.unwrap_or(false);
         }
 
         let build_type = session
@@ -338,7 +338,7 @@ impl Executor {
         }
 
         // CPU key (cpukey.txt / cpukey.bin in data dir)
-        if session.pending_key.is_none() && session.options.cpukey.is_none() {
+        if session.pending_key.is_none() && session.options.keys.cpukey.is_none() {
             let key_txt = data_dir.join("cpukey.txt");
             let key_bin = data_dir.join("cpukey.bin");
             if key_bin.exists() {
@@ -367,7 +367,7 @@ impl Executor {
             "kv.bin",
             "keyvault.bin",
         ] {
-            if name == &"fcrt.bin" && session.options.nofcrt.unwrap_or(false) {
+            if name == &"fcrt.bin" && session.options.core_builder.nofcrt.unwrap_or(false) {
                 continue;
             }
             let p = data_dir.join(name);
@@ -427,22 +427,22 @@ impl Executor {
             info!("[session] Extracting hardware defaults from active NAND image...");
 
             // CPU Key
-            if session.options.cpukey.is_none() {
+            if session.options.keys.cpukey.is_none() {
                 if let Some(key) = nand.cpukey {
-                    session.options.cpukey =
+                    session.options.keys.cpukey =
                         Some(key.iter().map(|b| format!("{:02x}", b)).collect());
                 }
             }
 
             // Motherboard / Console Type mapping
-            if session.options.ctype.is_none() {
-                session.options.ctype =
+            if session.options.keys.ctype.is_none() {
+                session.options.keys.ctype =
                     Some(format!("{:?}", nand.options.motherboard).to_lowercase());
             }
 
-            if session.options.cfldv.is_none() {
+            if session.options.keys.cfldv.is_none() {
                 if let Ok(ldv) = Self::resolve_cf_ldv(&session.options, nand) {
-                    session.options.cfldv = Some(ldv.to_string());
+                    session.options.keys.cfldv = Some(ldv.to_string());
                 }
             }
 
@@ -459,11 +459,11 @@ impl Executor {
                 }
 
                 if let Some(meta) = &kv.metadata {
-                    if session.options.gameregion.is_none() {
-                        session.options.gameregion = Some(format!("0x{:04X}", meta.region));
+                    if session.options.keyvault.gameregion.is_none() {
+                        session.options.keyvault.gameregion = Some(format!("0x{:04X}", meta.region));
                     }
-                    if session.options.dvdkey.is_none() {
-                        session.options.dvdkey =
+                    if session.options.keyvault.dvdkey.is_none() {
+                        session.options.keyvault.dvdkey =
                             Some(meta.dvd_key.iter().map(|b| format!("{:02x}", b)).collect());
                     }
                 }
@@ -477,28 +477,20 @@ impl Executor {
         if let Some(nand) = &mut session.active_nand {
             info!("[session] Syncing merged options to NAND components...");
 
-            /*
-            if let Some(noremap) = session.options.noremap {
+            if let Some(noremap) = session.options.core_builder.noremap {
                 nand.options.noremap = noremap;
             }
-            if let Some(cba) = &session.options.cba {
-                nand.options.cba = Some(cba.clone());
-            }
-            if let Some(cbb) = &session.options.cbb {
-                nand.options.cbb = Some(cbb.clone());
-            }
-            */
 
-            nand.options.gxunsafe = session.options.gxunsafe.unwrap_or(false);
-            nand.options.verbose = session.options.verbose.unwrap_or(false);
-            //nand.options.nomobile = session.options.nomobile.unwrap_or(false);
-            //nand.options.nofcrt = session.options.nofcrt.unwrap_or(false);
-            //nand.options.dualpatchslots = session.options.dualpatchslots.unwrap_or(false);
-            //nand.options.cygnos = session.options.cygnos.unwrap_or(false);
-            //nand.options.demon = session.options.demon.unwrap_or(false);
+            nand.options.core.gxunsafe = session.options.core.gxunsafe.unwrap_or(false);
+            nand.options.core.verbose = session.options.core.verbose.unwrap_or(false);
+            nand.options.core_builder.nomobile = session.options.core_builder.nomobile.unwrap_or(false);
+            nand.options.core_builder.nofcrt = session.options.core_builder.nofcrt.unwrap_or(false);
+            nand.options.core_builder.dualpatchslots = session.options.core_builder.dualpatchslots.unwrap_or(false);
+            nand.options.jtag.cygnos = session.options.jtag.cygnos.unwrap_or(false);
+            nand.options.jtag.demon = session.options.jtag.demon.unwrap_or(false);
 
             //  CPU Key
-            if let Some(key_str) = &session.options.cpukey {
+            if let Some(key_str) = &session.options.keys.cpukey {
                 if let Ok(key_bytes) = hex_to_bytes(key_str) {
                     if key_bytes.len() == 16 {
                         let mut arr = [0u8; 16];

@@ -24,66 +24,14 @@ use crate::builder::chain::{
     cb::BootloaderCb, cd::BootloaderCd, ce::BootloaderCe, cf::BootloaderCf, cg::BootloaderCg,
     sc::BootloaderSc, smc::RawSmc, BootloaderHeader, XenonBlType,
 };
-use crate::builder::parser::{BuilderError, Result};
-use crate::builder::types::{NandBootloaders, NandExtra, NandHeader, NandUpdate};
-use crate::core::images::blocks::ecc_verify_and_correct;
+use crate::builder::nand::types::{BuilderError, Result};
 use crate::core::images::blocks::NandLayout;
-use log::{info, warn};
+use log::info;
 use std::path::Path;
 use zerocopy::FromBytes;
+use crate::core::images::blocks::strip_ecc;
+use crate::builder::nand::types::*;
 
-/// Strips ECC parity bytes from raw NAND pages.
-/// Supports 0x210 (small block) and 0x840 (large block) page formats.
-pub fn strip_ecc(ecc_raw: &[u8]) -> Vec<u8> {
-    if ecc_raw.is_empty() {
-        return Vec::new();
-    }
-
-    // Small block: 0x210 bytes per page (0x200 data + 0x10 ECC)
-    if ecc_raw.len() % 0x210 == 0 {
-        let pages = ecc_raw.len() / 0x210;
-        let mut out = vec![0u8; pages * 0x200];
-        let mut ecc_bad = 0usize;
-        for i in 0..pages {
-            let in_off = i * 0x210;
-            let out_off = i * 0x200;
-            let mut buf = [0u8; 0x210];
-            buf.copy_from_slice(&ecc_raw[in_off..in_off + 0x210]);
-            if !ecc_verify_and_correct(&mut buf) {
-                ecc_bad += 1;
-            }
-            out[out_off..out_off + 0x200].copy_from_slice(&ecc_raw[in_off..in_off + 0x200]);
-        }
-        if ecc_bad > 0 {
-            warn!(
-                "[ecc] {} page(s) failed verification out of {}",
-                ecc_bad, pages
-            );
-        }
-        return out;
-    }
-
-    // Large block: 0x840 bytes per chunk (4 * 0x200 data + ECC)
-    if ecc_raw.len() % 0x840 == 0 {
-        let chunks = ecc_raw.len() / 0x840;
-        let mut out = vec![0u8; chunks * 0x800];
-        for i in 0..chunks {
-            let in_off = i * 0x840;
-            let out_off = i * 0x800;
-            out[out_off..out_off + 0x200].copy_from_slice(&ecc_raw[in_off..in_off + 0x200]);
-            out[out_off + 0x200..out_off + 0x400]
-                .copy_from_slice(&ecc_raw[in_off + 0x200..in_off + 0x400]);
-            out[out_off + 0x400..out_off + 0x600]
-                .copy_from_slice(&ecc_raw[in_off + 0x400..in_off + 0x600]);
-            out[out_off + 0x600..out_off + 0x800]
-                .copy_from_slice(&ecc_raw[in_off + 0x600..in_off + 0x800]);
-        }
-        return out;
-    }
-
-    // Unknown format, return as-is
-    ecc_raw.to_vec()
-}
 
 /// Smaller skeleton structure for ECC extraction.
 /// Holds extracted components without the full builder state.
