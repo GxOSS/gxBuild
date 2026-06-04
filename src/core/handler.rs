@@ -2,11 +2,12 @@ use crate::builder::nand::builder::NandSkeleton;
 use crate::builder::nand::parser::hex_to_bytes;
 use crate::builder::nand::types::{layout_calculator, SouthbridgeType};
 use crate::core::data::filesearch::IniSearch;
+use crate::core::data::nand::NandSearch;
 use crate::core::images::gxpatch::parse_patch_binary;
 use crate::core::session::InternalCommand;
 use crate::core::session::{QueuedCommand, Session};
 use log::{error, info, warn};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
@@ -990,153 +991,359 @@ impl Executor {
             }
             InternalCommand::Build { output, .. } => {
                 info!("[session] Building NAND image to '{}'...", output.display());
-                // Sync options before build
-                Self::sync_options_to_nand(session)?;
+                let ini_dir = session
+                    .ini_dir
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from("."));
+                let data_dir = session
+                    .data_dir
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from("mydata"));
+                let common_dir = session
+                    .common_dir
+                    .clone()
+                    .unwrap_or_else(|| ini_dir.join("../common"));
+                let payloads_dir = ini_dir.join("../payloads");
+                let smc_dir = ini_dir.join("../smc");
 
-                if let Some(nand) = &session.active_nand {
-                    let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
-                    let layout = nand.options.layout;
-
-                    let sb_type = SouthbridgeType::from(nand.options.motherboard);
-                    let chain_profile = if nand.bootloaders.cb_b.is_some() {
-                        "split"
-                    } else {
-                        "single"
-                    };
-                    let _ = layout_calculator(sb_type, chain_profile, layout);
-
-                    let meta_type = match nand.options.motherboard {
-                        crate::builder::nand::types::MotherboardType::Xenon
-                        | crate::builder::nand::types::MotherboardType::Zephyr
-                        | crate::builder::nand::types::MotherboardType::Falcon => {
-                            crate::core::images::blocks::SpareMetaType::MetaType0
+                let options_path = data_dir.join("options.ini");
+                if options_path.exists() {
+                    if let Ok(content) = fs::read_to_string(&options_path) {
+                        if let Ok(disk_opts) = crate::core::data::optini::parse_options_ini(&content)
+                        {
+                            let user_opts = session.options.clone();
+                            session.options = disk_opts;
+                            session.options.merge(user_opts);
                         }
-                        _ => crate::core::images::blocks::SpareMetaType::MetaType1,
-                    };
-
-                    if let Some(parent) = output.parent() {
-                        let _ = std::fs::create_dir_all(parent);
                     }
+                }
 
-                    let mut built_nand = nand.clone();
-                    match built_nand.build_in_place(cpukey) {
-                        Ok(clean_bytes) => {
-                            if session.options.core_builder.noecc.unwrap_or(false) {
-                                if let Err(e) = std::fs::write(&output, &clean_bytes) {
-                                    error!(
-                                        "[session] Failed to write build output to '{}': {}",
-                                        output.display(),
-                                        e
-                                    );
-                                    return Err(format!("Failed to write output: {}", e));
-                                }
-                                info!("[session] Build complete: wrote logical image (noecc) to '{}' (Size: 0x{:X})", output.display(), clean_bytes.len());
-                                return Ok(());
-                            }
+                let build_type = session
+                    .build_type
+                    .clone()
+                    .ok_or("Build: build_type not set")?;
+                let console = session
+                    .console_type
+                    .clone()
+                    .ok_or("Build: console_type not set")?;
 
-                            let mut fs_meta = std::collections::HashMap::new();
-                            let page_count_encoded =
-                                if layout == crate::core::images::blocks::NandLayout::Bb {
-                                    match nand.options.layout {
-                                        crate::core::images::blocks::NandLayout::Bb => 0x00,
-                                        _ => 0x01,
-                                    }
-                                } else {
-                                    0x01
-                                };
+                let ini_suffix = session
+                    .ini_ext
+                    .as_ref()
+                    .map(|e| format!("_{}", e))
+                    .unwrap_or_default();
+                let ini_filename = format!("_{}{}.ini", build_type, ini_suffix);
+                let ini_path = ini_dir.join(&ini_filename);
+                let console_section = match &session.bl_ext {
+                    Some(ext) => format!("{}_{}", console, ext),
+                    None => console.clone(),
+                };
 
-                            let mut all_partitions = std::collections::HashMap::new();
-                            if let Some(flashfs) = built_nand.flashfs.as_ref() {
-                                if !flashfs.root.entries.is_empty() {
-                                    all_partitions
-                                        .insert(flashfs.root.partition_type, flashfs.root.clone());
-                                }
-                            }
+                let ini = crate::core::data::xeini::parse_xe_ini(&ini_path, &console_section)
+                    .map_err(|_| format!("Build: cannot read INI at {:?}", ini_path))?;
 
-                            for (btype, root) in all_partitions {
-                                if root.block_number < 0 {
-                                    continue;
-                                }
+                let cpukey = if let Some(k) = session.pending_key {
+                    k
+                } else if let Some(k) = &session.options.keys.cpukey {
+                    let bytes = hex_to_bytes(k)
+                        .map_err(|e| format!("Build: invalid CPU key '{}': {}", k, e))?;
+                    let arr: [u8; 16] = bytes
+                        .try_into()
+                        .map_err(|_| "Build: CPU key must be 32 hex chars / 16 bytes".to_string())?;
+                    arr
+                } else {
+                    return Err("Build: CPU key not set".to_string());
+                };
 
-                                // Branding strategy: Every block in the FlashFS partition must have
-                                // the correct partition type (e.g. 0x30) and version sequence in its spare area.
-                                let fs_start = root.block_number as usize;
-                                let reserve_start = layout.reserve_start(clean_bytes.len());
-                                for (val, &block) in root.block_map.iter().enumerate() {
-                                    if val < fs_start || val >= reserve_start {
-                                        continue;
-                                    }
-                                    // 0x1FFE is the only marker for a truly 'free' block in the block map.
-                                    // All other values (including 0 and 0x1FFF) represent occupied space.
-                                    let is_free = (block & 0x7FFF) == 0x1FFE;
+                let nand_candidates = [
+                    data_dir.join("nanddump.bin"),
+                    data_dir.join("nanddump1.bin"),
+                    data_dir.join("nanddump2.bin"),
+                    data_dir.join("nanddump.ecc"),
+                    data_dir.join("nanddump1.ecc"),
+                    data_dir.join("nanddump2.ecc"),
+                    data_dir.join("nanddump"),
+                    data_dir.join("updflash.bin"),
+                    data_dir.join("updflash.ecc"),
+                ];
+                let nand_path = nand_candidates
+                    .iter()
+                    .find(|p| p.exists())
+                    .cloned()
+                    .ok_or("Build: no NAND image found in data dir for NandSearch")?;
 
-                                    if !is_free {
-                                        let absolute_block = val;
-                                        let is_root =
-                                            absolute_block == (root.block_number as usize);
+                let raw_nand = fs::read(&nand_path)
+                    .map_err(|e| format!("Build: failed to read NAND image {:?}: {}", nand_path, e))?;
 
-                                        // Branding: Root block gets the partition type (0x30, 0x31, etc.)
-                                        // Data blocks technically can also carry the partition type for better discovery.
-                                        // RGBuild and others advanced by partition type scanning.
-                                        let block_type = if is_root { btype } else { 0x01 };
+                let nand_search = NandSearch::new(ini.clone(), &raw_nand, cpukey)
+                    .map_err(|e| format!("Build: NandSearch failed: {}", e))?;
 
-                                        fs_meta.insert(
-                                            absolute_block,
-                                            crate::core::images::blocks::FsSpareInfo {
-                                                sequence: root.version as u32,
-                                                size: 0x4000, // Standard 16KB block size (physical)
-                                                page_count: page_count_encoded,
-                                                block_type,
-                                            },
-                                        );
-                                    }
-                                }
-                            }
+                let mut allow: HashSet<String> = HashSet::new();
+                for fs_entry in &ini.flashfs {
+                    let basename =
+                        crate::core::data::xeini::strip_flashfs_path_indicator(&fs_entry.filename);
+                    allow.insert(basename.to_lowercase());
+                }
+                for name in &[
+                    "fcrt.bin",
+                    "crl.bin",
+                    "dae.bin",
+                    "extended.bin",
+                    "secdata.bin",
+                    "odd.bin",
+                ] {
+                    allow.insert((*name).to_string());
+                }
 
-                            let mobile_meta = if session
-                                .options
-                                .core_builder
-                                .nomobile
-                                .unwrap_or(false)
-                            {
-                                std::collections::HashMap::new()
+                let nand_opt = Some(nand_search.skeleton.clone());
+                let ini_search = IniSearch::new(
+                    ini.clone(),
+                    &ini_dir,
+                    &common_dir,
+                    &data_dir,
+                    &payloads_dir,
+                    &smc_dir,
+                    &nand_opt,
+                    session.options.core.gxunsafe,
+                    session.options.core_builder.nofcrt,
+                    session.options.core_builder.nosecurity,
+                    session.options.core_builder.nosusecurity,
+                    session.options.core_builder.nochainpatch,
+                )
+                .map_err(|e| format!("Build: IniSearch failed: {}", e))?;
+
+                let mut bootloader_assets = nand_search.bootloaders.clone();
+                bootloader_assets.extend(ini_search.result.bootloader_assets);
+
+                let mut security_assets = ini_search.result.security_assets;
+                if !security_assets.contains_key("keyvault.bin") && !security_assets.contains_key("kv.bin")
+                {
+                    security_assets.insert("keyvault.bin".to_string(), nand_search.keyvault.clone());
+                }
+
+                let pending = crate::core::data::xeini::PendingAssets {
+                    bootloaders: &bootloader_assets,
+                    security: &security_assets,
+                };
+                let mut fresh_nand = crate::core::data::xeini::apply_xe_ini(
+                    nand_search.skeleton.clone(),
+                    ini.clone(),
+                    pending,
+                )
+                .map_err(|e| format!("Build: INI apply failed: {}", e))?;
+
+                if !session.options.core_builder.nomobile.unwrap_or(false) {
+                    let mobile = fresh_nand
+                        .mobile
+                        .get_or_insert_with(crate::builder::filesystem::mobile::MobileStore::new);
+                    mobile.apply_data_folder_tier(&data_dir);
+                }
+
+                let mut merged_flashfs_assets: HashMap<String, Vec<u8>> = HashMap::new();
+                for (k, v) in nand_search.flashfs_assets {
+                    merged_flashfs_assets.insert(k.to_lowercase(), v);
+                }
+                for (k, v) in ini_search.result.flashfs_assets {
+                    merged_flashfs_assets.insert(k.to_lowercase(), v);
+                }
+                for name in &[
+                    "fcrt.bin",
+                    "crl.bin",
+                    "dae.bin",
+                    "extended.bin",
+                    "secdata.bin",
+                    "odd.bin",
+                ] {
+                    if let Some(data) = security_assets.get(*name).cloned() {
+                        merged_flashfs_assets.entry((*name).to_string()).or_insert(data);
+                    }
+                }
+
+                if !session.options.builder.noflashfs.unwrap_or(false) {
+                    let flashfs = fresh_nand
+                        .flashfs
+                        .get_or_insert_with(crate::builder::filesystem::flashfs::FlashFS::new);
+                    let fs_start: u16 = match fresh_nand.options.layout {
+                        crate::core::images::blocks::NandLayout::Bb => {
+                            let image_len = fresh_nand.image.len();
+                            let reserve_start = fresh_nand.options.layout.reserve_start(image_len);
+                            let scanned = flashfs.root.block_number;
+                            if scanned > 0 && (scanned as usize) < reserve_start {
+                                scanned as u16
                             } else {
-                                built_nand
-                                    .mobile
-                                    .as_ref()
-                                    .map(|m| m.collect_spare_meta(&layout))
-                                    .unwrap_or_default()
-                            };
-                            let finalized_bytes =
-                                crate::core::images::blocks::NandProcessor::finalize_nand(
-                                    &clean_bytes,
-                                    layout,
-                                    meta_type,
-                                    Some(&fs_meta),
-                                    if mobile_meta.is_empty() {
-                                        None
-                                    } else {
-                                        Some(&mobile_meta)
-                                    },
-                                    None,
-                                );
-                            let final_size = finalized_bytes.len();
-                            if let Err(e) = std::fs::write(&output, finalized_bytes) {
-                                error!(
-                                    "[session] Failed to write build output to '{}': {}",
-                                    output.display(),
-                                    e
-                                );
-                                return Err(format!("Failed to write output: {}", e));
-                            } else {
-                                info!("[session] Build complete: '{}' written ({} bytes, layout {:?})", output.display(), final_size, layout);
+                                let fallback = reserve_start.saturating_sub(0x80);
+                                std::cmp::max(4u16, fallback as u16)
                             }
                         }
-                        Err(e) => return Err(format!("Build failed: {}", e)),
+                        crate::core::images::blocks::NandLayout::Emmc => {
+                            let default_slots = [Default::default(), Default::default()];
+                            let slots = fresh_nand.corona_fs.as_ref().unwrap_or(&default_slots);
+                            crate::builder::filesystem::corona::default_emmc_fs_block(
+                                fresh_nand.header.fs_addr.get(),
+                                slots,
+                            )
+                        }
+                        _ => {
+                            let sb: SouthbridgeType = fresh_nand.options.motherboard.into();
+                            let chain_profile = if fresh_nand.bootloaders.cb_b.is_some() {
+                                "split"
+                            } else {
+                                "single"
+                            };
+                            let (_, _, phys_fs_block) =
+                                layout_calculator(sb, chain_profile, fresh_nand.options.layout);
+                            if phys_fs_block != 0 {
+                                phys_fs_block as u16
+                            } else {
+                                0x4E
+                            }
+                        }
+                    };
+
+                    let mut root = crate::builder::filesystem::flashfs::FileSystemRoot::new(
+                        fs_start as i32,
+                        3,
+                        0x30,
+                    );
+                    root.create_defaults(fresh_nand.image.len(), &fresh_nand.options.layout, fs_start);
+                    for (name, content) in merged_flashfs_assets {
+                        let key = name.to_lowercase();
+                        if !allow.contains(&key) {
+                            continue;
+                        }
+                        let mut entry = crate::builder::filesystem::flashfs::FileSystemEntry::new(0);
+                        entry.file_name = key;
+                        entry.data = content;
+                        entry.size = entry.data.len() as u32;
+                        root.entries.push(entry);
+                    }
+                    flashfs.root = root;
+                }
+
+                session.active_nand = Some(fresh_nand);
+                Self::sync_options_to_nand(session)?;
+                let nand = session
+                    .active_nand
+                    .as_ref()
+                    .ok_or("Build: failed to create fresh NAND")?;
+
+                let layout = nand.options.layout;
+                let sb_type = SouthbridgeType::from(nand.options.motherboard);
+                let chain_profile = if nand.bootloaders.cb_b.is_some() {
+                    "split"
+                } else {
+                    "single"
+                };
+                let _ = layout_calculator(sb_type, chain_profile, layout);
+
+                let meta_type = match nand.options.motherboard {
+                    crate::builder::nand::types::MotherboardType::Xenon
+                    | crate::builder::nand::types::MotherboardType::Zephyr
+                    | crate::builder::nand::types::MotherboardType::Falcon => {
+                        crate::core::images::blocks::SpareMetaType::MetaType0
+                    }
+                    _ => crate::core::images::blocks::SpareMetaType::MetaType1,
+                };
+
+                if let Some(parent) = output.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+
+                let mut built_nand = nand.clone();
+                let clean_bytes = built_nand
+                    .build_in_place(cpukey)
+                    .map_err(|e| format!("Build failed: {}", e))?;
+
+                if session.options.core_builder.noecc.unwrap_or(false) {
+                    std::fs::write(&output, &clean_bytes)
+                        .map_err(|e| format!("Failed to write output: {}", e))?;
+                    info!(
+                        "[session] Build complete: wrote logical image (noecc) to '{}' (Size: 0x{:X})",
+                        output.display(),
+                        clean_bytes.len()
+                    );
+                    return Ok(());
+                }
+
+                let mut fs_meta = std::collections::HashMap::new();
+                let page_count_encoded = if layout == crate::core::images::blocks::NandLayout::Bb {
+                    match nand.options.layout {
+                        crate::core::images::blocks::NandLayout::Bb => 0x00,
+                        _ => 0x01,
                     }
                 } else {
-                    error!("[session] No active NAND loaded to build!");
+                    0x01
+                };
+
+                let mut all_partitions = std::collections::HashMap::new();
+                if let Some(flashfs) = built_nand.flashfs.as_ref() {
+                    if !flashfs.root.entries.is_empty() {
+                        all_partitions.insert(flashfs.root.partition_type, flashfs.root.clone());
+                    }
                 }
+
+                for (btype, root) in all_partitions {
+                    if root.block_number < 0 {
+                        continue;
+                    }
+
+                    let fs_start = root.block_number as usize;
+                    let reserve_start = layout.reserve_start(clean_bytes.len());
+                    for (val, &block) in root.block_map.iter().enumerate() {
+                        if val < fs_start || val >= reserve_start {
+                            continue;
+                        }
+                        let is_free = (block & 0x7FFF) == 0x1FFE;
+
+                        if !is_free {
+                            let absolute_block = val;
+                            let is_root = absolute_block == (root.block_number as usize);
+                            let block_type = if is_root { btype } else { 0x01 };
+
+                            fs_meta.insert(
+                                absolute_block,
+                                crate::core::images::blocks::FsSpareInfo {
+                                    sequence: root.version as u32,
+                                    size: 0x4000,
+                                    page_count: page_count_encoded,
+                                    block_type,
+                                },
+                            );
+                        }
+                    }
+                }
+
+                let mobile_meta = if session.options.core_builder.nomobile.unwrap_or(false) {
+                    std::collections::HashMap::new()
+                } else {
+                    built_nand
+                        .mobile
+                        .as_ref()
+                        .map(|m| m.collect_spare_meta(&layout))
+                        .unwrap_or_default()
+                };
+
+                let finalized_bytes = crate::core::images::blocks::NandProcessor::finalize_nand(
+                    &clean_bytes,
+                    layout,
+                    meta_type,
+                    Some(&fs_meta),
+                    if mobile_meta.is_empty() {
+                        None
+                    } else {
+                        Some(&mobile_meta)
+                    },
+                    None,
+                );
+                let final_size = finalized_bytes.len();
+                std::fs::write(&output, finalized_bytes)
+                    .map_err(|e| format!("Failed to write output: {}", e))?;
+                info!(
+                    "[session] Build complete: '{}' written ({} bytes, layout {:?})",
+                    output.display(),
+                    final_size,
+                    layout
+                );
             }
             InternalCommand::ParseIni {
                 path,

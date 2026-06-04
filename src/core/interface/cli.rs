@@ -361,6 +361,17 @@ pub enum CliConsoleType {
 fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
     let build_type = args.build_type.as_ref().ok_or(CliError::MissingBuildType)?;
     let console_type = args.console.as_ref().ok_or(CliError::MissingConsole)?;
+    let build_type_str = format!("{:?}", build_type).to_lowercase();
+    let console_base = format!("{:?}", console_type).to_lowercase();
+
+    session.set_build_type(build_type_str.clone());
+    session.set_console(console_base.clone());
+    if let Some(ext) = &args.ini_ext {
+        session.set_ini_ext(ext.clone());
+    }
+    if let Some(ext) = &args.bl_ext {
+        session.set_bl_ext(ext.clone());
+    }
 
     // --- Path Resolution ---
     // -d = INI directory (contains _retail.ini, bootloaders, flashfs/)
@@ -466,7 +477,6 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
     }
 
     // Resolve INI file path: <ini_dir>/_<type>.ini
-    let build_type_str = format!("{:?}", build_type).to_lowercase();
     let ini_suffix = args
         .ini_ext
         .as_ref()
@@ -475,7 +485,6 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
     let ini_filename = format!("_{}{}.ini", build_type_str, ini_suffix);
     let ini_path = ini_dir.join(&ini_filename);
 
-    let console_base = format!("{:?}", console_type).to_lowercase();
     let console_section = if let Some(ext) = &args.bl_ext {
         format!("{}_{}", console_base, ext)
     } else {
@@ -837,6 +846,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
             .clone()
             .unwrap_or_else(|| PathBuf::from("updflash.bin"))
     });
+    session.set_output(output_path.clone());
     session.build(output_path.clone(), 0); // Target 0 for now
 
     Ok(())
