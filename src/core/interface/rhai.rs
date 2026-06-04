@@ -40,7 +40,7 @@ impl GxScriptEngine {
         let s_clone = session.clone();
         engine.register_fn("set_option", move |key: &str, val: &str| {
             let mut s = s_clone.lock().unwrap();
-            s.set_option(key, val);
+            s.options.set_option(key, val);
         });
 
         let s_clone = session.clone();

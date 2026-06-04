@@ -5,4 +5,4 @@ pub mod cli;
 pub mod ffi;
 
 #[cfg(feature = "rhai")]
-pub mod gxscript;
+pub mod rhai;

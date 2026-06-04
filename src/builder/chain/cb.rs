@@ -137,22 +137,27 @@ impl BootloaderCb {
         }
 
         let pd_raw: [u8; 3] = self.data[0x10..0x13].try_into().unwrap();
+
         info!(
             "[cb] PD raw bytes at self.data[0x10..0x13]: {:02x?}",
             pd_raw
         );
+
         let mut pairing_data = pd_raw;
         pairing_data.reverse();
 
         let ldv_raw = self.data.get(0x13).copied().unwrap_or(0);
         let mut lockdown_value = if ldv_raw <= 16 { ldv_raw } else { 0 };
+
         info!(
             "[cb] populate_metadata: PD={:02x?} LDV={} (raw={} at self.data[0x13])",
             pairing_data, lockdown_value, ldv_raw
         );
 
+        // 15432 CB_X
+
         if self.header.version.get() == 0x3C48 {
-            lockdown_value = 0;
+            // lockdown_value = 0;
         }
 
         let reserved_per_box: [u8; 0xC] = self.data[0x14..0x20].try_into().unwrap();
@@ -229,6 +234,20 @@ impl BootloaderCb {
             self.data[0x38C..0x3A0].copy_from_slice(&meta.digest_4bl);
 
             self.data[0x3A0..0x3A4].copy_from_slice(&meta.console_allow);
+
+            if self.data.len() > 0x2400 && self.data[0x1FF0] == 0x43 && self.data[0x1FF1] == 0x42 {
+                self.data[0x2010..0x2013].copy_from_slice(&pd_sync);
+                self.data[0x2013] = meta.lockdown_value;
+                self.data[0x2014..0x2020].copy_from_slice(&meta.reserved_per_box);
+                self.data[0x2020..0x2030].copy_from_slice(&meta.per_box_digest);
+                if self.data.len() >= 0x23A4 {
+                    self.data[0x23A0..0x23A4].copy_from_slice(&meta.console_allow);
+                }
+                if self.data.len() > 0x23B1 {
+                    self.data[0x23B1] = meta.lockdown_value;
+                }
+                info!("[pfa] Synchronized embedded CB_B metadata!");
+            }
         }
     }
 

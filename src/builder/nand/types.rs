@@ -1,8 +1,114 @@
 use crate::core::images::blocks::{LbaMap, NandLayout};
-use crate::core::images::gxp::PatchRecord;
-use log::info;
 use zerocopy::byteorder::{BigEndian, I16, U16, U32};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
+use crate::builder::filesystem::corona::{CoronaFsSlots};
+use crate::builder::filesystem::flashfs::FlashFS;
+use crate::builder::filesystem::mobile::MobileStore;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum BuilderError {
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Filesystem error: {0}")]
+    Fs(#[from] crate::builder::filesystem::FsError),
+
+    #[error("Invalid hex string: {0}")]
+    InvalidHex(String),
+
+    #[error("Image too small: got {got} bytes, need {need}")]
+    ImageTooSmall { got: usize, need: usize },
+
+    #[error("Invalid NAND magic: 0x{magic:04X}")]
+    InvalidMagic { magic: u16 },
+
+    #[error(
+        "{component} out of bounds: offset 0x{offset:X} + size 0x{size:X} > image 0x{image_len:X}"
+    )]
+    OutOfBounds {
+        component: String,
+        offset: usize,
+        size: usize,
+        image_len: usize,
+    },
+
+    #[error("Invalid KV size: 0x{size:X} (expected 0x4000)")]
+    InvalidKvSize { size: usize },
+
+    #[error("Offset overflow: {0}")]
+    OffsetOverflow(String),
+
+    #[error("Failed to parse NAND header: {0}")]
+    HeaderParse(String),
+
+    #[error("Bootloader chain overflow at stage {stage}: {message}")]
+    BootloaderOverflow { stage: String, message: String },
+
+    #[error("Bootchain stage {stage} overflow at 0x{offset:X}")]
+    BootchainOverflow { stage: String, offset: usize },
+
+    #[error(
+        "SMC write out of bounds: offset 0x{offset:X} + size 0x{size:X} > image 0x{image_len:X}"
+    )]
+    SmcOutOfBounds {
+        offset: usize,
+        size: usize,
+        image_len: usize,
+    },
+
+    #[error("Keyvault write out of bounds: offset 0x{offset:X} + size 0x{size:X} > image 0x{image_len:X}")]
+    KvOutOfBounds {
+        offset: usize,
+        size: usize,
+        image_len: usize,
+    },
+
+    #[error("CF overflow at 0x{offset:X}: need 0x{need:X} bytes")]
+    CfOverflow { offset: usize, need: usize },
+
+    #[error("CG overflow at 0x{offset:X}: need 0x{need:X} bytes")]
+    CgOverflow { offset: usize, need: usize },
+
+    #[error("KHV patch stream overflow at 0x{offset:X}: need 0x{need:X} bytes")]
+    KhvOverflow { offset: usize, need: usize },
+
+    #[error("Patch error: {0}")]
+    Patch(String),
+
+    #[error("XeLL offset error: {0}")]
+    XellOffset(String),
+
+    #[error("Assembly error: {0}")]
+    Assembly(String),
+
+    #[error("Build error: {0}")]
+    Build(String),
+
+    #[error("Bootloader error: {0}")]
+    Bootloader(String),
+}
+
+impl From<String> for BuilderError {
+    fn from(s: String) -> Self {
+        BuilderError::Build(s)
+    }
+}
+
+impl From<&str> for BuilderError {
+    fn from(s: &str) -> Self {
+        BuilderError::Build(s.to_string())
+    }
+}
+
+impl From<BuilderError> for String {
+    fn from(e: BuilderError) -> Self {
+        e.to_string()
+    }
+}
+
+pub type Result<T, E = BuilderError> = std::result::Result<T, E>;
+
 
 pub const NAND_RETAIL_1BL_KEY: [u8; 16] = [
     0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA,
@@ -13,6 +119,107 @@ pub struct BlDiscovery {
     pub version: u16,
     pub size: u32,
     pub key_source: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum MotherboardType {
+    Xenon = 1,
+    Zephyr = 2,
+    Falcon = 3,
+    Jasper = 4,
+    Trinity = 5,
+    Corona = 6,
+    Winchester = 7,
+    Unknown = 0xF,
+}
+
+impl MotherboardType {
+    pub fn from_smc(smc_byte: u8) -> Self {
+        match (smc_byte >> 4) & 0xF {
+            1 => MotherboardType::Xenon,
+            2 => MotherboardType::Zephyr,
+            3 => MotherboardType::Falcon,
+            4 => MotherboardType::Jasper,
+            5 => MotherboardType::Trinity,
+            6 => MotherboardType::Corona,
+            7 => MotherboardType::Winchester,
+            _ => MotherboardType::Unknown,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum SouthbridgeType {
+    Xsb,
+    Psb,
+    Ksb,
+    Unknown,
+}
+
+impl From<MotherboardType> for SouthbridgeType {
+    fn from(m: MotherboardType) -> Self {
+        match m {
+            MotherboardType::Xenon | MotherboardType::Zephyr | MotherboardType::Falcon => {
+                SouthbridgeType::Xsb
+            }
+            MotherboardType::Jasper | MotherboardType::Trinity => SouthbridgeType::Psb,
+            MotherboardType::Corona | MotherboardType::Winchester => SouthbridgeType::Ksb,
+            MotherboardType::Unknown => SouthbridgeType::Unknown,
+        }
+    }
+}
+
+pub fn layout_calculator(
+    sb: SouthbridgeType,
+    image_profile: &str,
+    layout: NandLayout,
+) -> (u32, u32, u32) {
+    // Returns (header.fs_addr, header.smc_config_offset, physical_fs_block)
+    let smc_config = match layout {
+        NandLayout::Xsb | NandLayout::Sb => 0xF70000,
+        NandLayout::Bb => 0x3DF0000,
+        NandLayout::Emmc => 0x0,
+    };
+
+    if matches!(layout, NandLayout::Bb | NandLayout::Emmc) {
+        return (0, smc_config, 0);
+    }
+
+    // SmallBlock FlashFS relocation based on SB and profile
+    let is_split = match image_profile {
+        "split" | "devgl" | "devkit" | "xdkbuild" | "glitch2m" | "glitch2" | "glitch3" => true,
+        _ => false,
+    };
+
+    match sb {
+        SouthbridgeType::Xsb => {
+            if is_split {
+                (0xE44000, smc_config, 0x391)
+            } else {
+                (0xD84000, smc_config, 0x361)
+            }
+        }
+        SouthbridgeType::Psb => {
+            if is_split {
+                (0xDF4000, smc_config, 0x37D)
+            } else {
+                (0xD84000, smc_config, 0x361)
+            }
+        }
+        SouthbridgeType::Ksb => {
+            // Corona is always split in modern builds (RGH2/3) or handles it same as Split PSB
+            (0xE44000, smc_config, 0x391)
+        }
+        _ => (0, smc_config, 0),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum BuildMode {
+    Normal,
+    Xell,
+    Shadowboot,
+    Devkit,
 }
 
 #[derive(FromBytes, IntoBytes, KnownLayout, Immutable, Clone, Copy)]
@@ -95,9 +302,9 @@ impl NandHeader {
     const XEBUILD_XELL_ALT_POC_OFFSET: usize = 0x3E;
     const XEBUILD_XELL_POC_OFFSET: usize = 0x3F;
 
-    pub fn validate(&self) -> Result<(), crate::builder::builder::BuilderError> {
+    pub fn validate(&self) -> Result<(), crate::builder::nand::types::BuilderError> {
         if self.prefix.magic.get() != Self::MAGIC {
-            return Err(crate::builder::builder::BuilderError::InvalidMagic {
+            return Err(crate::builder::nand::types::BuilderError::InvalidMagic {
                 magic: self.prefix.magic.get(),
             });
         }
@@ -108,6 +315,7 @@ impl NandHeader {
         self.prefix.entrypoint.get()
     }
 
+    /*
     pub fn print_info(&self) {
         info!(
             "[builder] NAND magic:       0x{:04X}",
@@ -132,8 +340,8 @@ impl NandHeader {
             self.smc_boot_offset.get()
         );
     }
-
-    pub fn apply_xebuild_header_flags(&mut self, options: &BuildOptions, extra: &NandExtra) {
+    */
+    pub fn apply_xebuild_header_flags(&mut self, options: &NandConfig) {
         let profile = options.image_profile.as_str();
         let is_devkit = profile == "devkit" || matches!(options.build_mode, BuildMode::Devkit);
         let is_retail = profile == "retail";
@@ -150,6 +358,7 @@ impl NandHeader {
         if is_hacked {
             self.copyright[Self::XEBUILD_FLAG_OFFSET] = 1;
 
+            /*
             let alt = extra.power_on_cause_a;
             let primary = extra.power_on_cause_b;
 
@@ -162,7 +371,7 @@ impl NandHeader {
             } else if options.cygnos {
                 self.copyright[Self::XEBUILD_UART_OFFSET] = 1;
             }
-
+            */
             let _ = Self::XEBUILD_DUALBOOT_OFFSET;
         }
     }
@@ -177,7 +386,7 @@ pub struct NandBootloaders {
     pub sc: Option<crate::builder::chain::sc::BootloaderSc>,
     pub cd: Option<crate::builder::chain::cd::BootloaderCd>,
     pub ce: Option<crate::builder::chain::ce::BootloaderCe>,
-    pub khvpatch: Option<Vec<PatchRecord>>,
+    //  pub khvpatch: Option<Vec<PatchRecord>>,
     pub xell: Option<crate::builder::chain::xell::Xell>,
 }
 
@@ -194,7 +403,7 @@ impl NandBootloaders {
         self.sc = None;
         self.cd = None;
         self.ce = None;
-        self.khvpatch = None;
+        // self.khvpatch = None;
         self.xell = None;
     }
 }
@@ -209,7 +418,7 @@ impl Default for NandBootloaders {
             sc: None,
             cd: None,
             ce: None,
-            khvpatch: None,
+            //          khvpatch: None,
             xell: None,
         }
     }
@@ -243,177 +452,81 @@ impl Default for NandUpdate {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct NandExtra {
     pub smc: Vec<u8>,
     pub smc_metadata: Option<crate::builder::chain::smc::SmcMetadata>,
     pub smc_config: Vec<u8>,
     pub keyvault: Vec<u8>,
     pub fcrt: Option<Vec<u8>>,
-    pub power_on_cause_a: u8,
-    pub power_on_cause_b: u8,
+    pub lba_map: LbaMap,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum MotherboardType {
-    Xenon = 1,
-    Zephyr = 2,
-    Falcon = 3,
-    Jasper = 4,
-    Trinity = 5,
-    Corona = 6,
-    Winchester = 7,
-    Unknown = 0xF,
-}
-
-impl MotherboardType {
-    pub fn from_smc(smc_byte: u8) -> Self {
-        match (smc_byte >> 4) & 0xF {
-            1 => MotherboardType::Xenon,
-            2 => MotherboardType::Zephyr,
-            3 => MotherboardType::Falcon,
-            4 => MotherboardType::Jasper,
-            5 => MotherboardType::Trinity,
-            6 => MotherboardType::Corona,
-            7 => MotherboardType::Winchester,
-            _ => MotherboardType::Unknown,
+impl Default for NandExtra {
+    fn default() -> Self {
+        NandExtra {
+            smc: Vec::new(),
+            smc_metadata: None,
+            smc_config: Vec::new(),
+            keyvault: Vec::new(),
+            fcrt: None,
+            lba_map: LbaMap::new(0x400),
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum SouthbridgeType {
-    Xsb,
-    Psb,
-    Ksb,
-    Unknown,
-}
-
-impl From<MotherboardType> for SouthbridgeType {
-    fn from(m: MotherboardType) -> Self {
-        match m {
-            MotherboardType::Xenon | MotherboardType::Zephyr | MotherboardType::Falcon => {
-                SouthbridgeType::Xsb
-            }
-            MotherboardType::Jasper | MotherboardType::Trinity => SouthbridgeType::Psb,
-            MotherboardType::Corona | MotherboardType::Winchester => SouthbridgeType::Ksb,
-            MotherboardType::Unknown => SouthbridgeType::Unknown,
-        }
-    }
-}
-
-pub struct LayoutCalculator;
-
-impl LayoutCalculator {
-    pub fn calculate(
-        sb: SouthbridgeType,
-        image_profile: &str,
-        layout: NandLayout,
-    ) -> (u32, u32, u32) {
-        // Returns (header.fs_addr, header.smc_config_offset, physical_fs_block)
-        let smc_config = match layout {
-            NandLayout::Xsb | NandLayout::Sb => 0xF70000,
-            NandLayout::Bb => 0x3DF0000,
-            NandLayout::Emmc => 0x0,
-        };
-
-        if matches!(layout, NandLayout::Bb | NandLayout::Emmc) {
-            return (0, smc_config, 0);
-        }
-
-        // SmallBlock FlashFS relocation based on SB and profile
-        let is_split = match image_profile {
-            "split" | "devgl" | "devkit" | "xdkbuild" | "glitch2m" | "glitchr" | "glitch2r" => true,
-            _ => false,
-        };
-
-        match sb {
-            SouthbridgeType::Xsb => {
-                if is_split {
-                    (0xE44000, smc_config, 0x391)
-                } else {
-                    (0xD84000, smc_config, 0x361)
-                }
-            }
-            SouthbridgeType::Psb => {
-                if is_split {
-                    (0xDF4000, smc_config, 0x37D)
-                } else {
-                    (0xD84000, smc_config, 0x361)
-                }
-            }
-            SouthbridgeType::Ksb => {
-                // Corona is always split in modern builds (RGH2/3) or handles it same as Split PSB
-                (0xE44000, smc_config, 0x391)
-            }
-            _ => (0, smc_config, 0),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum BuildMode {
-    Normal,
-    Xell,
-    Shadowboot,
-    Devkit,
 }
 
 #[derive(Clone)]
-pub struct BuildOptions {
+pub struct NandConfig {
     pub layout: NandLayout,
-    pub lba_map: LbaMap,
     pub image_profile: String,
     pub build_mode: BuildMode,
     pub motherboard: MotherboardType,
-    pub bigonsmall: bool,
-    pub shadowboot: bool,
-    pub mfg: bool,
-    pub noremap: bool,
-    pub khv_apply: bool,
     pub khv_header_size: u32,
-    pub jtag_syscall: Option<u16>,
-    pub jtag_pairing_2bl: Option<[u8; 3]>,
-    pub gxunsafe: bool,
-    pub verbose: bool,
-    pub cba: Option<String>,
-    pub cbb: Option<String>,
-    pub full_image: bool,
-    pub xsb: bool,
-    pub nomobile: bool,
-    pub nofcrt: bool,
-    pub dualpatchslots: bool,
-    pub cygnos: bool,
-    pub demon: bool,
+    pub total_blocks: usize,
 }
-
-impl Default for BuildOptions {
+impl Default for NandConfig {
     fn default() -> Self {
-        BuildOptions {
+        NandConfig {
             layout: NandLayout::Sb,
-            lba_map: LbaMap::new(0x400),
             image_profile: "retail".to_string(),
             build_mode: BuildMode::Normal,
             motherboard: MotherboardType::Unknown,
-            bigonsmall: false,
-            shadowboot: false,
-            mfg: false,
-            full_image: false,
-            xsb: false,
-            noremap: false,
-            khv_apply: false,
             khv_header_size: 0x4000,
-            jtag_syscall: None,
-            jtag_pairing_2bl: None,
-            gxunsafe: false,
-            verbose: false,
-            cba: None,
-            cbb: None,
-            nomobile: false,
-            nofcrt: false,
-            dualpatchslots: false,
-            cygnos: false,
-            demon: false,
+            total_blocks: 0,
         }
     }
+}
+
+#[derive(Clone, Default)]
+pub struct BuildOptions {
+    pub noflashfs: Option<bool>,
+    pub xellbutton: Option<u8>,
+    pub xellbutton2: Option<u8>,
+    pub gxunsafe: bool,
+    pub verbose: bool,
+}
+
+
+
+#[derive(Clone)]
+pub struct NandSkeleton {
+    pub cpukey: Option<[u8; 16]>,
+    pub build_options: BuildOptions,
+    pub options: NandConfig,
+    
+    pub header: NandHeader,
+    pub image: Vec<u8>,
+    pub extra: NandExtra,
+    pub kv: Option<crate::builder::chain::kv::Keyvault>,
+    pub bootloaders: NandBootloaders,
+    pub update: Option<NandUpdate>,
+    pub payloads: Option<Vec<PayloadEntry>>,
+    pub flashfs: Option<FlashFS>,
+    pub mobile: Option<MobileStore>,
+    pub corona_fs: Option<CoronaFsSlots>,
+
+    // pub lba_map: Option<LbaMap>,
+    // pub input_ldv_cb: Option<u8>,
+    // pub input_ldv_cf: Option<u8>,
+    // pub input_pd: Option<[u8; 3]>,
 }

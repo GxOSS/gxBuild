@@ -1,4 +1,4 @@
 pub mod blocks;
-pub mod gxp;
+pub mod gxpatch;
 pub mod signature;
 pub mod stfs;

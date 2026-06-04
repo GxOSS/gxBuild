@@ -20,8 +20,8 @@
   3. This notice may not be removed or altered from any source distribution.
 */
 
-use crate::builder::builder::NandSkeleton;
-use crate::core::images::gxp::PatchRecord;
+use crate::builder::nand::builder::NandSkeleton;
+use crate::core::images::gxpatch::PatchRecord;
 use crc32fast::Hasher;
 use log::{info, warn};
 use std::collections::HashMap;
@@ -322,7 +322,9 @@ pub fn apply_xe_ini(
     pending: PendingAssets<'_>,
 ) -> Result<NandSkeleton, IniError> {
     nand.bootloaders.clear();
-    nand.update.clear();
+    nand.update
+        .get_or_insert_with(crate::builder::nand::types::NandUpdate::default)
+        .clear();
     nand.options.image_profile = ini.buildtype.to_lowercase();
 
     if !pending.bootloaders.is_empty() {
@@ -349,28 +351,17 @@ pub fn apply_xe_ini(
         let is_rebooter = entry.chain == 1;
         let chain_id = entry.chain;
 
-        let target_bl = if is_rebooter {
-            nand.rebooter
-                .as_mut()
-                .ok_or(IniError::RebooterNotInitialized)?
-        } else {
-            &mut nand.bootloaders
-        };
-
-        let target_update = if is_rebooter {
-            nand.rebooter_update
-                .as_mut()
-                .ok_or(IniError::RebooterUpdateNotInitialized)?
-        } else {
-            &mut nand.update
-        };
-
-        let prefix = &lower;
-
         if is_rebooter && !notified {
-            info!("[ini] Rebooter chain detected");
+            warn!("[ini] Rebooter chain detected but is not supported by the current NAND skeleton structure; applying to primary chain.");
             notified = true;
         }
+
+        let target_bl = &mut nand.bootloaders;
+        let target_update = nand
+            .update
+            .get_or_insert_with(crate::builder::nand::types::NandUpdate::default);
+
+        let prefix = &lower;
 
         if prefix.starts_with("cba_") {
             target_bl.cb_a = Some(
@@ -534,10 +525,8 @@ pub fn apply_xe_ini(
                         nand.bootloaders.xell = Some(xell);
                     }
                     crate::builder::chain::xell::XellType::Xell2f => {
-                        if let Some(rebooter) = nand.rebooter.as_mut() {
-                            rebooter.xell = Some(xell);
-                        }
-                        info!("[ini] Assigned xell-2f to Full Rebooter secondary slot");
+                        warn!("[ini] xell-2f requested but rebooter chain is not supported; assigning to primary slot");
+                        nand.bootloaders.xell = Some(xell);
                     }
                     _ => {
                         warn!("[ini] Unknown XeLL type, assigning to primary slot");
@@ -545,7 +534,7 @@ pub fn apply_xe_ini(
                     }
                 }
             } else {
-                let mut p_entry = crate::builder::builder::PayloadEntry {
+                let mut p_entry = crate::builder::nand::types::PayloadEntry {
                     address: 0, // Dynamic
                     size: data.len() as u32,
                     description: filename.clone(),
@@ -567,7 +556,9 @@ pub fn apply_xe_ini(
                     }
                 }
 
-                nand.payloads.push(p_entry);
+                nand.payloads
+                    .get_or_insert_with(Vec::new)
+                    .push(p_entry);
                 info!(
                     "[ini] Assigned payload '{}' ({} bytes)",
                     filename,
@@ -577,8 +568,8 @@ pub fn apply_xe_ini(
         }
     }
 
-    nand.options.jtag_syscall = ini.jtag.syscall;
-    nand.options.jtag_pairing_2bl = ini.jtag.pairing_2bl;
+    // nand.options.jtag_syscall = ini.jtag.syscall;
+    // nand.options.jtag_pairing_2bl = ini.jtag.pairing_2bl;
 
     // Security and Extra files merged here
     if let Some(smc_data) = pending.security.get("smc.bin") {
@@ -600,34 +591,23 @@ pub fn apply_xe_ini(
         info!("[ini] Assigned FCRT.bin from memory");
     }
 
-    nand.bootloaders.khvpatch = ini.patch.khv.clone();
+    // nand.bootloaders.khvpatch = ini.patch.khv.clone();
 
     // 1f with JTAG ini
     if nand.options.image_profile == "onef" {
         info!("[ini] Enforcing Onef profile: Clearing second-chain kernel and FlashFS");
-        nand.update = crate::builder::builder::NandUpdate::default();
-        let total_blocks = nand.flashfs.root.block_map.len();
-        nand.flashfs = crate::builder::filesystem::flashfs::FlashFS::new();
-        nand.flashfs.root.block_map = vec![0; total_blocks];
-    }
+        nand.update = Some(crate::builder::nand::types::NandUpdate::default());
 
-    // Overrides
-    if let Some(cba_file) = &nand.options.cba {
-        if let Some(data) = pending.bootloaders.get(&cba_file.to_lowercase()) {
-            nand.bootloaders.cb_a = Some(
-                crate::builder::chain::cb::BootloaderCb::parse(data)
-                    .map_err(|e| IniError::BootloaderError(e.to_string()))?,
-            );
-            info!("[ini] OVERRIDE: Assigned CB_A from '{}'", cba_file);
-        }
-    }
-    if let Some(cbb_file) = &nand.options.cbb {
-        if let Some(data) = pending.bootloaders.get(&cbb_file.to_lowercase()) {
-            nand.bootloaders.cb_b = Some(
-                crate::builder::chain::cb::BootloaderCb::parse(data)
-                    .map_err(|e| IniError::BootloaderError(e.to_string()))?,
-            );
-            info!("[ini] OVERRIDE: Assigned CB_B from '{}'", cbb_file);
+        let total_blocks = nand
+            .flashfs
+            .as_ref()
+            .map(|f| f.root.block_map.len())
+            .unwrap_or(0);
+        nand.flashfs = Some(crate::builder::filesystem::flashfs::FlashFS::new());
+        if total_blocks > 0 {
+            if let Some(flashfs) = nand.flashfs.as_mut() {
+                flashfs.root.block_map = vec![0; total_blocks];
+            }
         }
     }
 

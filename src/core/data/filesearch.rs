@@ -19,13 +19,15 @@
      misrepresented as being the original software.
   3. This notice may not be removed or altered from any source distribution.
 */
-use crate::builder::builder::NandSkeleton;
+use crate::builder::nand::builder::NandSkeleton;
 use crate::builder::filesystem::flashfs::{FileSystemEntry, FlashFS};
 use crate::core::data::xeini::{strip_flashfs_path_indicator, XeBuildIni};
 use log::{info, warn};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
+
+use crate::core::images::gxpatch::{apply_records, parse_patch_binary};
 
 #[derive(Error, Debug)]
 pub enum FilesearchError {
@@ -105,7 +107,7 @@ impl DiscoveredUpdate {
     }
 }
 
-fn get_xebuild_crc32(data: &[u8], filename: &str) -> String {
+pub(crate) fn get_xebuild_crc32(data: &[u8], filename: &str) -> String {
     let lower_name = filename.to_lowercase();
 
     if data.len() < 0x10 {
@@ -658,7 +660,7 @@ impl IniSearch {
             // Parse Auto Patch into Memory
             let mut xe_patch = None;
             if let Some(ref p) = patch_path {
-                if let Ok(parsed) = crate::core::images::gxp::parse_patch_binary(p) {
+                if let Ok(parsed) = parse_patch_binary(p) {
                     if let Some(khv) = parsed.khv.as_ref() {
                         ini.patch.khv = Some(khv.records.clone());
                     }
@@ -835,11 +837,8 @@ impl IniSearch {
                 // Tier 7: NAND Image
                 if found_content.is_none() {
                     if let Some(n) = nand {
-                        let (bl, upd) = if entry.chain > 0 {
-                            (n.rebooter.as_ref(), n.rebooter_update.as_ref())
-                        } else {
-                            (Some(&n.bootloaders), Some(&n.update))
-                        };
+                        let bl = Some(&n.bootloaders);
+                        let upd = n.update.as_ref();
 
                         let mut nand_data = None;
                         if lower_name.starts_with("cb") {
@@ -895,37 +894,24 @@ impl IniSearch {
                         if !nochainpatch {
                             if Some(&lower_name) == target_cb.as_ref() {
                                 if let Some(ref cb_patch) = parsed_patch.cb {
-                                    let _ = crate::core::images::gxp::apply_records(
-                                        &cb_patch.records,
-                                        &mut c,
-                                    );
+                                    let _ = apply_records(&cb_patch.records, &mut c);
                                 } else if let Some(ref cbb_patch) = parsed_patch.cb_b {
-                                    let _ = crate::core::images::gxp::apply_records(
-                                        &cbb_patch.records,
-                                        &mut c,
-                                    );
+                                    let _ = apply_records(&cbb_patch.records, &mut c);
                                 }
                             } else if lower_name.starts_with("cd_") || lower_name.starts_with("sd_")
                             {
                                 if let Some(ref cd_patch) = parsed_patch.cd {
-                                    let _ = crate::core::images::gxp::apply_records(
-                                        &cd_patch.records,
-                                        &mut c,
-                                    );
+                                    let _ = apply_records(&cd_patch.records, &mut c);
                                 }
                             }
                         }
                     }
 
                     result.bootloader_assets.insert(lower_name.clone(), c);
-                    let target_bl = if entry.chain > 0 {
-                        result
-                            .rebooter
-                            .as_mut()
-                            .ok_or(FilesearchError::RebooterNotInitialized)?
-                    } else {
-                        result.bootloaders.as_mut().unwrap()
-                    };
+                    if entry.chain > 0 {
+                        warn!("[ini] Rebooter chain assets are not supported by the current NAND skeleton structure; recording as primary chain assets.");
+                    }
+                    let target_bl = result.bootloaders.as_mut().unwrap();
 
                     let fp = found_path.unwrap_or_else(|| PathBuf::from("MEMORY"));
                     if lower_name.starts_with("cb") {
@@ -1078,24 +1064,25 @@ impl IniSearch {
                 // Tier 6: NAND FlashFS
                 if found_content.is_none() {
                     if let Some(n) = nand {
-                        if let Some(n_entry) = n
-                            .flashfs
-                            .root
-                            .entries
-                            .iter()
-                            .find(|e| e.file_name.to_lowercase() == lower_basename)
-                        {
-                            let c = n_entry.data.clone();
-                            if check_crc32_simple(
-                                &c,
-                                &basename,
-                                &entry.hash,
-                                "NAND FlashFS",
-                                unsafe_mode,
-                            )
-                            .is_some()
+                        if let Some(flashfs) = n.flashfs.as_ref() {
+                            if let Some(n_entry) = flashfs
+                                .root
+                                .entries
+                                .iter()
+                                .find(|e| e.file_name.to_lowercase() == lower_basename)
                             {
-                                found_content = Some(c);
+                                let c = n_entry.data.clone();
+                                if check_crc32_simple(
+                                    &c,
+                                    &basename,
+                                    &entry.hash,
+                                    "NAND FlashFS",
+                                    unsafe_mode,
+                                )
+                                .is_some()
+                                {
+                                    found_content = Some(c);
+                                }
                             }
                         }
                     }

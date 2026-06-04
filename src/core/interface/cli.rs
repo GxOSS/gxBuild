@@ -20,12 +20,18 @@
   3. This notice may not be removed or altered from any source distribution.
 */
 
-#![cfg(feature = "cli")]
-
-use crate::builder::ecc::handle_extract_ecc;
+use crate::builder::nand::ecc::handle_extract_ecc;
 #[cfg(feature = "rhai")]
-use crate::core::interface::gxscript::GxScriptEngine;
+use crate::core::interface::rhai::GxScriptEngine;
 use crate::core::logger;
+use crate::core::session::InternalCommand;
+use crate::core::session::Session;
+use clap::ValueEnum;
+use clap::{CommandFactory, Parser, Subcommand};
+use log::{error, info, warn};
+use std::path::PathBuf;
+#[cfg(feature = "rhai")]
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -52,19 +58,12 @@ pub enum CliError {
     Session(#[from] crate::core::session::SessionError),
 
     #[error("Builder error: {0}")]
-    Builder(#[from] crate::builder::builder::BuilderError),
+    Builder(#[from] crate::builder::nand::types::BuilderError),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
-use crate::core::session::{InternalCommand, Session};
-use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
-use log::{error, info, warn};
-use std::path::PathBuf;
-#[cfg(feature = "rhai")]
-use std::sync::{Arc, Mutex};
 
-/// xeBuild v1.21.810 clone - System image builder
 #[derive(Parser, Debug)]
 #[command(
     name = "gxBuild",
@@ -129,8 +128,6 @@ pub struct GgxArgs {
     #[arg(short = '8', long = "raw", global = true)]
     pub raw_patches: Vec<String>,
 
-    /// Show version mapped natively by clap.
-
     /// Optional source NAND image
     #[arg(short = 'l', long = "image", global = true)]
     pub source_nand: Option<PathBuf>,
@@ -193,36 +190,6 @@ pub enum GgxMode {
         #[arg(long = "all")]
         all: bool,
     },
-}
-
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq)]
-#[allow(non_camel_case_types)]
-pub enum CliBuildType {
-    retail,
-    jtag,
-    glitch,
-    glitch2,
-    glitch2m,
-    glitch3,
-    devkit,
-}
-
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq)]
-#[allow(non_camel_case_types)]
-pub enum CliConsoleType {
-    xenon,
-    zephyr,
-    falcon,
-    jasper,
-    jasper256,
-    jasper512,
-    jasperbb,
-    jasperbigffs,
-    trinity,
-    trinitybigffs,
-    corona,
-    corona4g,
-    winchester,
 }
 
 /// Custom parser for the -o options flag.
@@ -361,9 +328,50 @@ pub fn ggx_cli() {
     }
 }
 
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq)]
+#[allow(non_camel_case_types)]
+pub enum CliBuildType {
+    retail,
+    jtag,
+    glitch,
+    glitch2,
+    glitch2m,
+    glitch3,
+    devkit,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq)]
+#[allow(non_camel_case_types)]
+pub enum CliConsoleType {
+    xenon,
+    zephyr,
+    falcon,
+    jasper,
+    jasper256,
+    jasper512,
+    jasperbb,
+    jasperbigffs,
+    trinity,
+    trinitybigffs,
+    corona,
+    corona4g,
+    winchester,
+}
+
 fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
     let build_type = args.build_type.as_ref().ok_or(CliError::MissingBuildType)?;
     let console_type = args.console.as_ref().ok_or(CliError::MissingConsole)?;
+    let build_type_str = format!("{:?}", build_type).to_lowercase();
+    let console_base = format!("{:?}", console_type).to_lowercase();
+
+    session.set_build_type(build_type_str.clone());
+    session.set_console(console_base.clone());
+    if let Some(ext) = &args.ini_ext {
+        session.set_ini_ext(ext.clone());
+    }
+    if let Some(ext) = &args.bl_ext {
+        session.set_bl_ext(ext.clone());
+    }
 
     // --- Path Resolution ---
     // -d = INI directory (contains _retail.ini, bootloaders, flashfs/)
@@ -404,13 +412,13 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
     // --- CLI Command-Line Specific Overrides ---
     let mut cli_overrides = crate::core::data::optini::OptionsIni::new();
     if let Some(key) = &args.cpu_key {
-        cli_overrides.cpukey = Some(key.clone());
+        cli_overrides.keys.cpukey = Some(key.clone());
     }
     if args.full_image {
-        cli_overrides.full_image = Some(true);
+        cli_overrides.core_builder.full_image = Some(true);
     }
     if args.xsb {
-        cli_overrides.xsb = Some(true);
+        cli_overrides.core_builder.xsb = Some(true);
     }
     session.options.merge(cli_overrides);
 
@@ -419,44 +427,44 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
         for (k, v) in group {
             let mut o = crate::core::data::optini::OptionsIni::new();
             match k.to_lowercase().as_str() {
-                "region" | "avregion" => o.avregion = Some(v.clone()),
-                "gameregion" => o.gameregion = Some(v.clone()),
-                "dvdregion" => o.dvdregion = Some(v.clone()),
+                "region" | "avregion" => o.keyvault.avregion = Some(v.clone()),
+                "gameregion" => o.keyvault.gameregion = Some(v.clone()),
+                "dvdregion" => o.keyvault.dvdregion = Some(v.clone()),
                 "unsafe" => {
-                    o.gxunsafe = Some(v.eq_ignore_ascii_case("true"));
-                    if o.gxunsafe.unwrap_or(false) {
+                    o.core.gxunsafe = Some(v.eq_ignore_ascii_case("true"));
+                    if o.core.gxunsafe.unwrap_or(false) {
                         warn!("[cli] Unsafe Mode enabled via CLI override.");
                     }
                 }
-                "nomobile" => o.nomobile = Some(v.eq_ignore_ascii_case("true")),
-                "nofcrt" => o.nofcrt = Some(v.eq_ignore_ascii_case("true")),
-                "noenter" => o.noenter = Some(v.eq_ignore_ascii_case("true")),
-                "noremap" => o.noremap = Some(v.eq_ignore_ascii_case("true")),
-                "nandmu" => o.nandmu = Some(v.eq_ignore_ascii_case("true")),
-                "nochainpatch" => o.nochainpatch = Some(v.eq_ignore_ascii_case("true")),
-                "cputemp" => o.cputemp = Some(v.clone()),
-                "gputemp" => o.gputemp = Some(v.clone()),
-                "edramtemp" => o.edramtemp = Some(v.clone()),
-                "overcputemp" => o.overcputemp = Some(v.clone()),
-                "overgputemp" => o.overgputemp = Some(v.clone()),
-                "overedramtemp" => o.overedramtemp = Some(v.clone()),
-                "cpufan" => o.cpufan = Some(v.clone()),
-                "gpufan" => o.gpufan = Some(v.clone()),
-                "macid" | "mac" => o.macid = Some(v.clone()),
-                "dvdkey" => o.dvdkey = Some(v.clone()),
-                "cfldv" => o.cfldv = Some(v.clone()),
-                "xellbutton" => o.xellbutton = Some(v.clone()),
-                "xellbutton2" => o.xellbutton2 = Some(v.clone()),
-                "cygnos" => o.cygnos = Some(v.eq_ignore_ascii_case("true")),
-                "demon" => o.demon = Some(v.eq_ignore_ascii_case("true")),
-                "smcnoeject" => o.smcnoeject = Some(v.eq_ignore_ascii_case("true")),
-                "smcnoblink" => o.smcnoblink = Some(v.eq_ignore_ascii_case("true")),
-                "patchsmc" => o.patchsmc = Some(v.eq_ignore_ascii_case("true")),
-                "olddvd" => o.olddvd = Some(v.eq_ignore_ascii_case("true")),
-                "nodvd" => o.nodvd = Some(v.eq_ignore_ascii_case("true")),
-                "dualboot" => o.dualboot = Some(v.eq_ignore_ascii_case("true")),
-                "nolog" => o.nolog = Some(v.eq_ignore_ascii_case("true")),
-                "noinfo" => o.noinfo = Some(v.eq_ignore_ascii_case("true")),
+                "nomobile" => o.core_builder.nomobile = Some(v.eq_ignore_ascii_case("true")),
+                "nofcrt" => o.core_builder.nofcrt = Some(v.eq_ignore_ascii_case("true")),
+                "noenter" => o.core.noenter = Some(v.eq_ignore_ascii_case("true")),
+                "noremap" => o.core_builder.noremap = Some(v.eq_ignore_ascii_case("true")),
+                "nandmu" => o.core_builder.nandmu = Some(v.eq_ignore_ascii_case("true")),
+                "nochainpatch" => o.core_builder.nochainpatch = Some(v.eq_ignore_ascii_case("true")),
+                "cputemp" => o.smc_config.cputemp = Some(v.clone()),
+                "gputemp" => o.smc_config.gputemp = Some(v.clone()),
+                "edramtemp" => o.smc_config.edramtemp = Some(v.clone()),
+                "overcputemp" => o.smc_config.overcputemp = Some(v.clone()),
+                "overgputemp" => o.smc_config.overgputemp = Some(v.clone()),
+                "overedramtemp" => o.smc_config.overedramtemp = Some(v.clone()),
+                "cpufan" => o.smc_config.cpufan = Some(v.clone()),
+                "gpufan" => o.smc_config.gpufan = Some(v.clone()),
+                "macid" | "mac" => o.keyvault.macid = Some(v.clone()),
+                "dvdkey" => o.keyvault.dvdkey = Some(v.clone()),
+                "cfldv" => o.keys.cfldv = Some(v.clone()),
+                "xellbutton" => o.builder.xellbutton = Some(v.clone()),
+                "xellbutton2" => o.builder.xellbutton2 = Some(v.clone()),
+                "cygnos" => o.jtag.cygnos = Some(v.eq_ignore_ascii_case("true")),
+                "demon" => o.jtag.demon = Some(v.eq_ignore_ascii_case("true")),
+                "smcnoeject" => o.jtag.smcnoeject = Some(v.eq_ignore_ascii_case("true")),
+                "smcnoblink" => o.jtag.smcnoblink = Some(v.eq_ignore_ascii_case("true")),
+                "patchsmc" => o.jtag.patchsmc = Some(v.eq_ignore_ascii_case("true")),
+                "olddvd" => o.jtag.olddvd = Some(v.eq_ignore_ascii_case("true")),
+                "nodvd" => o.jtag.nodvd = Some(v.eq_ignore_ascii_case("true")),
+                "dualboot" => o.jtag.dualboot = Some(v.eq_ignore_ascii_case("true")),
+                "nolog" => o.core.nolog = Some(v.eq_ignore_ascii_case("true")),
+                "noinfo" => o.core.noinfo = Some(v.eq_ignore_ascii_case("true")),
                 "verbose" => {} // Handled during logger init
                 _ => warn!("[cli] Unhandled generic option override: {}", k),
             }
@@ -464,12 +472,11 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
         }
     }
 
-    if session.options.gxunsafe.unwrap_or(false) {
-        warn!("[cli] UNEXPECTED BEHAVIOR ENABLED: Unsafe Mode is active. CRC32 mismatches will be bypassed.");
+    if session.options.core.gxunsafe.unwrap_or(false) {
+        warn!("[cli] Unsafe Mode Enabled");
     }
 
     // Resolve INI file path: <ini_dir>/_<type>.ini
-    let build_type_str = format!("{:?}", build_type).to_lowercase();
     let ini_suffix = args
         .ini_ext
         .as_ref()
@@ -478,7 +485,6 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
     let ini_filename = format!("_{}{}.ini", build_type_str, ini_suffix);
     let ini_path = ini_dir.join(&ini_filename);
 
-    let console_base = format!("{:?}", console_type).to_lowercase();
     let console_section = if let Some(ext) = &args.bl_ext {
         format!("{}_{}", console_base, ext)
     } else {
@@ -718,7 +724,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
         data_dir.join("keyvault.bin"),
     ];
 
-    let nofcrt_enabled = session.options.nofcrt.unwrap_or(false);
+    let nofcrt_enabled = session.options.core_builder.nofcrt.unwrap_or(false);
 
     for p in &security_candidates {
         let name = p
@@ -840,6 +846,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
             .clone()
             .unwrap_or_else(|| PathBuf::from("updflash.bin"))
     });
+    session.set_output(output_path.clone());
     session.build(output_path.clone(), 0); // Target 0 for now
 
     Ok(())
@@ -861,7 +868,7 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> Result<(), CliError>
     for group in &args.options {
         for (k, v) in group {
             if k.eq_ignore_ascii_case("nomobile") {
-                session.options.nomobile = Some(v.eq_ignore_ascii_case("true"));
+                session.options.core_builder.nomobile = Some(v.eq_ignore_ascii_case("true"));
             }
         }
     }
