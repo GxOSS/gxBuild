@@ -107,7 +107,7 @@ impl DiscoveredUpdate {
     }
 }
 
-fn get_xebuild_crc32(data: &[u8], filename: &str) -> String {
+pub(crate) fn get_xebuild_crc32(data: &[u8], filename: &str) -> String {
     let lower_name = filename.to_lowercase();
 
     if data.len() < 0x10 {
