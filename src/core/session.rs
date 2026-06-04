@@ -20,7 +20,7 @@
   3. This notice may not be removed or altered from any source distribution.
 */
 
-use crate::builder::builder::NandSkeleton;
+use crate::builder::nand::builder::NandSkeleton;
 use crate::core::data::filesearch::IniSearch;
 use crate::core::handler::Executor;
 use log::{error, info};
@@ -446,7 +446,7 @@ impl Session {
     }
     /// Parses a 32-character hex CPU key string and enqueues a ParseKey command.
     pub fn set_cpukey(&mut self, key: String) {
-        if let Ok(bytes) = crate::builder::parser::hex_to_bytes(&key) {
+        if let Ok(bytes) = crate::builder::nand::parser::hex_to_bytes(&key) {
             if let Ok(arr) = bytes.try_into() {
                 self.parse_key(arr);
             } else {
@@ -469,7 +469,7 @@ impl Session {
     }
 
     pub fn load_ini(&mut self, content: &str, target: &str) -> Result<(), String> {
-        let is_verbose = self.options.verbose.unwrap_or(false);
+        let is_verbose = self.options.core.verbose.unwrap_or(false);
         let _ = crate::core::logger::init_logger("build", is_verbose);
 
         info!(
@@ -501,11 +501,11 @@ impl Session {
                 &payloads_dir,
                 &smc_dir,
                 &self.active_nand,
-                self.options.gxunsafe,
-                self.options.nofcrt,
-                self.options.nosecurity,
-                self.options.nosusecurity,
-                self.options.nochainpatch,
+                self.options.core.gxunsafe,
+                self.options.core_builder.nofcrt,
+                self.options.core_builder.nosecurity,
+                self.options.core_builder.nosusecurity,
+                self.options.core_builder.nochainpatch,
             ) {
                 Ok(search) => {
                     self.bootloader_assets
@@ -535,7 +535,7 @@ impl Session {
                             }
                             _ => crate::core::images::blocks::NandLayout::Sb,
                         };
-                        crate::builder::builder::NandSkeleton::new_blank(layout)
+                        crate::builder::nand::builder::NandSkeleton::new_blank(layout)
                     });
 
                     let pending = crate::core::data::xeini::PendingAssets {

@@ -1,6 +1,6 @@
-use crate::builder::builder::NandSkeleton;
-use crate::builder::parser::hex_to_bytes;
-use crate::builder::types::{layout_calculator, SouthbridgeType};
+use crate::builder::nand::builder::NandSkeleton;
+use crate::builder::nand::parser::hex_to_bytes;
+use crate::builder::nand::types::{layout_calculator, SouthbridgeType};
 use crate::core::data::filesearch::IniSearch;
 use crate::core::images::gxpatch::parse_patch_binary;
 use crate::core::session::InternalCommand;
@@ -41,8 +41,8 @@ impl Executor {
             .and_then(|cb| cb.metadata.as_ref().map(|meta| meta.pairing_data))
             .or_else(|| {
                 nand.update
-                    .cf_0
                     .as_ref()
+                    .and_then(|u| u.cf_0.as_ref())
                     .and_then(|cf| cf.metadata.as_ref().map(|meta| meta.pairing_data))
             })
             .filter(|p| *p != [0, 0, 0])
@@ -74,8 +74,8 @@ impl Executor {
 
         let from_nand = nand
             .update
-            .cf_0
             .as_ref()
+            .and_then(|u| u.cf_0.as_ref())
             .and_then(|cf| cf.metadata.as_ref().map(|meta| meta.lockdown_value))
             .filter(|v| *v != 0);
 
@@ -83,6 +83,10 @@ impl Executor {
     }
 
     fn sync_per_box_settings(nand: &mut NandSkeleton, pairing: [u8; 3], cb_ldv: u8, cf_ldv: u8) {
+        let update = nand
+            .update
+            .get_or_insert_with(crate::builder::nand::types::NandUpdate::default);
+
         if let Some(ref mut cb) = nand.bootloaders.cb {
             if let Some(ref mut meta) = cb.metadata {
                 meta.pairing_data = pairing;
@@ -107,7 +111,7 @@ impl Executor {
             }
         }
 
-        if let Some(ref mut cf) = nand.update.cf_0 {
+        if let Some(ref mut cf) = update.cf_0 {
             if let Some(ref mut meta) = cf.metadata {
                 meta.pairing_data = pairing;
                 meta.lockdown_value = cf_ldv;
@@ -122,7 +126,7 @@ impl Executor {
             }
         }
 
-        if let Some(ref mut cf) = nand.update.cf_1 {
+        if let Some(ref mut cf) = update.cf_1 {
             if let Some(ref mut meta) = cf.metadata {
                 meta.pairing_data = pairing;
                 meta.lockdown_value = cf_ldv;
@@ -182,10 +186,12 @@ impl Executor {
         let is_verbose = session.options.core.verbose.unwrap_or(false);
         let _ = crate::core::logger::init_logger("build", is_verbose);
 
+        /*
         if let Some(nand) = &mut session.active_nand {
             nand.options.gxunsafe = session.options.core.gxunsafe.unwrap_or(false);
             nand.options.verbose = session.options.core.verbose.unwrap_or(false);
         }
+        */
 
         let build_type = session
             .build_type
@@ -477,17 +483,18 @@ impl Executor {
         if let Some(nand) = &mut session.active_nand {
             info!("[session] Syncing merged options to NAND components...");
 
+            /*
             if let Some(noremap) = session.options.core_builder.noremap {
                 nand.options.noremap = noremap;
             }
-
-            nand.options.core.gxunsafe = session.options.core.gxunsafe.unwrap_or(false);
-            nand.options.core.verbose = session.options.core.verbose.unwrap_or(false);
-            nand.options.core_builder.nomobile = session.options.core_builder.nomobile.unwrap_or(false);
-            nand.options.core_builder.nofcrt = session.options.core_builder.nofcrt.unwrap_or(false);
-            nand.options.core_builder.dualpatchslots = session.options.core_builder.dualpatchslots.unwrap_or(false);
-            nand.options.jtag.cygnos = session.options.jtag.cygnos.unwrap_or(false);
-            nand.options.jtag.demon = session.options.jtag.demon.unwrap_or(false);
+            */
+            // nand.options.core.gxunsafe = session.options.core.gxunsafe.unwrap_or(false);
+            // nand.options.core.verbose = session.options.core.verbose.unwrap_or(false);
+            // nand.options.core_builder.nomobile = session.options.core_builder.nomobile.unwrap_or(false);
+            // nand.options.core_builder.nofcrt = session.options.core_builder.nofcrt.unwrap_or(false);
+            // nand.options.core_builder.dualpatchslots = session.options.core_builder.dualpatchslots.unwrap_or(false);
+            // nand.options.jtag.cygnos = session.options.jtag.cygnos.unwrap_or(false);
+            // nand.options.jtag.demon = session.options.jtag.demon.unwrap_or(false);
 
             //  CPU Key
             if let Some(key_str) = &session.options.keys.cpukey {
@@ -521,7 +528,7 @@ impl Executor {
                 }
 
                 if kv.is_decrypted {
-                    if let Some(dvdkey_str) = &session.options.dvdkey {
+                    if let Some(dvdkey_str) = &session.options.keyvault.dvdkey {
                         if let Ok(key_bytes) = hex_to_bytes(dvdkey_str) {
                             if key_bytes.len() == 16 {
                                 let mut arr = [0u8; 16];
@@ -531,24 +538,24 @@ impl Executor {
                         }
                     }
 
-                    if let Some(region_str) = &session.options.gameregion {
+                    if let Some(region_str) = &session.options.keyvault.gameregion {
                         let region = Self::parse_u16_hex_or_dec(region_str)?;
                         kv.set_region(region)?;
                     }
 
-                    if let Some(serial) = &session.options.serial {
+                    if let Some(serial) = &session.options.keyvault.serial {
                         kv.set_serial(serial)?;
                     }
 
-                    if let Some(osig) = &session.options.osig {
+                    if let Some(osig) = &session.options.keyvault.osig {
                         kv.set_osig(osig)?;
                     }
 
-                    if let Some(mfdate) = &session.options.mfdate {
+                    if let Some(mfdate) = &session.options.keyvault.mfdate {
                         kv.set_mf_date(mfdate)?;
                     }
 
-                    if let Some(cid_str) = &session.options.consoleid {
+                    if let Some(cid_str) = &session.options.keyvault.consoleid {
                         if let Ok(bytes) = hex_to_bytes(cid_str) {
                             if bytes.len() == 5 {
                                 let mut arr = [0u8; 5];
@@ -573,7 +580,7 @@ impl Executor {
             };
 
             // MAC Address
-            if let Some(mac_str) = &session.options.macid {
+            if let Some(mac_str) = &session.options.keyvault.macid {
                 let clean_mac = mac_str.replace(":", "");
                 if let Ok(bytes) = hex_to_bytes(&clean_mac) {
                     if bytes.len() == 6 {
@@ -585,17 +592,17 @@ impl Executor {
             }
 
             // Regions (SMC sync)
-            let video = if let Some(s) = &session.options.avregion {
+            let video = if let Some(s) = &session.options.keyvault.avregion {
                 Self::parse_u16_hex_or_dec(s)?
             } else {
                 (smc_config.data[0x22A] as u16) << 8 | smc_config.data[0x22B] as u16
             };
-            let game = if let Some(s) = &session.options.gameregion {
+            let game = if let Some(s) = &session.options.keyvault.gameregion {
                 Self::parse_u16_hex_or_dec(s)?
             } else {
                 (smc_config.data[0x22C] as u16) << 8 | smc_config.data[0x22D] as u16
             };
-            let dvd = if let Some(s) = &session.options.dvdregion {
+            let dvd = if let Some(s) = &session.options.keyvault.dvdregion {
                 s.parse::<u8>().unwrap_or(0xFF)
             } else {
                 smc_config.data[0x237]
@@ -603,17 +610,17 @@ impl Executor {
             smc_config.set_regions(video, game, dvd);
 
             // Thermals (Targets)
-            let cpu_t = if let Some(s) = &session.options.cputemp {
+            let cpu_t = if let Some(s) = &session.options.smc_config.cputemp {
                 Self::parse_u8_hex_or_dec(s)?
             } else {
                 smc_config.data[0x29]
             };
-            let gpu_t = if let Some(s) = &session.options.gputemp {
+            let gpu_t = if let Some(s) = &session.options.smc_config.gputemp {
                 Self::parse_u8_hex_or_dec(s)?
             } else {
                 smc_config.data[0x2A]
             };
-            let ram_t = if let Some(s) = &session.options.edramtemp {
+            let ram_t = if let Some(s) = &session.options.smc_config.edramtemp {
                 Self::parse_u8_hex_or_dec(s)?
             } else {
                 smc_config.data[0x2B]
@@ -621,17 +628,17 @@ impl Executor {
             smc_config.set_thermal_targets(cpu_t, gpu_t, ram_t);
 
             // Thermals (Max/Limits)
-            let cpu_m = if let Some(s) = &session.options.overcputemp {
+            let cpu_m = if let Some(s) = &session.options.smc_config.overcputemp {
                 Self::parse_u8_hex_or_dec(s)?
             } else {
                 smc_config.data[0x2C]
             };
-            let gpu_m = if let Some(s) = &session.options.overgputemp {
+            let gpu_m = if let Some(s) = &session.options.smc_config.overgputemp {
                 Self::parse_u8_hex_or_dec(s)?
             } else {
                 smc_config.data[0x2D]
             };
-            let ram_m = if let Some(s) = &session.options.overedramtemp {
+            let ram_m = if let Some(s) = &session.options.smc_config.overedramtemp {
                 Self::parse_u8_hex_or_dec(s)?
             } else {
                 smc_config.data[0x2E]
@@ -639,17 +646,17 @@ impl Executor {
             smc_config.set_thermal_limits(cpu_m, gpu_m, ram_m);
 
             //  Fans
-            if let Some(s) = &session.options.cpufan {
+            if let Some(s) = &session.options.smc_config.cpufan {
                 let speed = Self::parse_u8_hex_or_dec(s)?;
                 smc_config.set_fan_speed(false, speed != 0, speed);
             }
-            if let Some(s) = &session.options.gpufan {
+            if let Some(s) = &session.options.smc_config.gpufan {
                 let speed = Self::parse_u8_hex_or_dec(s)?;
                 smc_config.set_fan_speed(true, speed != 0, speed);
             }
 
             // 3f. Reset/XeLL Buttons
-            if let Some(s) = &session.options.xellbutton {
+            if let Some(s) = &session.options.builder.xellbutton {
                 if s.len() == 4 {
                     smc_config.set_reset_code(s.as_bytes().try_into().unwrap());
                 }
@@ -938,23 +945,23 @@ impl Executor {
                             .map(|b| ("CE.bin", b.serialize())),
                         "cf0" => nand
                             .update
-                            .cf_0
                             .as_ref()
+                            .and_then(|u| u.cf_0.as_ref())
                             .map(|b| ("CF_0.bin", b.serialize())),
                         "cg0" => nand
                             .update
-                            .cg_0
                             .as_ref()
+                            .and_then(|u| u.cg_0.as_ref())
                             .map(|b| ("CG_0.bin", b.serialize())),
                         "cf1" => nand
                             .update
-                            .cf_1
                             .as_ref()
+                            .and_then(|u| u.cf_1.as_ref())
                             .map(|b| ("CF_1.bin", b.serialize())),
                         "cg1" => nand
                             .update
-                            .cg_1
                             .as_ref()
+                            .and_then(|u| u.cg_1.as_ref())
                             .map(|b| ("CG_1.bin", b.serialize())),
                         _ => None,
                     }
@@ -988,7 +995,7 @@ impl Executor {
 
                 if let Some(nand) = &session.active_nand {
                     let cpukey = nand.cpukey.unwrap_or([0u8; 16]);
-                    let layout = nand.layout;
+                    let layout = nand.options.layout;
 
                     let sb_type = SouthbridgeType::from(nand.options.motherboard);
                     let chain_profile = if nand.bootloaders.cb_b.is_some() {
@@ -999,9 +1006,9 @@ impl Executor {
                     let _ = layout_calculator(sb_type, chain_profile, layout);
 
                     let meta_type = match nand.options.motherboard {
-                        crate::builder::types::MotherboardType::Xenon
-                        | crate::builder::types::MotherboardType::Zephyr
-                        | crate::builder::types::MotherboardType::Falcon => {
+                        crate::builder::nand::types::MotherboardType::Xenon
+                        | crate::builder::nand::types::MotherboardType::Zephyr
+                        | crate::builder::nand::types::MotherboardType::Falcon => {
                             crate::core::images::blocks::SpareMetaType::MetaType0
                         }
                         _ => crate::core::images::blocks::SpareMetaType::MetaType1,
@@ -1014,7 +1021,7 @@ impl Executor {
                     let mut built_nand = nand.clone();
                     match built_nand.build_in_place(cpukey) {
                         Ok(clean_bytes) => {
-                            if session.options.noecc.unwrap_or(false) {
+                            if session.options.core_builder.noecc.unwrap_or(false) {
                                 if let Err(e) = std::fs::write(&output, &clean_bytes) {
                                     error!(
                                         "[session] Failed to write build output to '{}': {}",
@@ -1030,7 +1037,7 @@ impl Executor {
                             let mut fs_meta = std::collections::HashMap::new();
                             let page_count_encoded =
                                 if layout == crate::core::images::blocks::NandLayout::Bb {
-                                    match nand.layout {
+                                    match nand.options.layout {
                                         crate::core::images::blocks::NandLayout::Bb => 0x00,
                                         _ => 0x01,
                                     }
@@ -1039,11 +1046,11 @@ impl Executor {
                                 };
 
                             let mut all_partitions = std::collections::HashMap::new();
-                            if !built_nand.flashfs.root.entries.is_empty() {
-                                all_partitions.insert(
-                                    built_nand.flashfs.root.partition_type,
-                                    built_nand.flashfs.root.clone(),
-                                );
+                            if let Some(flashfs) = built_nand.flashfs.as_ref() {
+                                if !flashfs.root.entries.is_empty() {
+                                    all_partitions
+                                        .insert(flashfs.root.partition_type, flashfs.root.clone());
+                                }
                             }
 
                             for (btype, root) in all_partitions {
@@ -1086,10 +1093,19 @@ impl Executor {
                                 }
                             }
 
-                            let mobile_meta = if session.options.nomobile.unwrap_or(false) {
+                            let mobile_meta = if session
+                                .options
+                                .core_builder
+                                .nomobile
+                                .unwrap_or(false)
+                            {
                                 std::collections::HashMap::new()
                             } else {
-                                nand.mobile.collect_spare_meta(&layout)
+                                built_nand
+                                    .mobile
+                                    .as_ref()
+                                    .map(|m| m.collect_spare_meta(&layout))
+                                    .unwrap_or_default()
                             };
                             let finalized_bytes =
                                 crate::core::images::blocks::NandProcessor::finalize_nand(
@@ -1167,11 +1183,11 @@ impl Executor {
                             &payloads,
                             &smc,
                             &nand_ref,
-                            session.options.gxunsafe,
-                            session.options.nofcrt,
-                            session.options.nosecurity,
-                            session.options.nosusecurity,
-                            session.options.nochainpatch,
+                            session.options.core.gxunsafe,
+                            session.options.core_builder.nofcrt,
+                            session.options.core_builder.nosecurity,
+                            session.options.core_builder.nosusecurity,
+                            session.options.core_builder.nochainpatch,
                         ) {
                             Ok(search) => {
                                 // Route each pool to its typed session pool
@@ -1238,7 +1254,11 @@ impl Executor {
                 match fs::read(&path) {
                     Ok(raw_data) => {
                         // Use preprocess_nand_with_lba to track bad block remapping
-                        let remap_bad_blocks = !session.options.noremap.unwrap_or(false);
+                        let remap_bad_blocks = !session
+                            .options
+                            .core_builder
+                            .noremap
+                            .unwrap_or(false);
                         match crate::core::images::blocks::NandProcessor::preprocess_nand_with_lba_options(&raw_data, remap_bad_blocks) {
                             Ok((clean_data, layout, lba_map)) => {
                                 info!("[session] Detected {} bad block(s) during preprocessing", lba_map.bad_blocks.len());
@@ -1246,7 +1266,12 @@ impl Executor {
 
                                 // Scan FlashFS with LBA map for accurate block mapping
                                 let flashfs = crate::builder::filesystem::flashfs::FlashFS::scan_physical_with_lba(&raw_data, &layout, &lba_map);
-                                let mobile = if session.options.nomobile.unwrap_or(false) {
+                                let mobile = if session
+                                    .options
+                                    .core_builder
+                                    .nomobile
+                                    .unwrap_or(false)
+                                {
                                     crate::builder::filesystem::mobile::MobileStore::new()
                                 } else {
                                     crate::builder::filesystem::mobile::MobileStore::scan_physical(&raw_data, &layout)
@@ -1257,7 +1282,7 @@ impl Executor {
                                 };
                                 match parse_result {
                                     Ok(mut nand) => {
-                                        nand.mobile = mobile;
+                                        nand.mobile = Some(mobile);
                                         // Verify bootloader decryption using zero-region checks
                                         if let Some(cb) = &nand.bootloaders.cb_a {
                                             if cb.verify_decrypted() {
@@ -1266,7 +1291,14 @@ impl Executor {
                                                 log::warn!("[session] CB_A decryption verification failed - data may be corrupted.");
                                             }
                                         }
-                                        for (i, cf_opt) in [&nand.update.cf_0, &nand.update.cf_1].iter().enumerate() {
+                                        let update = nand.update.as_ref();
+                                        for (i, cf_opt) in [
+                                            update.and_then(|u| u.cf_0.as_ref()),
+                                            update.and_then(|u| u.cf_1.as_ref()),
+                                        ]
+                                        .iter()
+                                        .enumerate()
+                                        {
                                             if let Some(cf) = cf_opt {
                                                 if cf.verify_decrypted() {
                                                     info!("[session] CF_{} decryption verified.", i);
@@ -1276,7 +1308,7 @@ impl Executor {
                                             }
                                         }
                                         info!("[session] LBA Map: {} total blocks, {} bad blocks remapped", lba_map.logical_to_physical.len(), lba_map.bad_blocks.len());
-                                        nand.lba_map = Some(lba_map);
+                                        nand.extra.lba_map = lba_map;
                                         session.active_nand = Some(nand);
                                         Self::extract_options_from_nand(session);
                                         info!("[session] Successfully parsed NAND from {:?} (Layout: {:?})", path, layout);
@@ -1311,7 +1343,7 @@ impl Executor {
                     )
                     .map_err(|e| format!("Failed to pre-process ECC image: {}", e))?;
 
-                let nand_layout = old.layout;
+                let nand_layout = old.options.layout;
                 if ecc_layout != nand_layout {
                     session.active_nand = Some(old);
                     return Err(format!("ECC layout mismatch: ECC={:?}, NAND={:?}. Provide a matching ECC for this NAND type.", ecc_layout, nand_layout));
@@ -1321,10 +1353,13 @@ impl Executor {
                 let write_len = std::cmp::min(image.len(), ecc_clean.len());
                 image[..write_len].copy_from_slice(&ecc_clean[..write_len]);
 
-                let flashfs = old.flashfs.clone();
-                let layout = old.layout;
+                let flashfs = old
+                    .flashfs
+                    .clone()
+                    .unwrap_or_else(crate::builder::filesystem::flashfs::FlashFS::new);
+                let layout = old.options.layout;
                 let cpukey = old.cpukey;
-                let lba_map = old.lba_map;
+                let lba_map = old.extra.lba_map.clone();
                 let options = old.options;
                 let mobile = old.mobile;
                 let corona_fs = old.corona_fs;
@@ -1337,10 +1372,10 @@ impl Executor {
                 match parse_result {
                     Ok(mut nand) => {
                         nand.cpukey = cpukey;
-                        nand.lba_map = lba_map;
                         nand.options = options;
                         nand.mobile = mobile;
                         nand.corona_fs = corona_fs;
+                        nand.extra.lba_map = lba_map;
                         session.active_nand = Some(nand);
                         info!(
                             "[session] Applied ECC from '{}' over {} bytes.",
@@ -1381,27 +1416,29 @@ impl Executor {
                     path
                 );
                 if let Some(nand) = &mut session.active_nand {
-                    let fs_start: u16 = match nand.layout {
+                    let flashfs = nand
+                        .flashfs
+                        .get_or_insert_with(crate::builder::filesystem::flashfs::FlashFS::new);
+                    let layout = nand.options.layout;
+
+                    let fs_start: u16 = match layout {
                         crate::core::images::blocks::NandLayout::Bb => 0x1E0,
                         crate::core::images::blocks::NandLayout::Emmc => {
+                            let default_slots = [Default::default(), Default::default()];
+                            let slots = nand.corona_fs.as_ref().unwrap_or(&default_slots);
                             crate::builder::filesystem::corona::default_emmc_fs_block(
                                 nand.header.fs_addr.get(),
-                                &nand.corona_fs,
+                                slots,
                             )
                         }
                         _ => {
-                            let sb: crate::builder::types::SouthbridgeType =
-                                nand.options.motherboard.into();
+                            let sb: SouthbridgeType = nand.options.motherboard.into();
                             let chain_profile = if nand.bootloaders.cb_b.is_some() {
                                 "split"
                             } else {
                                 "single"
                             };
-                            let (_, _, phys_fs_block) = crate::builder::types::layout_calculator(
-                                sb,
-                                chain_profile,
-                                nand.layout,
-                            );
+                            let (_, _, phys_fs_block) = layout_calculator(sb, chain_profile, layout);
                             if phys_fs_block != 0 {
                                 phys_fs_block as u16
                             } else {
@@ -1411,27 +1448,32 @@ impl Executor {
                     };
                     match crate::builder::filesystem::flashfs::FileSystemRoot::build_from_folder(
                         &mut nand.image,
-                        &nand.layout,
+                        &layout,
                         &path,
                         fs_start,
                         0x30,
                     ) {
                         Ok(new_root) => {
-                            nand.flashfs.root = new_root;
-                            if matches!(nand.layout, crate::core::images::blocks::NandLayout::Emmc)
-                            {
+                            flashfs.root = new_root;
+                            if matches!(layout, crate::core::images::blocks::NandLayout::Emmc) {
+                                let corona_slots = nand
+                                    .corona_fs
+                                    .get_or_insert_with(|| [Default::default(), Default::default()]);
+                                let mobile = nand
+                                    .mobile
+                                    .get_or_insert_with(crate::builder::filesystem::mobile::MobileStore::new);
                                 if let Err(e) = crate::builder::filesystem::corona::write_back(
                                     &mut nand.image,
-                                    &mut nand.corona_fs,
-                                    &nand.flashfs.root,
-                                    &nand.mobile,
+                                    corona_slots,
+                                    &flashfs.root,
+                                    mobile,
                                 ) {
                                     return Err(format!("Corona metadata write failed: {}", e));
                                 }
-                                if nand.flashfs.root.block_number >= 0 {
+                                if flashfs.root.block_number >= 0 {
                                     nand.header
                                         .fs_addr
-                                        .set((nand.flashfs.root.block_number as u32) * 0x200);
+                                        .set((flashfs.root.block_number as u32) * 0x200);
                                 }
                             }
                             info!("[session] FlashFS constructed and injected successfully.");
@@ -1488,14 +1530,13 @@ impl Executor {
                     bl_type, path, is_rebooter
                 );
                 if let Some(nand) = &mut session.active_nand {
-                    let target = if is_rebooter {
-                        if nand.rebooter.is_none() {
-                            nand.rebooter = Some(crate::builder::types::NandBootloaders::new());
-                        }
-                        nand.rebooter.as_mut().unwrap()
-                    } else {
-                        &mut nand.bootloaders
-                    };
+                    if is_rebooter {
+                        warn!("[session] Rebooter chain swapping is not supported by the current NAND skeleton structure; applying to primary chain.");
+                    }
+                    let target = &mut nand.bootloaders;
+                    let update = nand
+                        .update
+                        .get_or_insert_with(crate::builder::nand::types::NandUpdate::default);
 
                     let data = fs::read(&path)
                         .map_err(|e| format!("Failed to read swap bootloader: {}", e))?;
@@ -1520,25 +1561,11 @@ impl Executor {
                         }
                         "cf" => {
                             let bl = crate::builder::chain::cf::BootloaderCf::parse(&data)?;
-                            if is_rebooter {
-                                if nand.rebooter_update.is_none() {
-                                    nand.rebooter_update = Some(Default::default());
-                                }
-                                nand.rebooter_update.as_mut().unwrap().cf_0 = Some(bl);
-                            } else {
-                                nand.update.cf_0 = Some(bl);
-                            }
+                            update.cf_0 = Some(bl);
                         }
                         "cg" => {
                             let bl = crate::builder::chain::cg::BootloaderCg::parse(&data)?;
-                            if is_rebooter {
-                                if nand.rebooter_update.is_none() {
-                                    nand.rebooter_update = Some(Default::default());
-                                }
-                                nand.rebooter_update.as_mut().unwrap().cg_0 = Some(bl);
-                            } else {
-                                nand.update.cg_0 = Some(bl);
-                            }
+                            update.cg_0 = Some(bl);
                         }
                         "smc" => {
                             nand.extra.smc = data;
@@ -1695,7 +1722,7 @@ impl Executor {
                 info!(
                     "[session] Created blank NAND skeleton: layout {:?}, {} blocks ({} MB)",
                     layout,
-                    blank.total_blocks,
+                    blank.options.total_blocks,
                     blank.image.len() / (1024 * 1024)
                 );
                 session.active_nand = Some(blank);
@@ -1719,7 +1746,12 @@ impl Executor {
                 }
             }
             InternalCommand::FinalizeMobile => {
-                if session.options.nomobile.unwrap_or(false) {
+                if session
+                    .options
+                    .core_builder
+                    .nomobile
+                    .unwrap_or(false)
+                {
                     return Ok(());
                 }
                 let data_dir = session
@@ -1727,16 +1759,22 @@ impl Executor {
                     .clone()
                     .unwrap_or_else(|| PathBuf::from("mydata"));
                 if let Some(nand) = &mut session.active_nand {
-                    nand.mobile.apply_data_folder_tier(&data_dir);
+                    let mobile = nand
+                        .mobile
+                        .get_or_insert_with(crate::builder::filesystem::mobile::MobileStore::new);
+                    mobile.apply_data_folder_tier(&data_dir);
                 }
             }
             InternalCommand::FinalizeFlashfs => {
                 if let Some(nand) = &mut session.active_nand {
-                    let fs_start: u16 = match nand.layout {
+                    let flashfs = nand
+                        .flashfs
+                        .get_or_insert_with(crate::builder::filesystem::flashfs::FlashFS::new);
+                    let fs_start: u16 = match nand.options.layout {
                         crate::core::images::blocks::NandLayout::Bb => {
                             let image_len = nand.image.len();
-                            let reserve_start = nand.layout.reserve_start(image_len);
-                            let scanned = nand.flashfs.root.block_number;
+                            let reserve_start = nand.options.layout.reserve_start(image_len);
+                            let scanned = flashfs.root.block_number;
                             if scanned > 0 && (scanned as usize) < reserve_start {
                                 scanned as u16
                             } else {
@@ -1745,24 +1783,22 @@ impl Executor {
                             }
                         }
                         crate::core::images::blocks::NandLayout::Emmc => {
+                            let default_slots = [Default::default(), Default::default()];
+                            let slots = nand.corona_fs.as_ref().unwrap_or(&default_slots);
                             crate::builder::filesystem::corona::default_emmc_fs_block(
                                 nand.header.fs_addr.get(),
-                                &nand.corona_fs,
+                                slots,
                             )
                         }
                         _ => {
-                            let sb: crate::builder::types::SouthbridgeType =
-                                nand.options.motherboard.into();
+                            let sb: SouthbridgeType = nand.options.motherboard.into();
                             let chain_profile = if nand.bootloaders.cb_b.is_some() {
                                 "split"
                             } else {
                                 "single"
                             };
-                            let (_, _, phys_fs_block) = crate::builder::types::layout_calculator(
-                                sb,
-                                chain_profile,
-                                nand.layout,
-                            );
+                            let (_, _, phys_fs_block) =
+                                layout_calculator(sb, chain_profile, nand.options.layout);
                             if phys_fs_block != 0 {
                                 phys_fs_block as u16
                             } else {
@@ -1806,7 +1842,7 @@ impl Executor {
                             3,
                             0x30,
                         );
-                        root.create_defaults(nand.image.len(), &nand.layout, fs_start);
+                        root.create_defaults(nand.image.len(), &nand.options.layout, fs_start);
                         for (name, content) in merged_flashfs_assets {
                             let mut entry =
                                 crate::builder::filesystem::flashfs::FileSystemEntry::new(0);
@@ -1815,15 +1851,15 @@ impl Executor {
                             entry.size = entry.data.len() as u32;
                             root.entries.push(entry);
                         }
-                        nand.flashfs.root = root;
+                        flashfs.root = root;
                     } else {
                         let mut root = crate::builder::filesystem::flashfs::FileSystemRoot::new(
                             fs_start as i32,
                             3,
                             0x30,
                         );
-                        root.create_defaults(nand.image.len(), &nand.layout, fs_start);
-                        nand.flashfs.root = root;
+                        root.create_defaults(nand.image.len(), &nand.options.layout, fs_start);
+                        flashfs.root = root;
                         info!(
                             "[session] Initialized empty FlashFS map for generated build assets."
                         );
