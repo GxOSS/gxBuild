@@ -410,7 +410,7 @@ impl Session {
 
     pub fn set_console(&mut self, console: String) {
         self.console_type = Some(console.clone());
-        self.options.ctype = Some(console);
+        self.options.keys.ctype = Some(console);
     }
 
     pub fn set_ini_dir(&mut self, path: PathBuf) {

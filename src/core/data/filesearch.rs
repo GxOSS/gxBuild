@@ -837,11 +837,8 @@ impl IniSearch {
                 // Tier 7: NAND Image
                 if found_content.is_none() {
                     if let Some(n) = nand {
-                        let (bl, upd) = if entry.chain > 0 {
-                            (n.rebooter.as_ref(), n.rebooter_update.as_ref())
-                        } else {
-                            (Some(&n.bootloaders), Some(&n.update))
-                        };
+                        let bl = Some(&n.bootloaders);
+                        let upd = n.update.as_ref();
 
                         let mut nand_data = None;
                         if lower_name.starts_with("cb") {
@@ -911,14 +908,10 @@ impl IniSearch {
                     }
 
                     result.bootloader_assets.insert(lower_name.clone(), c);
-                    let target_bl = if entry.chain > 0 {
-                        result
-                            .rebooter
-                            .as_mut()
-                            .ok_or(FilesearchError::RebooterNotInitialized)?
-                    } else {
-                        result.bootloaders.as_mut().unwrap()
-                    };
+                    if entry.chain > 0 {
+                        warn!("[ini] Rebooter chain assets are not supported by the current NAND skeleton structure; recording as primary chain assets.");
+                    }
+                    let target_bl = result.bootloaders.as_mut().unwrap();
 
                     let fp = found_path.unwrap_or_else(|| PathBuf::from("MEMORY"));
                     if lower_name.starts_with("cb") {
@@ -1071,24 +1064,25 @@ impl IniSearch {
                 // Tier 6: NAND FlashFS
                 if found_content.is_none() {
                     if let Some(n) = nand {
-                        if let Some(n_entry) = n
-                            .flashfs
-                            .root
-                            .entries
-                            .iter()
-                            .find(|e| e.file_name.to_lowercase() == lower_basename)
-                        {
-                            let c = n_entry.data.clone();
-                            if check_crc32_simple(
-                                &c,
-                                &basename,
-                                &entry.hash,
-                                "NAND FlashFS",
-                                unsafe_mode,
-                            )
-                            .is_some()
+                        if let Some(flashfs) = n.flashfs.as_ref() {
+                            if let Some(n_entry) = flashfs
+                                .root
+                                .entries
+                                .iter()
+                                .find(|e| e.file_name.to_lowercase() == lower_basename)
                             {
-                                found_content = Some(c);
+                                let c = n_entry.data.clone();
+                                if check_crc32_simple(
+                                    &c,
+                                    &basename,
+                                    &entry.hash,
+                                    "NAND FlashFS",
+                                    unsafe_mode,
+                                )
+                                .is_some()
+                                {
+                                    found_content = Some(c);
+                                }
                             }
                         }
                     }

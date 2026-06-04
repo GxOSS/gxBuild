@@ -58,7 +58,7 @@ pub enum CliError {
     Session(#[from] crate::core::session::SessionError),
 
     #[error("Builder error: {0}")]
-    Builder(#[from] crate::builder::nand::parser::BuilderError),
+    Builder(#[from] crate::builder::nand::types::BuilderError),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
