@@ -156,11 +156,18 @@ impl NandLayout {
         }
     }
 
-    pub fn reserve_start(&self, _image_len: usize) -> usize {
+    pub fn reserve_start(&self, image_len: usize) -> usize {
         match self {
-            NandLayout::Xsb | NandLayout::Sb => 0x3E0,
+            NandLayout::Xsb | NandLayout::Sb => {
+                let total = self.total_blocks(image_len);
+                if total == 0x1000 {
+                    0xF80
+                } else {
+                    total.saturating_sub(0x20)
+                }
+            }
             NandLayout::Bb => {
-                let total = self.total_blocks(_image_len);
+                let total = self.total_blocks(image_len);
                 total.saturating_sub(0x20)
             }
             NandLayout::Emmc => 0,
@@ -398,8 +405,6 @@ impl NandLayout {
             // Physical sizes (data + spare, 0x210 bytes/page)
             // 16 MB small block (physical) → Sb; promote to Xsb later via spare inspection
             len if len >= 0x1080000 && len <= 0x1080000 + 0x1000 => Ok(NandLayout::Sb),
-            // 64 MB big block (physical)
-            len if len >= 0x4200000 && len <= 0x4200000 + 0x1000 => Ok(NandLayout::Bb),
             // 256 MB big block (physical)
             len if len >= 0x10800000 && len <= 0x10800000 + 0x1000 => Ok(NandLayout::Bb),
             // 512 MB big block (physical)

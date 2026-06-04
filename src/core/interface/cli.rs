@@ -128,8 +128,6 @@ pub struct GgxArgs {
     #[arg(short = '8', long = "raw", global = true)]
     pub raw_patches: Vec<String>,
 
-    /// Show version mapped natively by clap.
-
     /// Optional source NAND image
     #[arg(short = 'l', long = "image", global = true)]
     pub source_nand: Option<PathBuf>,
