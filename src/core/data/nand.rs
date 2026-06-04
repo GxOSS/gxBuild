@@ -29,6 +29,7 @@ pub struct NandSearch {
 
     pub bootloaders: HashMap<String, Vec<u8>>,
     pub keyvault: Vec<u8>,
+    pub fcrt: Option<Vec<u8>>,
     pub smc_config: Vec<u8>,
     pub flashfs_assets: HashMap<String, Vec<u8>>,
     pub mobile: MobileStore,
@@ -177,6 +178,16 @@ impl NandSearch {
         }
 
         let keyvault = skeleton.extra.keyvault.clone();
+        let fcrt = skeleton
+            .flashfs
+            .as_ref()
+            .and_then(|f| {
+                f.root
+                    .entries
+                    .iter()
+                    .find(|e| !e.deleted && e.file_name.eq_ignore_ascii_case("fcrt.bin"))
+                    .map(|e| e.data.clone())
+            });
         let smc_config = skeleton.extra.smc_config.clone();
 
         let cb = {
@@ -244,6 +255,7 @@ impl NandSearch {
             skeleton,
             bootloaders,
             keyvault,
+            fcrt,
             smc_config,
             flashfs_assets,
             mobile,

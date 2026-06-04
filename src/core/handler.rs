@@ -3,6 +3,7 @@ use crate::builder::nand::parser::hex_to_bytes;
 use crate::builder::nand::types::{layout_calculator, SouthbridgeType};
 use crate::core::data::filesearch::IniSearch;
 use crate::core::data::nand::NandSearch;
+use crate::core::images::blocks::{LbaMap, SpareMetaType};
 use crate::core::images::gxpatch::parse_patch_binary;
 use crate::core::session::InternalCommand;
 use crate::core::session::{QueuedCommand, Session};
@@ -1071,10 +1072,8 @@ impl Executor {
                     .find(|p| p.exists())
                     .cloned()
                     .ok_or("Build: no NAND image found in data dir for NandSearch")?;
-
                 let raw_nand = fs::read(&nand_path)
                     .map_err(|e| format!("Build: failed to read NAND image {:?}: {}", nand_path, e))?;
-
                 let nand_search = NandSearch::new(ini.clone(), &raw_nand, cpukey)
                     .map_err(|e| format!("Build: NandSearch failed: {}", e))?;
 
@@ -1095,6 +1094,61 @@ impl Executor {
                     allow.insert((*name).to_string());
                 }
 
+                let (layout, motherboard) = match console.as_str() {
+                    "xenon" => (
+                        crate::core::images::blocks::NandLayout::Xsb,
+                        crate::builder::nand::types::MotherboardType::Xenon,
+                    ),
+                    "zephyr" => (
+                        crate::core::images::blocks::NandLayout::Sb,
+                        crate::builder::nand::types::MotherboardType::Zephyr,
+                    ),
+                    "falcon" => (
+                        crate::core::images::blocks::NandLayout::Sb,
+                        crate::builder::nand::types::MotherboardType::Falcon,
+                    ),
+                    "jasper" | "jasper256" | "jasper512" | "jasperbb" | "jasperbigffs" => (
+                        if console.contains("256")
+                            || console.contains("512")
+                            || console.contains("bb")
+                            || console.contains("bigffs")
+                        {
+                            crate::core::images::blocks::NandLayout::Bb
+                        } else {
+                            crate::core::images::blocks::NandLayout::Sb
+                        },
+                        crate::builder::nand::types::MotherboardType::Jasper,
+                    ),
+                    "trinity" | "trinitybigffs" => (
+                        if console.contains("bigffs") {
+                            crate::core::images::blocks::NandLayout::Bb
+                        } else {
+                            crate::core::images::blocks::NandLayout::Sb
+                        },
+                        crate::builder::nand::types::MotherboardType::Trinity,
+                    ),
+                    "corona" => (
+                        crate::core::images::blocks::NandLayout::Sb,
+                        crate::builder::nand::types::MotherboardType::Corona,
+                    ),
+                    "corona4g" => (
+                        crate::core::images::blocks::NandLayout::Emmc,
+                        crate::builder::nand::types::MotherboardType::Corona,
+                    ),
+                    "winchester" => (
+                        crate::core::images::blocks::NandLayout::Emmc,
+                        crate::builder::nand::types::MotherboardType::Winchester,
+                    ),
+                    _ => (
+                        crate::core::images::blocks::NandLayout::Sb,
+                        crate::builder::nand::types::MotherboardType::Unknown,
+                    ),
+                };
+
+                let mut base_skeleton = NandSkeleton::new_blank(layout);
+                base_skeleton.cpukey = Some(cpukey);
+                base_skeleton.options.motherboard = motherboard;
+
                 let nand_opt = Some(nand_search.skeleton.clone());
                 let ini_search = IniSearch::new(
                     ini.clone(),
@@ -1112,25 +1166,117 @@ impl Executor {
                 )
                 .map_err(|e| format!("Build: IniSearch failed: {}", e))?;
 
-                let mut bootloader_assets = nand_search.bootloaders.clone();
-                bootloader_assets.extend(ini_search.result.bootloader_assets);
-
-                let mut security_assets = ini_search.result.security_assets;
-                if !security_assets.contains_key("keyvault.bin") && !security_assets.contains_key("kv.bin")
-                {
-                    security_assets.insert("keyvault.bin".to_string(), nand_search.keyvault.clone());
-                }
+                let bootloader_assets = ini_search.result.bootloader_assets;
+                let security_assets = ini_search.result.security_assets;
 
                 let pending = crate::core::data::xeini::PendingAssets {
                     bootloaders: &bootloader_assets,
                     security: &security_assets,
                 };
                 let mut fresh_nand = crate::core::data::xeini::apply_xe_ini(
-                    nand_search.skeleton.clone(),
+                    base_skeleton,
                     ini.clone(),
                     pending,
                 )
                 .map_err(|e| format!("Build: INI apply failed: {}", e))?;
+
+                if !nand_search.keyvault.is_empty() {
+                    fresh_nand.extra.keyvault = nand_search.keyvault.clone();
+                }
+                if !fresh_nand.extra.keyvault.is_empty() {
+                    if let Ok(kv) =
+                        crate::builder::chain::kv::Keyvault::parse(&fresh_nand.extra.keyvault)
+                    {
+                        fresh_nand.kv = Some(kv);
+                    }
+                }
+
+                // Apply per-box metadata (PD/LDV) discovered from the source NAND after INI assets are applied.
+                // This is used to seed session per-box sync so it doesn't fall back to defaults.
+                let pairing = nand_search
+                    .cb
+                    .as_ref()
+                    .map(|m| m.pd)
+                    .filter(|p| *p != [0, 0, 0])
+                    .or_else(|| {
+                        nand_search
+                            .cf_0
+                            .as_ref()
+                            .map(|m| m.pd)
+                            .filter(|p| *p != [0, 0, 0])
+                    })
+                    .unwrap_or([0, 0, 1]);
+                let cb_ldv = nand_search
+                    .cb
+                    .as_ref()
+                    .map(|m| m.ldv)
+                    .filter(|v| *v != 0)
+                    .unwrap_or(1);
+                let cf_ldv = nand_search
+                    .cf_0
+                    .as_ref()
+                    .map(|m| m.ldv)
+                    .filter(|v| *v != 0)
+                    .or_else(|| {
+                        nand_search
+                            .cf_1
+                            .as_ref()
+                            .map(|m| m.ldv)
+                            .filter(|v| *v != 0)
+                    })
+                    .unwrap_or(cb_ldv);
+
+                let mut pd_sync = pairing;
+                pd_sync.reverse();
+                if let Some(ref mut cb) = fresh_nand.bootloaders.cb {
+                    if cb.data.len() > 0x13 {
+                        cb.data[0x10..0x13].copy_from_slice(&pd_sync);
+                        cb.data[0x13] = cb_ldv;
+                        cb.populate_metadata_unchecked();
+                    }
+                }
+                if let Some(ref mut cb) = fresh_nand.bootloaders.cb_a {
+                    if cb.data.len() > 0x13 {
+                        cb.data[0x10..0x13].copy_from_slice(&pd_sync);
+                        cb.data[0x13] = cb_ldv;
+                        cb.populate_metadata_unchecked();
+                    }
+                }
+                if let Some(ref mut cb) = fresh_nand.bootloaders.cb_b {
+                    if cb.data.len() > 0x13 {
+                        cb.data[0x10..0x13].copy_from_slice(&pd_sync);
+                        cb.data[0x13] = cb_ldv;
+                        cb.populate_metadata_unchecked();
+                    }
+                }
+                if let Some(update) = fresh_nand.update.as_mut() {
+                    if let Some(cf) = update.cf_0.as_mut() {
+                        if cf.data.len() > 0x20F {
+                            cf.data[0x20C..0x20F].copy_from_slice(&pd_sync);
+                            cf.data[0x20F] = cf_ldv;
+                            cf.populate_metadata_unchecked();
+                        }
+                    }
+                    if let Some(cf) = update.cf_1.as_mut() {
+                        if cf.data.len() > 0x20F {
+                            cf.data[0x20C..0x20F].copy_from_slice(&pd_sync);
+                            cf.data[0x20F] = cf_ldv;
+                            cf.populate_metadata_unchecked();
+                        }
+                    }
+                }
+
+                let fresh_layout = fresh_nand.options.layout;
+                let total_blocks = fresh_layout.total_blocks(fresh_nand.image.len());
+                let mut fresh_lba = LbaMap::new(total_blocks);
+                fresh_lba.meta_type = match fresh_layout {
+                    crate::core::images::blocks::NandLayout::Xsb => SpareMetaType::MetaType0,
+                    crate::core::images::blocks::NandLayout::Sb => SpareMetaType::MetaType1,
+                    crate::core::images::blocks::NandLayout::Bb => SpareMetaType::MetaType2,
+                    crate::core::images::blocks::NandLayout::Emmc => SpareMetaType::MetaTypeNone,
+                };
+                fresh_nand.extra.lba_map = fresh_lba;
+                fresh_nand.options.total_blocks = total_blocks;
 
                 if !session.options.core_builder.nomobile.unwrap_or(false) {
                     let mobile = fresh_nand
@@ -1140,11 +1286,13 @@ impl Executor {
                 }
 
                 let mut merged_flashfs_assets: HashMap<String, Vec<u8>> = HashMap::new();
-                for (k, v) in nand_search.flashfs_assets {
-                    merged_flashfs_assets.insert(k.to_lowercase(), v);
-                }
                 for (k, v) in ini_search.result.flashfs_assets {
                     merged_flashfs_assets.insert(k.to_lowercase(), v);
+                }
+                if let Some(fcrt) = nand_search.fcrt.as_ref() {
+                    merged_flashfs_assets
+                        .entry("fcrt.bin".to_string())
+                        .or_insert(fcrt.clone());
                 }
                 for name in &[
                     "fcrt.bin",
