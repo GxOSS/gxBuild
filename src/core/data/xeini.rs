@@ -322,6 +322,7 @@ pub fn apply_xe_ini(
     pending: PendingAssets<'_>,
 ) -> Result<NandSkeleton, IniError> {
     nand.bootloaders.clear();
+    nand.extra.khvpatch = None;
     nand.update
         .get_or_insert_with(crate::builder::nand::types::NandUpdate::default)
         .clear();
@@ -591,7 +592,7 @@ pub fn apply_xe_ini(
         info!("[ini] Assigned FCRT.bin from memory");
     }
 
-    // nand.bootloaders.khvpatch = ini.patch.khv.clone();
+    nand.extra.khvpatch = ini.patch.khv.clone();
 
     // 1f with JTAG ini
     if nand.options.image_profile == "onef" {

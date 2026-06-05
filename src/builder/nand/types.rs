@@ -378,7 +378,6 @@ pub struct NandBootloaders {
     pub sc: Option<crate::builder::chain::sc::BootloaderSc>,
     pub cd: Option<crate::builder::chain::cd::BootloaderCd>,
     pub ce: Option<crate::builder::chain::ce::BootloaderCe>,
-    //  pub khvpatch: Option<Vec<PatchRecord>>,
     pub xell: Option<crate::builder::chain::xell::Xell>,
 }
 
@@ -395,7 +394,6 @@ impl NandBootloaders {
         self.sc = None;
         self.cd = None;
         self.ce = None;
-        // self.khvpatch = None;
         self.xell = None;
     }
 }
@@ -410,7 +408,6 @@ impl Default for NandBootloaders {
             sc: None,
             cd: None,
             ce: None,
-            //          khvpatch: None,
             xell: None,
         }
     }
@@ -451,6 +448,7 @@ pub struct NandExtra {
     pub smc_config: Vec<u8>,
     pub keyvault: Vec<u8>,
     pub fcrt: Option<Vec<u8>>,
+    pub khvpatch: Option<Vec<crate::core::images::gxpatch::PatchRecord>>,
     pub lba_map: LbaMap,
 }
 
@@ -462,6 +460,7 @@ impl Default for NandExtra {
             smc_config: Vec::new(),
             keyvault: Vec::new(),
             fcrt: None,
+            khvpatch: None,
             lba_map: LbaMap::new(0x400),
         }
     }

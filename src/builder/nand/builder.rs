@@ -31,7 +31,7 @@ use crate::builder::filesystem::flashfs::FlashFS;
 use crate::builder::filesystem::mobile::MobileStore;
 pub use crate::builder::nand::types::*;
 use crate::core::images::blocks::*;
-use crate::core::images::gxpatch::{apply_records, GxpBinary, GxpPatchType};
+use crate::core::images::gxpatch::{apply_records, serialize_records, GxpBinary, GxpPatchType};
 use crate::crypto::calculate_smc_hash;
 
 impl NandSkeleton {
@@ -99,6 +99,7 @@ impl NandSkeleton {
                 smc_config: Vec::new(),
                 keyvault: Vec::new(),
                 fcrt: None,
+                khvpatch: None,
                 lba_map: LbaMap::new(total_blocks),
             },
             kv: None,
@@ -1080,10 +1081,9 @@ impl NandSkeleton {
             .saturating_add(patch_slot_size as usize)
             .saturating_add(if has_vfuses { 0x60 } else { 0x10 });
 
-        let khv_len = 0usize;
-        /*
-        if let Some(records) = &self.bootloaders.khvpatch {
-            if !self.options.khv_apply {
+        let mut khv_len = 0usize;
+        if let Some(records) = &self.extra.khvpatch {
+            if !records.is_empty() {
                 let patch_stream = serialize_records(records);
                 khv_len = patch_stream.len();
                 if patch_stream_start + khv_len > logical_image.len() {
@@ -1104,13 +1104,12 @@ impl NandSkeleton {
                 let end_block =
                     (patch_stream_start + khv_len + logical_block_size - 1) / logical_block_size;
                 for b in start_block..end_block {
-                    if b < self.flashfs.root.block_map.len() {
-                        self.flashfs.root.block_map[b] = 0x1FFB;
+                    if b < flashfs.root.block_map.len() {
+                        flashfs.root.block_map[b] = 0x1FFB;
                     }
                 }
             }
         }
-        */
         let mut final_payloads = self.payloads.clone().unwrap_or_default();
         let mut current_payload_offset = (patch_stream_start + khv_len + 0x1F) & !0x1F;
         let mut payload_list = PayloadList::new();
@@ -1436,24 +1435,13 @@ impl NandSkeleton {
     }
 
     pub fn apply_patch(&mut self, patch: GxpBinary) -> Result<()> {
-        /*
         if let Some(khv) = patch.khv {
             info!(
-                "[builder] Routing {} KHV patch records to options slot...",
+                "[builder] Routing {} KHV patch records to patch stream slot...",
                 khv.records.len()
             );
-            self.bootloaders.khvpatch = Some(
-                khv.records
-                    .iter()
-                    .map(|r| PatchRecord {
-                        address: r.address,
-                        amount: r.amount,
-                        data: r.data.clone(),
-                    })
-                    .collect(),
-            );
+            self.extra.khvpatch = Some(khv.records);
         }
-        */
         if let Some(cb_b) = patch.cb_b {
             if patch.header.patch_type == GxpPatchType::Rgh4Section {
                 if let Some(cbb_bl) = &mut self.bootloaders.cb_b {

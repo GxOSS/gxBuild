@@ -107,6 +107,7 @@ impl NandSkeleton {
             smc_config: config_data,
             keyvault: kv.data.clone(),
             fcrt: None,
+            khvpatch: None,
             lba_map: LbaMap::new(0x400),
         };
 
@@ -304,6 +305,7 @@ impl NandSkeleton {
             smc_config: config_data,
             keyvault: kv.data.clone(),
             fcrt: None,
+            khvpatch: None,
             lba_map: LbaMap::new(0x400),
             // power_on_cause_a: 0,
             // power_on_cause_b: 0,
