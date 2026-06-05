@@ -34,6 +34,19 @@ use crate::core::images::blocks::*;
 use crate::core::images::gxpatch::{apply_records, serialize_records, GxpBinary, GxpPatchType};
 use crate::crypto::calculate_smc_hash;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InferredImageType {
+    Devkit,
+    DevGl,
+    RgLoader,
+    XdkBuild,
+    TraditionalSingleCb,
+    TraditionalSplitCb,
+    Glitch3,
+    Xell,
+    Unknown,
+}
+
 impl NandSkeleton {
     pub fn new_blank(layout: NandLayout) -> Self {
         let size = match layout {
@@ -111,6 +124,96 @@ impl NandSkeleton {
             corona_fs: Some([Default::default(), Default::default()]),
             image,
         }
+    }
+
+    pub fn infer_image_type(&self) -> InferredImageType {
+        let has_cb = self.bootloaders.cb.is_some();
+        let has_cb_a = self.bootloaders.cb_a.is_some();
+        let has_cb_x = self.bootloaders.cb_x.is_some();
+        let has_cb_b = self.bootloaders.cb_b.is_some();
+        let has_sc = self.bootloaders.sc.is_some();
+        let has_cd = self.bootloaders.cd.is_some();
+        let has_ce = self.bootloaders.ce.is_some();
+        let has_xell = self.bootloaders.xell.is_some();
+
+        let has_sb = self
+            .bootloaders
+            .cb
+            .as_ref()
+            .is_some_and(|b| (b.header.magic.get() & 0xF000) == 0x5000)
+            || self
+                .bootloaders
+                .cb_a
+                .as_ref()
+                .is_some_and(|b| (b.header.magic.get() & 0xF000) == 0x5000);
+        let has_sd = self
+            .bootloaders
+            .cd
+            .as_ref()
+            .is_some_and(|b| (b.header.magic.get() & 0xF000) == 0x5000);
+        let has_se = self
+            .bootloaders
+            .ce
+            .as_ref()
+            .is_some_and(|b| (b.header.magic.get() & 0xF000) == 0x5000);
+
+        let has_cd_retail = has_cd && !has_sd;
+        let has_ce_retail = has_ce && !has_se;
+
+        let (has_cf, has_cg, cf_is_sf, cg_is_sg) = self
+            .update
+            .as_ref()
+            .map(|u| {
+                let cf = u.cf_0.as_ref();
+                let cg = u.cg_0.as_ref();
+                (
+                    cf.is_some(),
+                    cg.is_some(),
+                    cf.is_some_and(|b| (b.header.magic.get() & 0xF000) == 0x5000),
+                    cg.is_some_and(|b| (b.header.magic.get() & 0xF000) == 0x5000),
+                )
+            })
+            .unwrap_or((false, false, false, false));
+
+        if !has_ce && !has_cf && !has_cg && has_xell {
+            return InferredImageType::Xell;
+        }
+
+        let has_single_cb_only = has_cb && !has_cb_a && !has_cb_b && !has_cb_x;
+        let has_split_cb_pair = has_cb_a && has_cb_b && !has_cb;
+        let has_rgl_xdk_cb_shape = has_single_cb_only || has_split_cb_pair;
+        let cf_sg_ok = (!has_cf || cf_is_sf) && (!has_cg || cg_is_sg);
+        let cf_cg_retail_ok = (!has_cf || !cf_is_sf) && (!has_cg || !cg_is_sg);
+
+        if has_sb && has_sc && has_sd && has_se && cf_sg_ok {
+            return InferredImageType::Devkit;
+        }
+
+        if has_sb && has_sc && has_cd_retail && has_ce_retail && cf_cg_retail_ok {
+            return InferredImageType::DevGl;
+        }
+
+        if has_rgl_xdk_cb_shape && has_cd_retail && has_se && cf_sg_ok {
+            return InferredImageType::RgLoader;
+        }
+
+        if has_rgl_xdk_cb_shape && has_sc && has_sd && has_se && cf_sg_ok {
+            return InferredImageType::XdkBuild;
+        }
+
+        if has_cb_a && has_cb_x && has_cb_b && has_cd && has_ce && has_cf && has_cg {
+            return InferredImageType::Glitch3;
+        }
+
+        if has_cb_a && has_cb_b && has_cd && has_ce && has_cf && has_cg {
+            return InferredImageType::TraditionalSplitCb;
+        }
+
+        if has_cb && has_cd && has_ce && has_cf && has_cg {
+            return InferredImageType::TraditionalSingleCb;
+        }
+
+        InferredImageType::Unknown
     }
 
     /*
