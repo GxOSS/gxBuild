@@ -199,6 +199,16 @@ impl Executor {
             .build_type
             .clone()
             .ok_or("prepare_build: build_type not set")?;
+        let build_type_l = build_type.to_lowercase();
+        if matches!(
+            build_type_l.as_str(),
+            "jtag" | "1f" | "2f" | "devgl" | "devkit" | "xdkbuild"
+        ) {
+            return Err(format!(
+                "prepare_build: build type '{}' is currently disabled",
+                build_type
+            ));
+        }
         let console = session
             .console_type
             .clone()
@@ -1023,6 +1033,16 @@ impl Executor {
                     .build_type
                     .clone()
                     .ok_or("Build: build_type not set")?;
+                let build_type_l = build_type.to_lowercase();
+                if matches!(
+                    build_type_l.as_str(),
+                    "jtag" | "1f" | "2f" | "devgl" | "devkit" | "xdkbuild"
+                ) {
+                    return Err(format!(
+                        "Build: build type '{}' is currently disabled",
+                        build_type
+                    ));
+                }
                 let console = session
                     .console_type
                     .clone()
