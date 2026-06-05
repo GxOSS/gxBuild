@@ -40,8 +40,10 @@ pub enum InferredImageType {
     DevGl,
     RgLoader,
     XdkBuild,
-    TraditionalSingleCb,
-    TraditionalSplitCb,
+    RetailSingleCb,
+    Glitch1,
+    RetailSplitCb,
+    Glitch2,
     Glitch3,
     Xell,
     Unknown,
@@ -175,6 +177,12 @@ impl NandSkeleton {
             })
             .unwrap_or((false, false, false, false));
 
+        let has_khv_patches = self
+            .extra
+            .khvpatch
+            .as_ref()
+            .is_some_and(|p| !p.is_empty());
+
         if !has_ce && !has_cf && !has_cg && has_xell {
             return InferredImageType::Xell;
         }
@@ -206,11 +214,17 @@ impl NandSkeleton {
         }
 
         if has_cb_a && has_cb_b && has_cd && has_ce && has_cf && has_cg {
-            return InferredImageType::TraditionalSplitCb;
+            if has_khv_patches {
+                return InferredImageType::Glitch2;
+            }
+            return InferredImageType::RetailSplitCb;
         }
 
         if has_cb && has_cd && has_ce && has_cf && has_cg {
-            return InferredImageType::TraditionalSingleCb;
+            if has_khv_patches {
+                return InferredImageType::Glitch1;
+            }
+            return InferredImageType::RetailSingleCb;
         }
 
         InferredImageType::Unknown
@@ -613,6 +627,24 @@ impl NandSkeleton {
     pub fn assemble_logical(&mut self) -> Result<Vec<u8>> {
         let layout = self.options.layout;
         let total_blocks = self.options.total_blocks;
+        let inferred = self.infer_image_type();
+        let mut build_profile = self.options.image_profile.clone();
+        match inferred {
+            InferredImageType::Devkit => build_profile = "devkit".to_string(),
+            InferredImageType::DevGl => build_profile = "devgl".to_string(),
+            InferredImageType::RgLoader => build_profile = "rgloader".to_string(),
+            InferredImageType::XdkBuild => build_profile = "xdkbuild".to_string(),
+            InferredImageType::Glitch1 => build_profile = "glitch1".to_string(),
+            InferredImageType::Glitch2 => build_profile = "glitch2".to_string(),
+            InferredImageType::Glitch3 => build_profile = "glitch3".to_string(),
+            InferredImageType::RetailSingleCb | InferredImageType::RetailSplitCb => {
+                build_profile = "retail".to_string()
+            }
+            InferredImageType::Xell => build_profile = "xell".to_string(),
+            _ => {}
+        }
+        let build_profile_l = build_profile.to_ascii_lowercase();
+
         let update = self.update.get_or_insert_with(NandUpdate::default);
         let flashfs = self.flashfs.get_or_insert_with(FlashFS::new);
         let mobile = self.mobile.get_or_insert_with(MobileStore::new);
@@ -720,14 +752,11 @@ impl NandSkeleton {
             curr_bl += data.len();
         }
 
-        let build_profile = self.options.image_profile.clone();
-        let build_profile_l = build_profile.to_ascii_lowercase();
-
         let forensic_cf_default = match layout {
             NandLayout::Bb => {
                 // XeLL GG payloads are typically 0x40000 bytes at 0x70000, so CF/CG must not start at 0x80000
                 // (it would be overwritten by the payload). xeBuild uses 0xC0000 for BB glitch builds.
-                if build_profile_l.contains("glitch") {
+                if inferred == InferredImageType::Xell || build_profile_l.contains("glitch") {
                     0xC0000
                 } else {
                     0x80000
@@ -735,19 +764,23 @@ impl NandSkeleton {
             }
             NandLayout::Emmc => 0xB0000,
             NandLayout::Sb | NandLayout::Xsb => {
-                if build_profile_l == "glitch2m"
-                    || build_profile_l.contains("glitch2m")
-                    || build_profile_l == "devgl"
-                    || build_profile_l == "xdkbuild"
-                {
-                    0xD0000
-                } else if build_profile_l.contains("glitch")
-                    || build_profile_l.contains("glitchr")
-                    || build_profile_l.contains("glitch2r")
-                {
-                    0xB0000
-                } else {
-                    0x70000
+                match inferred {
+                    InferredImageType::DevGl
+                    | InferredImageType::RgLoader
+                    | InferredImageType::XdkBuild => 0xD0000,
+                    InferredImageType::Glitch3 => 0xB0000,
+                    _ => {
+                        if build_profile_l == "glitch2m"
+                            || build_profile_l.contains("glitch2m")
+                            || build_profile_l.contains("glitch")
+                            || build_profile_l.contains("glitchr")
+                            || build_profile_l.contains("glitch2r")
+                        {
+                            0xB0000
+                        } else {
+                            0x70000
+                        }
+                    }
                 }
             }
         };
@@ -936,12 +969,17 @@ impl NandSkeleton {
 
         if let Some(cf0d) = cf0 {
             let cf0_offset = target_cf_offset;
-            let reserve_two_slots = build_profile_l == "jtag"
+            let reserve_two_slots = matches!(
+                inferred,
+                InferredImageType::Devkit
+                    | InferredImageType::DevGl
+                    | InferredImageType::RgLoader
+                    | InferredImageType::XdkBuild
+                    | InferredImageType::Glitch3
+                    | InferredImageType::Xell
+            ) || build_profile_l == "jtag"
                 || build_profile_l == "1f"
                 || build_profile_l == "2f"
-                || build_profile_l == "devgl"
-                || build_profile_l == "devkit"
-                || build_profile_l == "xdkbuild"
                 || build_profile_l.contains("glitch");
 
             let desired_patch_slots = if reserve_two_slots {
@@ -1271,7 +1309,12 @@ impl NandSkeleton {
         }
 
         header.prefix.entrypoint.set(bootchain_start as u32);
-        header.apply_xebuild_header_flags(&self.options);
+        let mut opts_for_flags = self.options.clone();
+        opts_for_flags.image_profile = build_profile;
+        if inferred == InferredImageType::Devkit {
+            opts_for_flags.build_mode = BuildMode::Devkit;
+        }
+        header.apply_xebuild_header_flags(&opts_for_flags);
         let header_bytes = zerocopy::IntoBytes::as_bytes(&header);
         logical_image[..header_bytes.len()].copy_from_slice(header_bytes);
 
@@ -1441,6 +1484,12 @@ impl NandSkeleton {
             }
         }
 
+        let inferred = skel.infer_image_type();
+        let keep_cd_plaintext = matches!(
+            inferred,
+            InferredImageType::Glitch1 | InferredImageType::Glitch2 | InferredImageType::Glitch3
+        );
+
         let update = skel.update.get_or_insert_with(NandUpdate::default);
 
         let ldv0 = update
@@ -1492,47 +1541,64 @@ impl NandSkeleton {
             );
         }
 
+        let should_encrypt_chain = skel.bootloaders.cb.is_some()
+            || skel.bootloaders.cb_a.is_some()
+            || skel.bootloaders.cd.is_some()
+            || skel.bootloaders.ce.is_some()
+            || update.cf_0.is_some()
+            || update.cg_0.is_some()
+            || update.cf_1.is_some()
+            || update.cg_1.is_some();
+
         let mut smc = crate::builder::chain::smc::RawSmc::new(skel.extra.smc.clone());
         smc.ensure_decrypted();
-        info!("[builder] Re-encrypting bootloader chain...");
-        let profile_l = skel.options.image_profile.to_ascii_lowercase();
-        let profile_base = profile_l.split('_').next().unwrap_or("");
-        let keep_cd_plaintext = matches!(profile_base, "glitch" | "glitch1" | "glitch2" | "glitch3");
 
-        encrypt_chain(
-            skel.bootloaders
+        if should_encrypt_chain {
+            info!("[builder] Re-encrypting bootloader chain...");
+
+            let primary_cb = skel
+                .bootloaders
                 .cb_a
                 .as_mut()
-                .or(skel.bootloaders.cb.as_mut())
-                .ok_or("Missing primary CB (CB or CB_A) for encryption")?,
-            skel.bootloaders.cb_x.as_mut(),
-            skel.bootloaders.cb_b.as_mut(),
-            skel.bootloaders.sc.as_mut(),
-            skel.bootloaders
-                .cd
-                .as_mut()
-                .ok_or("Missing CD for encryption")?,
-            skel.bootloaders
-                .ce
-                .as_mut()
-                .ok_or("Missing CE for encryption")?,
-            update.cf_0.as_mut(),
-            update.cg_0.as_mut(),
-            update.cf_1.as_mut(),
-            update.cg_1.as_mut(),
-            &mut smc,
-            &cpukey,
-            keep_cd_plaintext,
-        )?;
+                .or(skel.bootloaders.cb.as_mut());
+            let cd = skel.bootloaders.cd.as_mut();
+            let ce = skel.bootloaders.ce.as_mut();
 
-        info!("[builder] Re-encrypting SMC...");
-        let scramble_smc = skel
-            .options
-            .image_profile
-            .to_ascii_lowercase()
-            .contains("glitch3");
-        smc.encrypt_with_scramble(scramble_smc);
-        skel.extra.smc = smc.data;
+            if let (Some(primary_cb), Some(cd), Some(ce)) = (primary_cb, cd, ce) {
+                encrypt_chain(
+                    primary_cb,
+                    skel.bootloaders.cb_x.as_mut(),
+                    skel.bootloaders.cb_b.as_mut(),
+                    skel.bootloaders.sc.as_mut(),
+                    cd,
+                    ce,
+                    update.cf_0.as_mut(),
+                    update.cg_0.as_mut(),
+                    update.cf_1.as_mut(),
+                    update.cg_1.as_mut(),
+                    &mut smc,
+                    &cpukey,
+                    keep_cd_plaintext,
+                )?;
+            } else {
+                warn!(
+                    "[builder] Bootloader chain encryption skipped: missing CB/CD/CE (inferred: {:?})",
+                    inferred
+                );
+            }
+        }
+
+        if !skel.extra.smc.is_empty() {
+            info!("[builder] Re-encrypting SMC...");
+            let scramble_smc = inferred == InferredImageType::Glitch3
+                || skel
+                    .options
+                    .image_profile
+                    .to_ascii_lowercase()
+                    .contains("glitch3");
+            smc.encrypt_with_scramble(scramble_smc);
+            skel.extra.smc = smc.data;
+        }
 
         skel.assemble_logical()
     }
