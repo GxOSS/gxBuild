@@ -30,6 +30,39 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+pub fn shim_console_ini_section(console: &str) -> String {
+    let c = console.to_lowercase();
+    if c.starts_with("jasper") {
+        "jasper".to_string()
+    } else if c.starts_with("trinity") {
+        "trinity".to_string()
+    } else if c.starts_with("corona") {
+        "corona".to_string()
+    } else if c.starts_with("winchester") {
+        "winchester".to_string()
+    } else {
+        c
+    }
+}
+
+pub fn shim_console_layout_override(
+    console: &str,
+) -> Option<crate::core::images::blocks::NandLayout> {
+    let c = console.to_lowercase();
+    if c.starts_with("winchester") {
+        return Some(crate::core::images::blocks::NandLayout::Emmc);
+    }
+    if c.starts_with("corona") && c.contains("4g") {
+        return Some(crate::core::images::blocks::NandLayout::Emmc);
+    }
+    if (c.starts_with("jasper") || c.starts_with("trinity"))
+        && (c.contains("bb") || c.contains("bigffs") || c.contains("256") || c.contains("512"))
+    {
+        return Some(crate::core::images::blocks::NandLayout::Bb);
+    }
+    None
+}
+
 #[derive(Error, Debug)]
 pub enum SessionError {
     #[error("[session] IO error: {0}")]
@@ -472,9 +505,10 @@ impl Session {
         let is_verbose = self.options.core.verbose.unwrap_or(false);
         let _ = crate::core::logger::init_logger("build", is_verbose);
 
+        let target = shim_console_ini_section(target);
         info!(
             "[session] Loading build INI from string for target: {}",
-            target
+            target.as_str()
         );
         self.build_ini_loaded = true;
 
@@ -492,7 +526,8 @@ impl Session {
 
         let hint = self.build_type.as_ref().map(|t| format!("_{}.ini", t));
 
-        match crate::core::data::xeini::parse_xe_ini_str(content, target, hint.as_deref()) {
+        match crate::core::data::xeini::parse_xe_ini_str(content, target.as_str(), hint.as_deref())
+        {
             Ok(ini) => match IniSearch::new(
                 ini.clone(),
                 &ini_dir,
@@ -529,12 +564,25 @@ impl Session {
 
                     let nand = self.active_nand.take().unwrap_or_else(|| {
                         let console = self.console_type.clone().unwrap_or("Jasper".to_string());
-                        let layout = match console.to_lowercase().as_str() {
-                            "trinity" | "corona" | "winchester" => {
-                                crate::core::images::blocks::NandLayout::Sb
+                        let mut layout = shim_console_layout_override(&console).unwrap_or_else(|| {
+                            match console.to_lowercase().as_str() {
+                                "xenon" => crate::core::images::blocks::NandLayout::Xsb,
+                                "zephyr" | "falcon" | "jasper" | "trinity" | "corona" => {
+                                    crate::core::images::blocks::NandLayout::Sb
+                                }
+                                "winchester" => crate::core::images::blocks::NandLayout::Emmc,
+                                _ => crate::core::images::blocks::NandLayout::Sb,
                             }
-                            _ => crate::core::images::blocks::NandLayout::Sb,
-                        };
+                        });
+
+                        if layout != crate::core::images::blocks::NandLayout::Emmc {
+                            if self.options.core_builder.xsb.unwrap_or(false) {
+                                layout = crate::core::images::blocks::NandLayout::Xsb;
+                            }
+                            if self.options.core_builder.bigblock.unwrap_or(false) {
+                                layout = crate::core::images::blocks::NandLayout::Bb;
+                            }
+                        }
                         crate::builder::nand::builder::NandSkeleton::new_blank(layout)
                     });
 

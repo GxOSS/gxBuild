@@ -213,10 +213,10 @@ impl Executor {
         let ini_filename = format!("_{}{}.ini", build_type, ini_suffix);
         let ini_path = ini_dir.join(&ini_filename);
 
-        // Console section, e.g. "trinity" or "trinity_ext"
+        let console_section_base = crate::core::session::shim_console_ini_section(&console);
         let console_section = match &session.bl_ext {
-            Some(ext) => format!("{}_{}", console, ext),
-            None => console.clone(),
+            Some(ext) => format!("{}_{}", console_section_base, ext),
+            None => console_section_base,
         };
 
         // Pre-parse INI to know which asset filenames we need
@@ -1035,9 +1035,10 @@ impl Executor {
                     .unwrap_or_default();
                 let ini_filename = format!("_{}{}.ini", build_type, ini_suffix);
                 let ini_path = ini_dir.join(&ini_filename);
+                let console_section_base = crate::core::session::shim_console_ini_section(&console);
                 let console_section = match &session.bl_ext {
-                    Some(ext) => format!("{}_{}", console, ext),
-                    None => console.clone(),
+                    Some(ext) => format!("{}_{}", console_section_base, ext),
+                    None => console_section_base,
                 };
 
                 let ini = crate::core::data::xeini::parse_xe_ini(&ini_path, &console_section)
@@ -1094,7 +1095,7 @@ impl Executor {
                     allow.insert((*name).to_string());
                 }
 
-                let (layout, motherboard) = match console.as_str() {
+                let (mut layout, motherboard) = match console.as_str() {
                     "xenon" => (
                         crate::core::images::blocks::NandLayout::Xsb,
                         crate::builder::nand::types::MotherboardType::Xenon,
@@ -1119,8 +1120,8 @@ impl Executor {
                         },
                         crate::builder::nand::types::MotherboardType::Jasper,
                     ),
-                    "trinity" | "trinitybigffs" => (
-                        if console.contains("bigffs") {
+                    "trinity" | "trinitybb" | "trinitybigffs" => (
+                        if console.contains("bigffs") || console.contains("bb") {
                             crate::core::images::blocks::NandLayout::Bb
                         } else {
                             crate::core::images::blocks::NandLayout::Sb
@@ -1135,7 +1136,7 @@ impl Executor {
                         crate::core::images::blocks::NandLayout::Emmc,
                         crate::builder::nand::types::MotherboardType::Corona,
                     ),
-                    "winchester" => (
+                    "winchester" | "winchester4g" => (
                         crate::core::images::blocks::NandLayout::Emmc,
                         crate::builder::nand::types::MotherboardType::Winchester,
                     ),
@@ -1144,6 +1145,15 @@ impl Executor {
                         crate::builder::nand::types::MotherboardType::Unknown,
                     ),
                 };
+
+                if layout != crate::core::images::blocks::NandLayout::Emmc {
+                    if session.options.core_builder.xsb.unwrap_or(false) {
+                        layout = crate::core::images::blocks::NandLayout::Xsb;
+                    }
+                    if session.options.core_builder.bigblock.unwrap_or(false) {
+                        layout = crate::core::images::blocks::NandLayout::Bb;
+                    }
+                }
 
                 let mut base_skeleton = NandSkeleton::new_blank(layout);
                 base_skeleton.cpukey = Some(cpukey);

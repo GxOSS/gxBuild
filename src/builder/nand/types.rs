@@ -357,22 +357,14 @@ impl NandHeader {
 
         if is_hacked {
             self.copyright[Self::XEBUILD_FLAG_OFFSET] = 1;
-
-            /*
-            let alt = extra.power_on_cause_a;
-            let primary = extra.power_on_cause_b;
-
-            self.copyright[Self::XEBUILD_XELL_ALT_POC_OFFSET] = if alt != 0 { alt } else { 0x00 };
-            self.copyright[Self::XEBUILD_XELL_POC_OFFSET] =
-                if primary != 0 { primary } else { 0x12 };
-
-            if options.demon {
-                self.copyright[Self::XEBUILD_UART_OFFSET] = 2;
-            } else if options.cygnos {
-                self.copyright[Self::XEBUILD_UART_OFFSET] = 1;
+            if self.copyright[Self::XEBUILD_XELL_ALT_POC_OFFSET] == 0 {
+                self.copyright[Self::XEBUILD_XELL_ALT_POC_OFFSET] = 0x00;
             }
-            */
-            let _ = Self::XEBUILD_DUALBOOT_OFFSET;
+            if self.copyright[Self::XEBUILD_XELL_POC_OFFSET] == 0 {
+                self.copyright[Self::XEBUILD_XELL_POC_OFFSET] = 0x12;
+            }
+
+            let _ = (Self::XEBUILD_UART_OFFSET, Self::XEBUILD_DUALBOOT_OFFSET);
         }
     }
 }

@@ -52,6 +52,7 @@ pub struct CoreBuilderOptions {
     pub nomobile: Option<bool>,
     pub full_image: Option<bool>,
     pub noecc: Option<bool>,
+    pub bigblock: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -169,6 +170,7 @@ impl OptionsIni {
                 nomobile: None,
                 full_image: None,
                 noecc: None,
+                bigblock: None,
             },
             builder: BuilderOptions {
                 gxunsafe: None,
@@ -283,6 +285,9 @@ impl OptionsIni {
         }
         if let Some(v) = other.core_builder.noecc {
             self.core_builder.noecc = Some(v);
+        }
+        if let Some(v) = other.core_builder.bigblock {
+            self.core_builder.bigblock = Some(v);
         }
 
         // BuilderOptions
@@ -446,6 +451,7 @@ impl OptionsIni {
             "noinfo" => self.core.noinfo = Some(is_true),
             "noenter" => self.core.noenter = Some(is_true),
             "noecc" => self.core_builder.noecc = Some(is_true),
+            "bigblock" => self.core_builder.bigblock = Some(is_true),
             "noecdremap" => self.builder.noecdremap = Some(is_true),
             "smcnocheck" => self.builder.smcnocheck = Some(is_true),
             "nosecurity" => self.core_builder.nosecurity = Some(is_true),
@@ -506,6 +512,9 @@ pub fn parse_options_ini(content: &str) -> Result<OptionsIni, OptionsIniError> {
                         options.core_builder.nosusecurity = Some(value.eq_ignore_ascii_case("true"))
                     }
                     "noecc" => options.core_builder.noecc = Some(value.eq_ignore_ascii_case("true")),
+                    "bigblock" => {
+                        options.core_builder.bigblock = Some(value.eq_ignore_ascii_case("true"))
+                    }
                     "noflashfs" => options.builder.noflashfs = Some(value.eq_ignore_ascii_case("true")),
                     "dualpatchslots" => {
                         options.core_builder.dualpatchslots = Some(value.eq_ignore_ascii_case("true"))

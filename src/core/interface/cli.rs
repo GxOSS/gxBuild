@@ -167,6 +167,9 @@ pub struct GgxArgs {
     #[arg(long = "fullimage", global = true)]
     pub full_image: bool,
 
+    #[arg(long = "bigblock", global = true, help = "Force Big Block layout for the final skeleton")]
+    pub bigblock: bool,
+
     /// Run a Rhai script file
     #[cfg(feature = "rhai")]
     #[arg(long = "script")]
@@ -352,10 +355,12 @@ pub enum CliConsoleType {
     jasperbb,
     jasperbigffs,
     trinity,
+    trinitybb,
     trinitybigffs,
     corona,
     corona4g,
     winchester,
+    winchester4g,
 }
 
 fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
@@ -420,6 +425,9 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
     if args.xsb {
         cli_overrides.core_builder.xsb = Some(true);
     }
+    if args.bigblock {
+        cli_overrides.core_builder.bigblock = Some(true);
+    }
     session.options.merge(cli_overrides);
 
     // --- CLI Generic Options Overrides (-o) ---
@@ -442,6 +450,7 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
                 "noremap" => o.core_builder.noremap = Some(v.eq_ignore_ascii_case("true")),
                 "nandmu" => o.core_builder.nandmu = Some(v.eq_ignore_ascii_case("true")),
                 "nochainpatch" => o.core_builder.nochainpatch = Some(v.eq_ignore_ascii_case("true")),
+                "bigblock" => o.core_builder.bigblock = Some(v.eq_ignore_ascii_case("true")),
                 "cputemp" => o.smc_config.cputemp = Some(v.clone()),
                 "gputemp" => o.smc_config.gputemp = Some(v.clone()),
                 "edramtemp" => o.smc_config.edramtemp = Some(v.clone()),
@@ -485,10 +494,11 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
     let ini_filename = format!("_{}{}.ini", build_type_str, ini_suffix);
     let ini_path = ini_dir.join(&ini_filename);
 
+    let console_section_base = crate::core::session::shim_console_ini_section(&console_base);
     let console_section = if let Some(ext) = &args.bl_ext {
-        format!("{}_{}", console_base, ext)
+        format!("{}_{}", console_section_base, ext)
     } else {
-        console_base.clone()
+        console_section_base
     };
 
     // --- INI Pre-Parsing ---
@@ -660,9 +670,11 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
             | CliConsoleType::jasperbb
             | CliConsoleType::jasperbigffs => crate::core::images::blocks::NandLayout::Bb,
             CliConsoleType::trinity => crate::core::images::blocks::NandLayout::Sb,
-            CliConsoleType::trinitybigffs => crate::core::images::blocks::NandLayout::Bb,
+            CliConsoleType::trinitybb | CliConsoleType::trinitybigffs => {
+                crate::core::images::blocks::NandLayout::Bb
+            }
             CliConsoleType::corona => crate::core::images::blocks::NandLayout::Sb,
-            CliConsoleType::corona4g | CliConsoleType::winchester => {
+            CliConsoleType::corona4g | CliConsoleType::winchester | CliConsoleType::winchester4g => {
                 crate::core::images::blocks::NandLayout::Emmc
             }
         };
