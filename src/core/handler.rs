@@ -1394,13 +1394,19 @@ impl Executor {
                 };
                 let _ = layout_calculator(sb_type, chain_profile, layout);
 
-                let meta_type = match nand.options.motherboard {
-                    crate::builder::nand::types::MotherboardType::Xenon
-                    | crate::builder::nand::types::MotherboardType::Zephyr
-                    | crate::builder::nand::types::MotherboardType::Falcon => {
+                let meta_type = match layout {
+                    crate::core::images::blocks::NandLayout::Xsb => {
                         crate::core::images::blocks::SpareMetaType::MetaType0
                     }
-                    _ => crate::core::images::blocks::SpareMetaType::MetaType1,
+                    crate::core::images::blocks::NandLayout::Sb => {
+                        crate::core::images::blocks::SpareMetaType::MetaType1
+                    }
+                    crate::core::images::blocks::NandLayout::Bb => {
+                        crate::core::images::blocks::SpareMetaType::MetaType2
+                    }
+                    crate::core::images::blocks::NandLayout::Emmc => {
+                        crate::core::images::blocks::SpareMetaType::MetaTypeNone
+                    }
                 };
 
                 if let Some(parent) = output.parent() {

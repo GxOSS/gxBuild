@@ -645,6 +645,9 @@ pub fn add_spare(
                 } else {
                     spare[1] = (val & 0xFF) as u8;
                     spare[2] = ((val >> 8) & 0xFF) as u8;
+                    spare[3] = 0x00;
+                    spare[4] = 0x00;
+                    spare[5] = 0x00;
                     page_slice[page_size..p_page_size].copy_from_slice(&spare);
                     calculate_ecc(page_slice);
                 }
@@ -719,10 +722,16 @@ pub fn add_spare(
                         SpareMetaType::MetaType0 => {
                             spare[0] = (val & 0xFF) as u8;
                             spare[1] = ((val / 0x100) & 0xFF) as u8;
+                            spare[2] = 0x00;
+                            spare[3] = 0x00;
+                            spare[4] = 0x00;
                         }
                         SpareMetaType::MetaType1 => {
                             spare[1] = (val & 0xFF) as u8;
                             spare[2] = ((val / 0x100) & 0xFF) as u8;
+                            spare[0] = 0x00;
+                            spare[3] = 0x00;
+                            spare[4] = 0x00;
                         }
                         _ => {}
                     }
@@ -740,6 +749,27 @@ pub fn has_spare(image: &[u8]) -> bool {
     if image.len() > 0x210 {
         if (image.len() % 0x210 != 0) && (image.len() % 0x840 != 0) {
             return false;
+        }
+
+        if image.len() % 0x210 == 0 {
+            let total_pages = image.len() / 0x210;
+            let sample_pages = std::cmp::min(128usize, total_pages);
+            let mut ecc_hits = 0usize;
+            for page in 0..sample_pages {
+                let ecc_off = page * 0x210 + 0x20C;
+                if ecc_off + 4 > image.len() {
+                    break;
+                }
+                let ecc = &image[ecc_off..ecc_off + 4];
+                let all_ff = ecc.iter().all(|&b| b == 0xFF);
+                let all_00 = ecc.iter().all(|&b| b == 0x00);
+                if !all_ff && !all_00 {
+                    ecc_hits += 1;
+                    if ecc_hits >= 4 {
+                        return true;
+                    }
+                }
+            }
         }
 
         let mut counter = 0;
