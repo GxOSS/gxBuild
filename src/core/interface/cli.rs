@@ -23,9 +23,10 @@
 use crate::builder::nand::ecc::handle_extract_ecc;
 #[cfg(feature = "rhai")]
 use crate::core::interface::rhai::GxScriptEngine;
+use crate::core::interface::handler::{execute_internal_commands, Executor, InternalCommand};
+use crate::core::interface::data::options::{parse_options_ini, OptionsIni};
+use crate::core::interface::data::{BuildAssets, BuildConfig, Session};
 use crate::core::logger;
-use crate::core::session::InternalCommand;
-use crate::core::session::Session;
 use clap::ValueEnum;
 use clap::{CommandFactory, Parser, Subcommand};
 use log::{error, info, warn};
@@ -54,14 +55,20 @@ pub enum CliError {
     #[error("No NAND/ECC image found. Provide one via -l/--image or --ecc, or place it in the data dir (-f/--data).")]
     ExtractSourceNotFound,
 
-    #[error("Session error: {0}")]
-    Session(#[from] crate::core::session::SessionError),
+    #[error("Build asset discovery error: {0}")]
+    BuildAssets(#[from] crate::core::interface::data::BuildAssetsError),
+
+    #[error("Handler error: {0}")]
+    Handler(#[from] crate::core::interface::handler::HandlerError),
 
     #[error("Builder error: {0}")]
     Builder(#[from] crate::builder::nand::types::BuilderError),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("{0}")]
+    Message(String),
 }
 
 #[derive(Parser, Debug)]
@@ -218,6 +225,201 @@ This program has NO WARRANTY
 =============================================================
 "#;
 
+fn parse_cpu_key_hex(text: &str) -> Result<([u8; 16], String), CliError> {
+    let clean = text.trim();
+    let bytes = crate::builder::nand::parser::hex_to_bytes(clean)
+        .map_err(|e| CliError::Message(format!("Invalid formatting for CPU Key '{}': {}", clean, e)))?;
+    let key: [u8; 16] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| CliError::Message("CPU Key must be 32 hex chars / 16 bytes".to_string()))?;
+    let normalized = key.iter().map(|b| format!("{:02x}", b)).collect();
+    Ok((key, normalized))
+}
+
+fn load_cpu_key(args: &GgxArgs, data_dir: &PathBuf) -> Result<Option<([u8; 16], String)>, CliError> {
+    if let Some(key) = &args.cpu_key {
+        return parse_cpu_key_hex(key).map(Some);
+    }
+
+    let key_bin = data_dir.join("cpukey.bin");
+    if key_bin.exists() {
+        let bytes = std::fs::read(&key_bin)?;
+        if bytes.len() >= 16 {
+            let mut key = [0u8; 16];
+            key.copy_from_slice(&bytes[..16]);
+            let normalized = key.iter().map(|b| format!("{:02x}", b)).collect();
+            return Ok(Some((key, normalized)));
+        }
+    }
+
+    let key_txt = data_dir.join("cpukey.txt");
+    if key_txt.exists() {
+        let text = std::fs::read_to_string(&key_txt)?;
+        return parse_cpu_key_hex(text.trim()).map(Some);
+    }
+
+    Ok(None)
+}
+
+fn apply_cli_option_override(options: &mut OptionsIni, key: &str, value: &str) {
+    match key.to_lowercase().as_str() {
+        "region" | "avregion" => options.keyvault.avregion = Some(value.to_string()),
+        "gameregion" => options.keyvault.gameregion = Some(value.to_string()),
+        "dvdregion" => options.keyvault.dvdregion = Some(value.to_string()),
+        "unsafe" => {
+            options.core.gxunsafe = Some(value.eq_ignore_ascii_case("true"));
+            if options.core.gxunsafe.unwrap_or(false) {
+                warn!("[cli] Unsafe Mode enabled via CLI override.");
+            }
+        }
+        "nomobile" => options.core_builder.nomobile = Some(value.eq_ignore_ascii_case("true")),
+        "nofcrt" => options.core_builder.nofcrt = Some(value.eq_ignore_ascii_case("true")),
+        "noenter" => options.core.noenter = Some(value.eq_ignore_ascii_case("true")),
+        "noremap" => options.core_builder.noremap = Some(value.eq_ignore_ascii_case("true")),
+        "nandmu" => options.core_builder.nandmu = Some(value.eq_ignore_ascii_case("true")),
+        "nochainpatch" => options.core_builder.nochainpatch = Some(value.eq_ignore_ascii_case("true")),
+        "bigblock" => options.core_builder.bigblock = Some(value.eq_ignore_ascii_case("true")),
+        "cputemp" => options.smc_config.cputemp = Some(value.to_string()),
+        "gputemp" => options.smc_config.gputemp = Some(value.to_string()),
+        "edramtemp" => options.smc_config.edramtemp = Some(value.to_string()),
+        "overcputemp" => options.smc_config.overcputemp = Some(value.to_string()),
+        "overgputemp" => options.smc_config.overgputemp = Some(value.to_string()),
+        "overedramtemp" => options.smc_config.overedramtemp = Some(value.to_string()),
+        "cpufan" => options.smc_config.cpufan = Some(value.to_string()),
+        "gpufan" => options.smc_config.gpufan = Some(value.to_string()),
+        "macid" | "mac" => options.keyvault.macid = Some(value.to_string()),
+        "dvdkey" => options.keyvault.dvdkey = Some(value.to_string()),
+        "cfldv" => options.keys.cfldv = Some(value.to_string()),
+        "xellbutton" => options.builder.xellbutton = Some(value.to_string()),
+        "xellbutton2" => options.builder.xellbutton2 = Some(value.to_string()),
+        "cygnos" => options.jtag.cygnos = Some(value.eq_ignore_ascii_case("true")),
+        "demon" => options.jtag.demon = Some(value.eq_ignore_ascii_case("true")),
+        "smcnoeject" => options.jtag.smcnoeject = Some(value.eq_ignore_ascii_case("true")),
+        "smcnoblink" => options.jtag.smcnoblink = Some(value.eq_ignore_ascii_case("true")),
+        "patchsmc" => options.jtag.patchsmc = Some(value.eq_ignore_ascii_case("true")),
+        "olddvd" => options.jtag.olddvd = Some(value.eq_ignore_ascii_case("true")),
+        "nodvd" => options.jtag.nodvd = Some(value.eq_ignore_ascii_case("true")),
+        "dualboot" => options.jtag.dualboot = Some(value.eq_ignore_ascii_case("true")),
+        "nolog" => options.core.nolog = Some(value.eq_ignore_ascii_case("true")),
+        "noinfo" => options.core.noinfo = Some(value.eq_ignore_ascii_case("true")),
+        "verbose" => {}
+        _ => warn!("[cli] Unhandled generic option override: {}", key),
+    }
+}
+
+fn resolve_ini_target(
+    build_type: &str,
+    console: &str,
+    ini_ext: Option<&String>,
+    bl_ext: Option<&String>,
+    ini_dir: &PathBuf,
+) -> (PathBuf, String) {
+    let ini_suffix = ini_ext
+        .map(|ext| format!("_{}", ext))
+        .unwrap_or_default();
+    let ini_filename = format!("_{}{}.ini", build_type, ini_suffix);
+    let ini_path = ini_dir.join(&ini_filename);
+
+    let console_section_base = match console {
+        "jasper256" | "jasper512" | "jasperbb" | "jasperbigffs" => "jasper".to_string(),
+        "trinitybb" | "trinitybigffs" => "trinity".to_string(),
+        "corona4g" => "corona".to_string(),
+        "winchester4g" => "winchester".to_string(),
+        _ => console.to_string(),
+    };
+    let console_section = match bl_ext {
+        Some(ext) => format!("{}_{}", console_section_base, ext),
+        None => console_section_base,
+    };
+
+    (ini_path, console_section)
+}
+
+fn build_config_from_args(args: &GgxArgs) -> Result<BuildConfig, CliError> {
+    let build_type = args.build_type.as_ref().ok_or(CliError::MissingBuildType)?;
+    let console_type = args.console.as_ref().ok_or(CliError::MissingConsole)?;
+    let build_type_str = format!("{:?}", build_type).to_lowercase();
+    let console_base = format!("{:?}", console_type).to_lowercase();
+
+    let ini_dir = args.data_dir.clone().unwrap_or_else(|| PathBuf::from("."));
+    let data_dir = args.fw_dir.clone().unwrap_or_else(|| PathBuf::from("mydata"));
+    let common_dir = args
+        .common_dir
+        .clone()
+        .unwrap_or_else(|| ini_dir.join("../common"));
+    let output_path = args.output.clone().unwrap_or_else(|| {
+        args.output_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("updflash.bin"))
+    });
+
+    let mut options = OptionsIni::new();
+    let options_path = data_dir.join("options.ini");
+    if options_path.exists() {
+        let content = std::fs::read_to_string(&options_path)?;
+        let parsed = parse_options_ini(&content)
+            .map_err(|e| CliError::Message(format!("Failed to parse options.ini: {}", e)))?;
+        options.merge(parsed);
+        info!("[cli] Merged defaults from {:?}", options_path);
+    }
+
+    options.keys.ctype = Some(console_base.clone());
+    if args.full_image {
+        options.core_builder.full_image = Some(true);
+    }
+    if args.xsb {
+        options.core_builder.xsb = Some(true);
+    }
+    if args.bigblock {
+        options.core_builder.bigblock = Some(true);
+    }
+
+    for group in &args.options {
+        for (key, value) in group {
+            apply_cli_option_override(&mut options, key, value);
+        }
+    }
+
+    let pending_key = load_cpu_key(args, &data_dir)?;
+    if let Some((_, normalized)) = &pending_key {
+        options.keys.cpukey = Some(normalized.clone());
+    } else {
+        return Err(CliError::MissingCpuKey);
+    }
+
+    let (ini_path, console_section) = resolve_ini_target(
+        &build_type_str,
+        &console_base,
+        args.ini_ext.as_ref(),
+        args.bl_ext.as_ref(),
+        &ini_dir,
+    );
+    let xe_ini = crate::core::interface::data::xeini::parse_xe_ini(&ini_path, &console_section)
+        .map_err(|_| CliError::IniRead {
+            path: ini_path.clone(),
+        })?;
+
+    if options.core.gxunsafe.unwrap_or(false) {
+        warn!("[cli] Unsafe Mode Enabled");
+    }
+
+    Ok(BuildConfig {
+        pending_key: pending_key.map(|(key, _)| key),
+        build_type: Some(build_type_str),
+        console_type: Some(console_base),
+        xe_ini: Some(xe_ini),
+        options,
+        ini_dir: Some(ini_dir),
+        common_dir: Some(common_dir),
+        data_dir: Some(data_dir),
+        output_path: Some(output_path),
+        ini_ext: args.ini_ext.clone(),
+        bl_ext: args.bl_ext.clone(),
+        addons: args.addons.clone(),
+    })
+}
+
 pub fn ggx_cli() {
     if std::env::args().count() == 1 {
         println!("{}", LICENSE_TEXT);
@@ -256,16 +458,19 @@ pub fn ggx_cli() {
 
     info!("{}", LICENSE_TEXT);
 
-    let session = Session::new();
-
-    let mut session = session;
+    let mut session = Session::default();
 
     let mut session_prepared = true;
     match args.mode.clone() {
         Some(GgxMode::Build { .. }) | None => {
-            if let Err(e) = handle_build(&args, &mut session) {
-                error!("[cli] Build Setup Failed: {}", e);
-                session_prepared = false;
+            match create_build(&args) {
+                Ok(built_session) => {
+                    session = built_session;
+                }
+                Err(e) => {
+                    error!("[cli] Build Setup Failed: {}", e);
+                    session_prepared = false;
+                }
             }
         }
         Some(GgxMode::Extract { .. }) => {
@@ -293,9 +498,7 @@ pub fn ggx_cli() {
             return;
         }
 
-        if let Err(e) = session.run() {
-            error!("[cli] Session failed: {}", e);
-        } else if let Some(GgxMode::Build { .. }) | None = args.mode {
+        if let Some(GgxMode::Build { .. }) | None = args.mode {
             // Build succeeded, calculate SHA-1 if requested
             let output_path = args.output.clone().unwrap_or_else(|| {
                 args.output_dir
@@ -363,272 +566,62 @@ pub enum CliConsoleType {
     winchester4g,
 }
 
-fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
-    let build_type = args.build_type.as_ref().ok_or(CliError::MissingBuildType)?;
-    let console_type = args.console.as_ref().ok_or(CliError::MissingConsole)?;
-    let build_type_str = format!("{:?}", build_type).to_lowercase();
-    let console_base = format!("{:?}", console_type).to_lowercase();
-
-    session.set_build_type(build_type_str.clone());
-    session.set_console(console_base.clone());
-    if let Some(ext) = &args.ini_ext {
-        session.set_ini_ext(ext.clone());
-    }
-    if let Some(ext) = &args.bl_ext {
-        session.set_bl_ext(ext.clone());
-    }
-
-    // --- Path Resolution ---
-    // -d = INI directory (contains _retail.ini, bootloaders, flashfs/)
-    let ini_dir = args.data_dir.clone().unwrap_or_else(|| PathBuf::from("."));
-
-    // -f = data directory (nand dump, cpu key, smc, fcrt, keyvault)
-    let data_dir = args
-        .fw_dir
+fn create_build(args: &GgxArgs) -> Result<Session, CliError> {
+    let build_config = build_config_from_args(args)?;
+    let build_type = build_config
+        .build_type
+        .clone()
+        .ok_or(CliError::MissingBuildType)?;
+    let console = build_config
+        .console_type
+        .clone()
+        .ok_or(CliError::MissingConsole)?;
+    let ini_dir = build_config
+        .ini_dir
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("."));
+    let data_dir = build_config
+        .data_dir
         .clone()
         .unwrap_or_else(|| PathBuf::from("mydata"));
-    let payloads_dir = ini_dir.join("../payloads");
-    let smc_dir = ini_dir.join("../smc");
-
-    // -m = common directory (shared bootloaders, defaults to <ini_dir>/../common)
-    let resolved_common_dir = args
+    let common_dir = build_config
         .common_dir
         .clone()
         .unwrap_or_else(|| ini_dir.join("../common"));
-
-    session.set_ini_dir(ini_dir.clone());
-    session.set_common_dir(resolved_common_dir.clone());
-    session.set_data_dir(data_dir.clone());
-
-    // --- Options INI Loading (<data>/options.ini) ---
-    let options_path = data_dir.join("options.ini");
-    if options_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&options_path) {
-            match crate::core::data::optini::parse_options_ini(&content) {
-                Ok(opts) => {
-                    session.options.merge(opts);
-                    info!("[cli] Merged defaults from {:?}", options_path);
-                }
-                Err(e) => warn!("[cli] Failed to parse options.ini: {}", e),
-            }
-        }
-    }
-
-    // --- CLI Command-Line Specific Overrides ---
-    let mut cli_overrides = crate::core::data::optini::OptionsIni::new();
-    if let Some(key) = &args.cpu_key {
-        cli_overrides.keys.cpukey = Some(key.clone());
-    }
-    if args.full_image {
-        cli_overrides.core_builder.full_image = Some(true);
-    }
-    if args.xsb {
-        cli_overrides.core_builder.xsb = Some(true);
-    }
-    if args.bigblock {
-        cli_overrides.core_builder.bigblock = Some(true);
-    }
-    session.options.merge(cli_overrides);
-
-    // --- CLI Generic Options Overrides (-o) ---
-    for group in &args.options {
-        for (k, v) in group {
-            let mut o = crate::core::data::optini::OptionsIni::new();
-            match k.to_lowercase().as_str() {
-                "region" | "avregion" => o.keyvault.avregion = Some(v.clone()),
-                "gameregion" => o.keyvault.gameregion = Some(v.clone()),
-                "dvdregion" => o.keyvault.dvdregion = Some(v.clone()),
-                "unsafe" => {
-                    o.core.gxunsafe = Some(v.eq_ignore_ascii_case("true"));
-                    if o.core.gxunsafe.unwrap_or(false) {
-                        warn!("[cli] Unsafe Mode enabled via CLI override.");
-                    }
-                }
-                "nomobile" => o.core_builder.nomobile = Some(v.eq_ignore_ascii_case("true")),
-                "nofcrt" => o.core_builder.nofcrt = Some(v.eq_ignore_ascii_case("true")),
-                "noenter" => o.core.noenter = Some(v.eq_ignore_ascii_case("true")),
-                "noremap" => o.core_builder.noremap = Some(v.eq_ignore_ascii_case("true")),
-                "nandmu" => o.core_builder.nandmu = Some(v.eq_ignore_ascii_case("true")),
-                "nochainpatch" => o.core_builder.nochainpatch = Some(v.eq_ignore_ascii_case("true")),
-                "bigblock" => o.core_builder.bigblock = Some(v.eq_ignore_ascii_case("true")),
-                "cputemp" => o.smc_config.cputemp = Some(v.clone()),
-                "gputemp" => o.smc_config.gputemp = Some(v.clone()),
-                "edramtemp" => o.smc_config.edramtemp = Some(v.clone()),
-                "overcputemp" => o.smc_config.overcputemp = Some(v.clone()),
-                "overgputemp" => o.smc_config.overgputemp = Some(v.clone()),
-                "overedramtemp" => o.smc_config.overedramtemp = Some(v.clone()),
-                "cpufan" => o.smc_config.cpufan = Some(v.clone()),
-                "gpufan" => o.smc_config.gpufan = Some(v.clone()),
-                "macid" | "mac" => o.keyvault.macid = Some(v.clone()),
-                "dvdkey" => o.keyvault.dvdkey = Some(v.clone()),
-                "cfldv" => o.keys.cfldv = Some(v.clone()),
-                "xellbutton" => o.builder.xellbutton = Some(v.clone()),
-                "xellbutton2" => o.builder.xellbutton2 = Some(v.clone()),
-                "cygnos" => o.jtag.cygnos = Some(v.eq_ignore_ascii_case("true")),
-                "demon" => o.jtag.demon = Some(v.eq_ignore_ascii_case("true")),
-                "smcnoeject" => o.jtag.smcnoeject = Some(v.eq_ignore_ascii_case("true")),
-                "smcnoblink" => o.jtag.smcnoblink = Some(v.eq_ignore_ascii_case("true")),
-                "patchsmc" => o.jtag.patchsmc = Some(v.eq_ignore_ascii_case("true")),
-                "olddvd" => o.jtag.olddvd = Some(v.eq_ignore_ascii_case("true")),
-                "nodvd" => o.jtag.nodvd = Some(v.eq_ignore_ascii_case("true")),
-                "dualboot" => o.jtag.dualboot = Some(v.eq_ignore_ascii_case("true")),
-                "nolog" => o.core.nolog = Some(v.eq_ignore_ascii_case("true")),
-                "noinfo" => o.core.noinfo = Some(v.eq_ignore_ascii_case("true")),
-                "verbose" => {} // Handled during logger init
-                _ => warn!("[cli] Unhandled generic option override: {}", k),
-            }
-            session.options.merge(o);
-        }
-    }
-
-    if session.options.core.gxunsafe.unwrap_or(false) {
-        warn!("[cli] Unsafe Mode Enabled");
-    }
-
-    // Resolve INI file path: <ini_dir>/_<type>.ini
-    let ini_suffix = args
-        .ini_ext
-        .as_ref()
-        .map(|ext| format!("_{}", ext))
-        .unwrap_or_default();
-    let ini_filename = format!("_{}{}.ini", build_type_str, ini_suffix);
-    let ini_path = ini_dir.join(&ini_filename);
-
-    let console_section_base = crate::core::session::shim_console_ini_section(&console_base);
-    let console_section = if let Some(ext) = &args.bl_ext {
-        format!("{}_{}", console_section_base, ext)
-    } else {
-        console_section_base
-    };
-
-    // --- INI Pre-Parsing ---
-    let mut target_filenames = std::collections::HashSet::new();
-    if let Ok(ini) = crate::core::data::xeini::parse_xe_ini(&ini_path, &console_section) {
-        for entry in ini.main {
-            target_filenames.insert(entry.filename.to_lowercase());
-        }
-        for entry in ini.security {
-            target_filenames.insert(entry.filename.to_lowercase());
-        }
-        for entry in ini.flashfs {
-            target_filenames.insert(entry.filename.to_lowercase());
-        }
-    } else {
-        return Err(CliError::IniRead { path: ini_path });
-    }
+    let payloads_dir = ini_dir.join("../payloads");
+    let smc_dir = ini_dir.join("../smc");
+    let output_path = build_config
+        .output_path
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("updflash.bin"));
+    let (ini_path, console_section) = resolve_ini_target(
+        &build_type,
+        &console,
+        build_config.ini_ext.as_ref(),
+        build_config.bl_ext.as_ref(),
+        &ini_dir,
+    );
 
     info!("[cli] Build Configuration");
-    info!("[cli]   Type:      {:?}", build_type);
-    info!("[cli]   Console:   {}", console_base);
+    info!("[cli]   Type:      {}", build_type);
+    info!("[cli]   Console:   {}", console);
     info!("[cli]   Section:   {}", console_section);
     info!("[cli]   INI Dir:   {:?}", ini_dir);
     info!("[cli]   Data Dir:  {:?}", data_dir);
-    info!("[cli]   Common:    {:?}", resolved_common_dir);
+    info!("[cli]   Common:    {:?}", common_dir);
     info!("[cli]   INI File:  {:?}", ini_path);
 
-    // Discovery Phase
-    // Enqueue FinalizeFlashfs / FinalizeMobile to run after all asset discovery
-    session.enqueue(InternalCommand::FinalizeFlashfs);
-    session.enqueue(InternalCommand::FinalizeMobile);
+    let build_assets = BuildAssets::new(&build_config)?;
+    let mut session = Session::new(build_config, build_assets);
+    let mut commands = vec![
+        InternalCommand::FinalizeFlashfs,
+        InternalCommand::FinalizeMobile,
+    ];
 
-    // Try to find and enqueue a file by name across search paths
-    let enqueue_if_found =
-        |session: &mut Session, name: &str, search_paths: &[&std::path::PathBuf]| {
-            let lower = name.to_lowercase();
-            for dir in search_paths {
-                let candidate = dir.join(name);
-                if candidate.exists() {
-                    session.enqueue(InternalCommand::Update { path: candidate });
-                    return true;
-                }
-                // Also try lowercase variant
-                let candidate_lower = dir.join(&lower);
-                if candidate_lower.exists() {
-                    session.enqueue(InternalCommand::Update {
-                        path: candidate_lower,
-                    });
-                    return true;
-                }
-            }
-            false
-        };
-
-    // Build search path list: INI dir, INI subfolders, common
-    let ini_flashfs = ini_dir.join("flashfs");
-    let ini_data = ini_dir.join("data");
-    let mut search_paths: Vec<&std::path::PathBuf> = vec![&ini_dir];
-    if ini_flashfs.exists() && ini_flashfs.is_dir() {
-        search_paths.push(&ini_flashfs);
-    }
-    if ini_data.exists() && ini_data.is_dir() {
-        search_paths.push(&ini_data);
-    }
-    if resolved_common_dir.exists() && resolved_common_dir.is_dir() {
-        search_paths.push(&resolved_common_dir);
-    }
-
-    // Enqueue files from INI target filenames, track which CF/CG were actually found
-    let mut cf_on_disk = false;
-    let mut cg_on_disk = false;
-    info!(
-        "[cli] Discovering {} assets from INI targets...",
-        target_filenames.len()
-    );
-    for filename in &target_filenames {
-        let found = enqueue_if_found(session, filename, &search_paths);
-        if filename.starts_with("cf_") && filename.ends_with(".bin") && found {
-            cf_on_disk = true;
-        }
-        if filename.starts_with("cg_") && filename.ends_with(".bin") && found {
-            cg_on_disk = true;
-        }
-    }
-
-    // CF/CG Fallback: if not found on disk, search update containers
-    if !cf_on_disk || !cg_on_disk {
-        info!("[cli] CF/CG not found on disk, searching update containers...");
-
-        // Priority 1: xboxupd.bin in INI dir
-        let xboxupd_path = ini_dir.join("xboxupd.bin");
-        if xboxupd_path.exists() {
-            info!("[cli] Found xboxupd.bin in INI dir: {:?}", xboxupd_path);
-            session.enqueue(InternalCommand::Update { path: xboxupd_path });
-        } else {
-            // Priority 2: su*** files in INI dir
-            if let Ok(entries) = std::fs::read_dir(&ini_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_file() {
-                        let name = path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_lowercase();
-                        if name.starts_with("su") {
-                            info!("[cli] Found STFS container in INI dir: {:?}", path);
-                            session.enqueue(InternalCommand::Update { path });
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Data Dir Discovery (-f) - NAND, CPU Key, Security, SMC, FCRT, KV
-    info!(
-        "[cli] Scanning Data Dir (nand/key/smc/fcrt/kv): {:?}",
-        data_dir
-    );
-
-    // NAND Image Discovery (data dir only)
-    let mut nand_found = false;
-    let mut parsed_nand_path = None;
-
-    if let Some(nand) = &args.source_nand {
-        parsed_nand_path = Some(nand.clone());
-        nand_found = true;
+    let source_nand = if let Some(path) = &args.source_nand {
+        Some(path.clone())
     } else {
-        let nand_candidates = [
+        [
             data_dir.join("nanddump.bin"),
             data_dir.join("nanddump1.bin"),
             data_dir.join("nanddump2.bin"),
@@ -638,29 +631,19 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
             data_dir.join("nanddump"),
             data_dir.join("updflash.bin"),
             data_dir.join("updflash.ecc"),
-        ];
+        ]
+        .into_iter()
+        .find(|path| path.exists())
+    };
 
-        for p in &nand_candidates {
-            if p.exists() {
-                parsed_nand_path = Some(p.clone());
-                nand_found = true;
-                break;
-            }
-        }
-    }
-
-    if nand_found {
-        let path = parsed_nand_path.unwrap();
-        info!("[cli] Auto-discovered source NAND image from {:?}", path);
-        session.enqueue(InternalCommand::ParseImage { path, key: None });
+    if let Some(path) = source_nand {
+        info!("[cli] Using source NAND image from {:?}", path);
+        commands.push(InternalCommand::ParseImage { path, key: None });
         if let Some(ecc) = &args.ecc {
-            session.enqueue(InternalCommand::ApplyEcc { path: ecc.clone() });
+            commands.push(InternalCommand::ApplyEcc { path: ecc.clone() });
         }
     } else {
-        // Block type selection here needs a CLI arg override
-        warn!("[cli] No NAND image found in data dir or specified via -f");
-        info!("[cli] Attempting Donor Image");
-        let layout = match console_type {
+        let layout = match args.console.as_ref().ok_or(CliError::MissingConsole)? {
             CliConsoleType::xenon => crate::core::images::blocks::NandLayout::Xsb,
             CliConsoleType::zephyr | CliConsoleType::falcon | CliConsoleType::jasper => {
                 crate::core::images::blocks::NandLayout::Sb
@@ -674,108 +657,31 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
                 crate::core::images::blocks::NandLayout::Bb
             }
             CliConsoleType::corona => crate::core::images::blocks::NandLayout::Sb,
-            CliConsoleType::corona4g | CliConsoleType::winchester | CliConsoleType::winchester4g => {
-                crate::core::images::blocks::NandLayout::Emmc
-            }
+            CliConsoleType::corona4g
+            | CliConsoleType::winchester
+            | CliConsoleType::winchester4g => crate::core::images::blocks::NandLayout::Emmc,
         };
         info!(
             "[cli] Synthesizing blank image from scratch (Layout: {:?}).",
             layout
         );
-        session.enqueue(InternalCommand::CreateImage { layout });
+        commands.push(InternalCommand::CreateImage { layout });
     }
 
-    // CPU Key Discovery (data dir only)
-    if let Some(key) = &args.cpu_key {
-        session.set_cpukey(key.clone());
-    } else {
-        let mut key_found = false;
-        let key_candidates = [
-            (data_dir.join("cpukey.bin"), true),
-            (data_dir.join("cpukey.txt"), false),
-        ];
+    commands.push(InternalCommand::ParseIni {
+        path: ini_path,
+        target: console_section,
+        ini_base: ini_dir.clone(),
+        common: common_dir.clone(),
+        data: data_dir.clone(),
+        payloads: payloads_dir,
+        smc: smc_dir,
+    });
 
-        for (p, is_bin) in &key_candidates {
-            if p.exists() {
-                if *is_bin {
-                    if let Ok(bytes) = std::fs::read(p) {
-                        if bytes.len() >= 16 {
-                            let mut key = [0u8; 16];
-                            key.copy_from_slice(&bytes[..16]);
-                            session.parse_keybin(Some(key));
-                            info!("[cli] Auto-discovered CPU Key binary from {:?}", p);
-                            key_found = true;
-                            break;
-                        }
-                    }
-                } else {
-                    if let Ok(text) = std::fs::read_to_string(p) {
-                        let clean_key = text.trim();
-                        if clean_key.len() >= 32 {
-                            session.set_cpukey(clean_key.to_string());
-                            info!("[cli] Auto-discovered CPU Key string from {:?}", p);
-                            key_found = true;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        if !key_found {
-            return Err(CliError::MissingCpuKey);
-        }
-    }
-
-    // Security Assets (SMC, SMC config, FCRT, KV) from data dir
-    let security_candidates = [
-        data_dir.join("smc.bin"),
-        data_dir.join("smc_config.bin"),
-        data_dir.join("fcrt.bin"),
-        data_dir.join("kv.bin"),
-        data_dir.join("keyvault.bin"),
-    ];
-
-    let nofcrt_enabled = session.options.core_builder.nofcrt.unwrap_or(false);
-
-    for p in &security_candidates {
-        let name = p
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_lowercase();
-        if name == "fcrt.bin" && nofcrt_enabled {
-            continue;
-        }
-        if p.exists() {
-            if let Ok(data) = std::fs::read(p) {
-                info!(
-                    "[cli] Discovered security asset: {:?} ({} bytes)",
-                    p,
-                    data.len()
-                );
-                session.pending_assets.insert(name, data);
-            }
-        }
-    }
-
-    // Enqueue INI Parsing
-    session.parse_ini(
-        &ini_path,
-        console_section,
-        &ini_dir,
-        &resolved_common_dir,
-        &data_dir,
-        &payloads_dir,
-        &smc_dir,
-    );
-
-    // 1BL Key Warning
     if args.bl_key.is_some() {
         info!("[cli] Warning: Overriding the 1BL key (-b) is currently not implemented. Using default retail key.");
     }
 
-    // Addon Patches
     for addon in &args.addons {
         let addon_path = if PathBuf::from(addon).is_absolute() {
             PathBuf::from(addon)
@@ -789,9 +695,9 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
         };
 
         if addon_path.exists() {
-            session.enqueue(InternalCommand::ApplyPatch {
+            commands.push(InternalCommand::ApplyPatch {
                 path: addon_path,
-                ptype: 2, // Addon
+                ptype: 2,
                 target: None,
             });
         } else {
@@ -799,73 +705,62 @@ fn handle_build(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
         }
     }
 
-    // Raw Patches (-8)
     for raw_patch in &args.raw_patches {
-        // Support semicolon-separated patches: "file1.bin,0x1234;file2.bin,0x5678"
         for patch_str in raw_patch.split(';').filter(|s| !s.is_empty()) {
-            // Parse format: filename.ext,offset
             let parts: Vec<&str> = patch_str.split(',').collect();
-            if parts.len() == 2 {
-                let filename = parts[0];
-                let offset_str = parts[1];
-
-                let patch_path = if PathBuf::from(filename).is_absolute() {
-                    PathBuf::from(filename)
-                } else {
-                    let p = data_dir.join(filename);
-                    if p.exists() {
-                        p
-                    } else {
-                        ini_dir.join(filename)
-                    }
-                };
-
-                let offset = if offset_str.starts_with("0x") {
-                    u64::from_str_radix(&offset_str[2..], 16).ok()
-                } else {
-                    offset_str.parse::<u64>().ok()
-                };
-
-                if patch_path.exists() {
-                    if let Some(off) = offset {
-                        info!("[cli] Raw patch: {:?} at offset 0x{:X}", patch_path, off);
-                        session.enqueue(InternalCommand::ApplyPatch {
-                            path: patch_path,
-                            ptype: 3, // Raw patch
-                            target: None,
-                        });
-                    } else {
-                        error!(
-                            "[cli] Invalid offset value '{}' in raw patch: {}",
-                            offset_str, patch_str
-                        );
-                    }
-                } else {
-                    error!("[cli] Raw patch file not found: {}", filename);
-                }
-            } else {
+            if parts.len() != 2 {
                 error!(
                     "[cli] Malformed raw patch entry (expected filename,offset): {}",
                     patch_str
+                );
+                continue;
+            }
+
+            let filename = parts[0];
+            let offset_str = parts[1];
+            let patch_path = if PathBuf::from(filename).is_absolute() {
+                PathBuf::from(filename)
+            } else {
+                let p = data_dir.join(filename);
+                if p.exists() { p } else { ini_dir.join(filename) }
+            };
+
+            let offset = if offset_str.starts_with("0x") {
+                u64::from_str_radix(&offset_str[2..], 16).ok()
+            } else {
+                offset_str.parse::<u64>().ok()
+            };
+
+            if !patch_path.exists() {
+                error!("[cli] Raw patch file not found: {}", filename);
+                continue;
+            }
+            if let Some(off) = offset {
+                info!("[cli] Raw patch: {:?} at offset 0x{:X}", patch_path, off);
+                commands.push(InternalCommand::ApplyPatch {
+                    path: patch_path,
+                    ptype: 3,
+                    target: None,
+                });
+            } else {
+                error!(
+                    "[cli] Invalid offset value '{}' in raw patch: {}",
+                    offset_str, patch_str
                 );
             }
         }
     }
 
-    // Output Path Resolution
-    let output_path = args.output.clone().unwrap_or_else(|| {
-        args.output_dir
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("updflash.bin"))
+    commands.push(InternalCommand::Build {
+        output: output_path,
+        target: 0,
     });
-    session.set_output(output_path.clone());
-    session.build(output_path.clone(), 0); // Target 0 for now
 
-    Ok(())
+    execute_internal_commands(&mut session, commands)?;
+    Ok(session)
 }
 
 fn handle_extract(args: &GgxArgs, session: &mut Session) -> Result<(), CliError> {
-    // -f = data directory (nand dump, cpu key)
     let data_dir = args
         .fw_dir
         .clone()
@@ -876,11 +771,12 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> Result<(), CliError>
         return Err(CliError::InvalidExtractSource);
     }
 
-    // -o options: nomobile
+    session.build_config.data_dir = Some(data_dir.clone());
     for group in &args.options {
         for (k, v) in group {
             if k.eq_ignore_ascii_case("nomobile") {
-                session.options.core_builder.nomobile = Some(v.eq_ignore_ascii_case("true"));
+                session.build_config.options.core_builder.nomobile =
+                    Some(v.eq_ignore_ascii_case("true"));
             }
         }
     }
@@ -926,33 +822,17 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> Result<(), CliError>
         return Ok(());
     }
 
-    // -p = CPU key string, else auto-discover cpukey.bin / cpukey.txt from data dir
-    let mut has_cpukey = false;
-    if let Some(key) = &args.cpu_key {
-        session.set_cpukey(key.clone());
-        has_cpukey = true;
+    let has_cpukey = if let Some((key, normalized)) = load_cpu_key(args, &data_dir)? {
+        session.build_config.pending_key = Some(key);
+        session.build_config.options.keys.cpukey = Some(normalized);
+        true
     } else {
-        let key_bin = data_dir.join("cpukey.bin");
-        let key_txt = data_dir.join("cpukey.txt");
-        if key_bin.exists() {
-            if let Ok(bytes) = std::fs::read(&key_bin) {
-                if bytes.len() >= 16 {
-                    let mut key = [0u8; 16];
-                    key.copy_from_slice(&bytes[..16]);
-                    session.parse_keybin(Some(key));
-                    info!("[cli] Extract: loaded CPU key from {:?}", key_bin);
-                    has_cpukey = true;
-                }
-            }
-        } else if key_txt.exists() {
-            if let Ok(text) = std::fs::read_to_string(&key_txt) {
-                let clean = text.trim().to_string();
-                if clean.len() >= 32 {
-                    session.set_cpukey(clean);
-                    info!("[cli] Extract: loaded CPU key from {:?}", key_txt);
-                    has_cpukey = true;
-                }
-            }
+        false
+    };
+
+    if has_cpukey {
+        if let Some(cpukey) = &session.build_config.options.keys.cpukey {
+            info!("[cli] Extract: loaded CPU key {}", cpukey);
         }
     }
 
@@ -968,17 +848,21 @@ fn handle_extract(args: &GgxArgs, session: &mut Session) -> Result<(), CliError>
             "encrypted"
         }
     );
-    session.enqueue(InternalCommand::ParseImage {
-        path: image_path,
-        key: None,
-    });
-    session.extract_all(output_dir, all, has_cpukey);
+
+    execute_internal_commands(
+        session,
+        vec![
+            InternalCommand::ParseImage {
+                path: image_path,
+                key: None,
+            },
+            InternalCommand::ExtractAll {
+                output_dir,
+                all,
+                include_decrypted: has_cpukey,
+            },
+        ],
+    )?;
 
     Ok(())
-}
-
-impl Session {
-    pub fn set_verbose(&mut self, _v: bool) {
-        // session verbosity logic
-    }
 }

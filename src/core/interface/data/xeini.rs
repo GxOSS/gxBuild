@@ -578,6 +578,11 @@ pub fn apply_xe_ini(
         info!("[ini] Assigned SMC.bin from memory");
     }
 
+    if let Some(smc_config_data) = pending.security.get("smc_config.bin") {
+        nand.extra.smc_config = smc_config_data.clone();
+        info!("[ini] Assigned smc_config.bin from memory");
+    }
+
     if let Some(kv_data) = pending
         .security
         .get("keyvault.bin")

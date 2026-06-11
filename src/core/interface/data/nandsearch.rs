@@ -1,8 +1,8 @@
 use crate::builder::filesystem::flashfs::FlashFS;
 use crate::builder::filesystem::mobile::MobileStore;
 use crate::builder::nand::builder::NandSkeleton;
-use crate::core::data::filesearch::get_xebuild_crc32;
-use crate::core::data::xeini::{strip_flashfs_path_indicator, XeBuildIni};
+use crate::core::interface::data::filesearch::get_xebuild_crc32;
+use crate::core::interface::data::xeini::{strip_flashfs_path_indicator, XeBuildIni};
 use crate::core::images::blocks::{BlocksError, NandProcessor};
 use log::info;
 use std::collections::HashMap;

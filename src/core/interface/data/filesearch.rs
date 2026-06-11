@@ -21,7 +21,7 @@
 */
 use crate::builder::nand::builder::NandSkeleton;
 use crate::builder::filesystem::flashfs::{FileSystemEntry, FlashFS};
-use crate::core::data::xeini::{strip_flashfs_path_indicator, XeBuildIni};
+use crate::core::interface::data::xeini::{strip_flashfs_path_indicator, XeBuildIni};
 use log::{info, warn};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -533,7 +533,7 @@ impl IniSearch {
                         continue;
                     }
                     warn!("[ini] All tiers failed for security asset: {}", filename);
-                    return Err(FilesearchError::FileNotFound(filename.clone()));
+                    return Err(FilesearchError::FileNotFound(filename.to_string()));
                 }
             }
             result.security = Some(sec_paths);
@@ -541,12 +541,30 @@ impl IniSearch {
 
         // SMC: Tier 1 = mydata, Tier 2 = smc folder
         let section_base = ini.name.split('_').next().unwrap_or(&ini.name);
-        let platform_clean = if section_base.ends_with("bl") {
+        let platform_token = if section_base.ends_with("bl") {
             &section_base[..section_base.len() - 2]
         } else {
             section_base
+        };
+        let platform_clean = platform_token.to_uppercase();
+
+        {
+            let p = mydata.join("smc_config.bin");
+            if p.exists() {
+                if let Ok(c) = std::fs::read(&p) {
+                    info!("[ini] Discovered SMC Config: {}", p.display());
+                    result.security_assets.insert("smc_config.bin".to_string(), c);
+                }
+            } else {
+                let p = common.join(format!("smc_config_{}.bin", platform_token.to_lowercase()));
+                if p.exists() {
+                    if let Ok(c) = std::fs::read(&p) {
+                        info!("[ini] Discovered SMC Config: {}", p.display());
+                        result.security_assets.insert("smc_config.bin".to_string(), c);
+                    }
+                }
+            }
         }
-        .to_uppercase();
 
         {
             let smc_names = [

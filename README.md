@@ -40,28 +40,14 @@ cargo build --release
 ### CLI Only
 
 ```bash
-cargo build --no-default-features --features cli
-
-```
-
-### FFI Only
-
-```bash
-cargo build --no-default-features --features ffi
+cargo build
 
 ```
 
 ### CLI + Rhai Scripting
 
 ```bash
-cargo build --no-default-features --features cli,rhai
-
-```
-
-### FFI + Rhai Scripting
-
-```bash
-cargo build --no-default-features --features ffi,rhai
+cargo build --features rhai
 
 ```
 

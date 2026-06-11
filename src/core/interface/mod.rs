@@ -1,8 +1,5 @@
-#[cfg(feature = "cli")]
 pub mod cli;
-
-#[cfg(feature = "ffi")]
-pub mod ffi;
-
+pub mod data;
+pub mod handler;
 #[cfg(feature = "rhai")]
 pub mod rhai;

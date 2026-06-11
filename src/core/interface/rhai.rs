@@ -20,7 +20,8 @@
   3. This notice may not be removed or altered from any source distribution.
 */
 
-use crate::core::session::Session;
+use crate::core::interface::data::Session;
+use crate::core::interface::handler::{Executor, InternalCommand};
 use log::{error, info};
 use rhai::{Engine, Scope};
 use rustyline::DefaultEditor;
@@ -40,41 +41,58 @@ impl GxScriptEngine {
         let s_clone = session.clone();
         engine.register_fn("set_option", move |key: &str, val: &str| {
             let mut s = s_clone.lock().unwrap();
-            s.options.set_option(key, val);
+            s.build_config.options.set_option(key, val);
         });
 
         let s_clone = session.clone();
         engine.register_fn("prepare", move || {
             let mut s = s_clone.lock().unwrap();
-            if let Err(e) = s.prepare_build() {
+            if let Err(e) = Executor::prepare_build(&mut s) {
                 error!("[script] Prepare failed: {}", e);
-            }
-        });
-
-        let s_clone = session.clone();
-        engine.register_fn("run", move || {
-            let mut s = s_clone.lock().unwrap();
-            if let Err(e) = s.run() {
-                error!("[script] Run failed: {}", e);
             }
         });
 
         let s_clone = session.clone();
         engine.register_fn("apply_ecc", move |path: &str| {
             let mut s = s_clone.lock().unwrap();
-            s.apply_ecc(std::path::PathBuf::from(path));
+            if let Err(e) = Executor::execute_command(
+                &mut s,
+                InternalCommand::ApplyEcc {
+                    path: std::path::PathBuf::from(path),
+                },
+            ) {
+                error!("[script] apply_ecc failed: {}", e);
+            }
         });
 
         let s_clone = session.clone();
         engine.register_fn("extract_all", move || {
             let mut s = s_clone.lock().unwrap();
-            s.extract_all(std::path::PathBuf::from("."), true, false);
+            if let Err(e) = Executor::execute_command(
+                &mut s,
+                InternalCommand::ExtractAll {
+                    output_dir: std::path::PathBuf::from("."),
+                    all: true,
+                    include_decrypted: false,
+                },
+            ) {
+                error!("[script] extract_all failed: {}", e);
+            }
         });
 
         let s_clone = session.clone();
         engine.register_fn("extract_all", move |dir: &str| {
             let mut s = s_clone.lock().unwrap();
-            s.extract_all(std::path::PathBuf::from(dir), true, false);
+            if let Err(e) = Executor::execute_command(
+                &mut s,
+                InternalCommand::ExtractAll {
+                    output_dir: std::path::PathBuf::from(dir),
+                    all: true,
+                    include_decrypted: false,
+                },
+            ) {
+                error!("[script] extract_all failed: {}", e);
+            }
         });
 
         GxScriptEngine { engine, scope }

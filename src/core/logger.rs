@@ -21,8 +21,6 @@
 */
 
 use fern::colors::{Color, ColoredLevelConfig};
-#[cfg(feature = "ffi")]
-use std::ffi::CString;
 use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -57,11 +55,6 @@ pub fn init_logger(mode: &str, verbose: bool) -> Result<(), fern::InitError> {
     if log::max_level() == log::LevelFilter::Off {
         fern::Dispatch::new()
             .format(move |out, message, record| {
-                #[cfg(feature = "ffi")]
-                if let Some(cb) = unsafe { crate::core::interface::ffi::LOG_CALLBACK } {
-                    let msg = CString::new(format!("{}", message)).unwrap_or_default();
-                    cb(record.level() as i32, msg.as_ptr());
-                }
                 out.finish(format_args!(
                     "[{}] {}",
                     colors.color(record.level()),
