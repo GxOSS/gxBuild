@@ -147,7 +147,7 @@ impl BootloaderCb {
         pairing_data.reverse();
 
         let ldv_raw = self.data.get(0x13).copied().unwrap_or(0);
-        let mut lockdown_value = if ldv_raw <= 16 { ldv_raw } else { 0 };
+        let lockdown_value = if ldv_raw <= 16 { ldv_raw } else { 0 };
 
         info!(
             "[cb] populate_metadata: PD={:02x?} LDV={} (raw={} at self.data[0x13])",
@@ -155,7 +155,6 @@ impl BootloaderCb {
         );
 
         // 15432 CB_X
-
         if self.header.version.get() == 0x3C48 {
             // lockdown_value = 0;
         }

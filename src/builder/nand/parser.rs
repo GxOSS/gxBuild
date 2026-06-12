@@ -84,7 +84,7 @@ impl NandSkeleton {
             image[config_offset..config_offset + config_size].to_vec()
         } else {
             let fallback_offset =
-                crate::builder::chain::smc::SmcConfig::get_scan_address(&layout) as usize;
+                crate::builder::chain::smc_config::SmcConfig::get_scan_address(&layout) as usize;
             if fallback_offset > 0 && fallback_offset + config_size <= image.len() {
                 let data = image[fallback_offset..fallback_offset + config_size].to_vec();
                 if data.iter().any(|&b| b != 0xFF) {
@@ -282,7 +282,7 @@ impl NandSkeleton {
                 );
             }
             let fallback_offset =
-                crate::builder::chain::smc::SmcConfig::get_scan_address(&layout) as usize;
+                crate::builder::chain::smc_config::SmcConfig::get_scan_address(&layout) as usize;
             if fallback_offset > 0 && fallback_offset + config_size <= image.len() {
                 let data = image[fallback_offset..fallback_offset + config_size].to_vec();
                 if data.iter().any(|&b| b != 0xFF) {

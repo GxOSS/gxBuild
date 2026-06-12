@@ -20,14 +20,16 @@
   3. This notice may not be removed or altered from any source distribution.
 */
 
+use crate::builder::chain::{BootloaderHeader, XenonBlType};
 use crate::builder::nand::builder::NandSkeleton;
 use crate::core::images::gxpatch::PatchRecord;
-use crc32fast::Hasher;
+use gxcrypt::crc::crc32_hex;
 use log::{info, warn};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
+use zerocopy::FromBytes;
 
 #[derive(Error, Debug)]
 pub enum IniError {
@@ -68,6 +70,82 @@ pub struct BuildIniEntry {
     pub filename: String,
     pub hash: Option<String>,
     pub chain: u8,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ExpectedBootloaderIdentity {
+    pub bl_type: XenonBlType,
+    pub version: Option<u16>,
+}
+
+fn expected_bootloader_identity(filename: &str) -> Option<ExpectedBootloaderIdentity> {
+    let lower = filename
+        .rsplit(|c| c == '\\' || c == '/')
+        .next()
+        .unwrap_or(filename)
+        .trim()
+        .to_lowercase();
+
+    let prefix = lower
+        .split('_')
+        .next()
+        .unwrap_or(lower.as_str())
+        .split('.')
+        .next()
+        .unwrap_or(lower.as_str());
+
+    let bl_type = match prefix {
+        "cb" | "cba" | "cbb" | "cbx" | "sb" => XenonBlType::CB,
+        "sc" => XenonBlType::SC,
+        "cd" | "sd" => XenonBlType::CD,
+        "ce" | "se" => XenonBlType::CE,
+        "cf" | "sf" => XenonBlType::CF,
+        "cg" | "sg" => XenonBlType::CG,
+        _ => return None,
+    };
+
+    let version = lower
+        .split('_')
+        .nth(1)
+        .and_then(|s| s.split('.').next())
+        .and_then(|s| {
+            if s == "0" || s == "1" {
+                None
+            } else {
+                s.parse::<u16>().ok()
+            }
+        });
+
+    Some(ExpectedBootloaderIdentity { bl_type, version })
+}
+
+pub fn bootloader_matches_expected_name(filename: &str, data: &[u8]) -> Result<(), String> {
+    let Some(expected) = expected_bootloader_identity(filename) else {
+        return Ok(());
+    };
+
+    let (header, _) = BootloaderHeader::read_from_prefix(data)
+        .map_err(|_| format!("{} has no parseable bootloader header", filename))?;
+    let actual_type = header.get_type();
+    let actual_version = header.version.get();
+
+    if actual_type != expected.bl_type {
+        return Err(format!(
+            "{} expected {:?} but candidate header is {:?}",
+            filename, expected.bl_type, actual_type
+        ));
+    }
+
+    if let Some(expected_version) = expected.version {
+        if actual_version != expected_version {
+            return Err(format!(
+                "{} expected version {} but candidate header is {}",
+                filename, expected_version, actual_version
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 /// Strips leading relative-path indicators (`..\`, `../`, `.\`, `./`) and any
@@ -112,9 +190,7 @@ pub struct XeBuildIni {
 
 pub fn get_hash(path: impl AsRef<Path>) -> std::io::Result<String> {
     let data = fs::read(path)?;
-    let mut hasher = Hasher::new();
-    hasher.update(&data);
-    Ok(format!("{:08x}", hasher.finalize()))
+    Ok(crc32_hex(&data))
 }
 
 pub fn parse_xe_ini(
@@ -349,6 +425,13 @@ pub fn apply_xe_ini(
             continue;
         };
 
+        if let Err(reason) = bootloader_matches_expected_name(filename, &data) {
+            return Err(IniError::BootloaderError(format!(
+                "Rejected asset for '{}': {}",
+                filename, reason
+            )));
+        }
+
         let is_rebooter = entry.chain == 1;
         let chain_id = entry.chain;
 
@@ -446,56 +529,94 @@ pub fn apply_xe_ini(
                 crate::builder::chain::cf::BootloaderCf::parse(&data)
                     .map_err(|e| IniError::BootloaderError(e.to_string()))?,
             );
-            if target_update.cf_0.is_none() {
-                target_update.cf_0 = parsed;
-                info!(
-                    "[ini] Assigned CF to slot 0 from '{}' ({} bytes, chain {})",
-                    filename,
-                    data.len(),
-                    chain_id
-                );
-            } else if target_update.cf_1.is_none() {
-                target_update.cf_1 = parsed;
-                info!(
-                    "[ini] Assigned CF to slot 1 from '{}' ({} bytes, chain {})",
-                    filename,
-                    data.len(),
-                    chain_id
-                );
-            } else {
-                target_update.cf_0 = parsed;
-                warn!(
-                    "[ini] Automatically overwriting CF slot 0 from '{}' (no free slots left)",
-                    filename
-                );
+            match chain_id {
+                0 => {
+                    if target_update.cf_0.is_some() {
+                        warn!(
+                            "[ini] Overwriting existing CF slot 0 from source NAND with '{}' ({} bytes)",
+                            filename,
+                            data.len()
+                        );
+                    }
+                    target_update.cf_0 = parsed;
+                    info!(
+                        "[ini] Assigned CF to slot 0 from '{}' ({} bytes, chain {})",
+                        filename,
+                        data.len(),
+                        chain_id
+                    );
+                }
+                1 => {
+                    if target_update.cf_1.is_some() {
+                        warn!(
+                            "[ini] Overwriting existing CF slot 1 from source NAND with '{}' ({} bytes)",
+                            filename,
+                            data.len()
+                        );
+                    }
+                    target_update.cf_1 = parsed;
+                    info!(
+                        "[ini] Assigned CF to slot 1 from '{}' ({} bytes, chain {})",
+                        filename,
+                        data.len(),
+                        chain_id
+                    );
+                }
+                _ => {
+                    target_update.cf_0 = parsed;
+                    warn!(
+                        "[ini] Assigned CF with unexpected chain {} from '{}' by overwriting slot 0",
+                        chain_id,
+                        filename
+                    );
+                }
             }
         } else if prefix.starts_with("cg_") || prefix.starts_with("sg_") {
             let parsed = Some(
                 crate::builder::chain::cg::BootloaderCg::parse(&data)
                     .map_err(|e| IniError::BootloaderError(e.to_string()))?,
             );
-            if target_update.cg_0.is_none() {
-                target_update.cg_0 = parsed;
-                info!(
-                    "[ini] Assigned CG to slot 0 from '{}' ({} bytes, chain {})",
-                    filename,
-                    data.len(),
-                    chain_id
-                );
-            } else if target_update.cg_1.is_none() {
-                target_update.cg_1 = parsed;
-                info!(
-                    "[ini] Assigned CG to slot 1 from '{}' ({} bytes, chain {})",
-                    filename,
-                    data.len(),
-                    chain_id
-                );
-            } else {
-                target_update.cg_0 = parsed;
-                warn!(
-                    "[ini] Automatically overwriting CG slot 0 from '{}' (no free slots left)",
-                    filename
-                );
+            match chain_id {
+                0 => {
+                    if target_update.cg_0.is_some() {
+                        warn!(
+                            "[ini] Overwriting existing CG slot 0 from source NAND with '{}' ({} bytes)",
+                            filename,
+                            data.len()
+                        );
+                    }
+                    target_update.cg_0 = parsed;
+                    info!(
+                        "[ini] Assigned CG to slot 0 from '{}' ({} bytes, chain {})",
+                        filename,
+                        data.len(),
+                        chain_id
+                    );
+                }
+                1 => {
+                    if target_update.cg_1.is_some() {
+                        warn!(
+                            "[ini] Overwriting existing CG slot 1 from source NAND with '{}' ({} bytes)",
+                            filename,
+                            data.len()
+                        );
+                    }
+                    target_update.cg_1 = parsed;
+                    info!(
+                        "[ini] Assigned CG to slot 1 from '{}' ({} bytes, chain {})",
+                        filename,
+                        data.len(),
+                        chain_id
+                    );
+                }
+                _ => {
+                    target_update.cg_0 = parsed;
+                    warn!(
+                        "[ini] Assigned CG with unexpected chain {} from '{}' by overwriting slot 0",
+                        chain_id,
+                        filename
+                    );
+                }
             }
         } else {
             warn!(
@@ -623,6 +744,87 @@ pub fn apply_xe_ini(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builder::chain::BootloaderHeader;
+    use crate::builder::nand::types::{
+        BuildOptions, NandBootloaders, NandConfig, NandExtra, NandHeader, NandHeaderPrefix,
+        NandSkeleton, NandUpdate,
+    };
+    use crate::core::images::blocks::NandLayout;
+    use zerocopy::byteorder::{BigEndian, BigEndian as ZBigEndian, I16, U16, U32};
+
+    fn test_cf_blob(version: u16, slot: u8) -> Vec<u8> {
+        let header = BootloaderHeader {
+            magic: U16::<ZBigEndian>::new(0x4346),
+            version: U16::<ZBigEndian>::new(version),
+            pairing: U16::<ZBigEndian>::new(0),
+            flags: U16::<ZBigEndian>::new(0),
+            entrypoint: U32::<ZBigEndian>::new(0),
+            size: U32::<ZBigEndian>::new(0x360),
+        };
+        let mut blob = zerocopy::IntoBytes::as_bytes(&header).to_vec();
+        let mut data = vec![0u8; 0x350];
+        data[0x20B] = slot;
+        blob.extend_from_slice(&data);
+        blob
+    }
+
+    fn test_cg_blob(version: u16, marker: u8) -> Vec<u8> {
+        let header = BootloaderHeader {
+            magic: U16::<ZBigEndian>::new(0x4347),
+            version: U16::<ZBigEndian>::new(version),
+            pairing: U16::<ZBigEndian>::new(0),
+            flags: U16::<ZBigEndian>::new(0),
+            entrypoint: U32::<ZBigEndian>::new(0),
+            size: U32::<ZBigEndian>::new(0x50),
+        };
+        let mut blob = zerocopy::IntoBytes::as_bytes(&header).to_vec();
+        let mut data = vec![0u8; 0x40];
+        data[0x2C] = marker;
+        blob.extend_from_slice(&data);
+        blob
+    }
+
+    fn empty_test_nand() -> NandSkeleton {
+        NandSkeleton {
+            cpukey: None,
+            build_options: BuildOptions::default(),
+            options: NandConfig {
+                layout: NandLayout::Sb,
+                ..Default::default()
+            },
+            header: NandHeader {
+                prefix: NandHeaderPrefix {
+                    magic: U16::<BigEndian>::new(NandHeader::MAGIC),
+                    version: U16::<BigEndian>::new(0),
+                    pairing: U16::<BigEndian>::new(0),
+                    flags: U16::<BigEndian>::new(0),
+                    entrypoint: U32::<BigEndian>::new(0),
+                    size: U32::<BigEndian>::new(0),
+                },
+                copyright: [0u8; 0x40],
+                payload_indicator: U16::<BigEndian>::new(0),
+                unused: [0u8; 0x0E],
+                kv_size: U32::<BigEndian>::new(0),
+                cf_offset: U32::<BigEndian>::new(0),
+                patch_slots: I16::<BigEndian>::new(0),
+                kv_version: U16::<BigEndian>::new(0),
+                kv_addr: U32::<BigEndian>::new(0),
+                fs_addr: U32::<BigEndian>::new(0),
+                smc_config_offset: U32::<BigEndian>::new(0),
+                smc_boot_size: U32::<BigEndian>::new(0),
+                smc_boot_offset: U32::<BigEndian>::new(0),
+            },
+            image: Vec::new(),
+            extra: NandExtra::default(),
+            kv: None,
+            bootloaders: NandBootloaders::default(),
+            update: Some(NandUpdate::default()),
+            payloads: None,
+            flashfs: None,
+            mobile: None,
+            corona_fs: None,
+        }
+    }
 
     #[test]
     fn test_parse_xe_ini_empty_crc_section() {
@@ -662,5 +864,90 @@ cba_9188.bin = 00000000
             strip_flashfs_path_indicator("  ..\\launch.xex  "),
             "launch.xex"
         );
+    }
+
+    #[test]
+    fn apply_xe_ini_overwrites_existing_update_slots_by_chain_id() {
+        let mut nand = empty_test_nand();
+        let original_cf = crate::builder::chain::cf::BootloaderCf::parse(&test_cf_blob(1, 0)).unwrap();
+        let original_cg = crate::builder::chain::cg::BootloaderCg::parse(&test_cg_blob(1, 0x11)).unwrap();
+        let new_cf_blob = test_cf_blob(2, 0);
+        let new_cg_blob = test_cg_blob(2, 0x22);
+
+        nand.update = Some(NandUpdate {
+            cf_0: Some(original_cf),
+            cg_0: Some(original_cg),
+            cf_1: None,
+            cg_1: None,
+        });
+
+        let ini = XeBuildIni {
+            name: "test".to_string(),
+            buildtype: "glitch2".to_string(),
+            main: vec![
+                BuildIniEntry {
+                    filename: "cf_0.bin".to_string(),
+                    hash: None,
+                    chain: 0,
+                },
+                BuildIniEntry {
+                    filename: "cg_0.bin".to_string(),
+                    hash: None,
+                    chain: 0,
+                },
+            ],
+            security: Vec::new(),
+            flashfs: Vec::new(),
+            payloads: Vec::new(),
+            patch: BuildIniPatch {
+                enabled: false,
+                path: None,
+                khv: None,
+            },
+            rebooter: false,
+            jtag: JtagConfig::default(),
+        };
+
+        let mut bootloaders = std::collections::HashMap::new();
+        bootloaders.insert("cf_0.bin".to_string(), new_cf_blob.clone());
+        bootloaders.insert("cg_0.bin".to_string(), new_cg_blob.clone());
+
+        let updated = apply_xe_ini(
+            nand,
+            ini,
+            PendingAssets {
+                bootloaders: &bootloaders,
+                security: &std::collections::HashMap::new(),
+            },
+        )
+        .unwrap();
+
+        let update = updated.update.unwrap();
+        let cf_0 = update.cf_0.unwrap();
+        let cg_0 = update.cg_0.unwrap();
+
+        assert_eq!(cf_0.header.version.get(), 2);
+        assert_eq!(cg_0.header.version.get(), 2);
+        assert_eq!(cf_0.data[0x20B], 0);
+        assert_eq!(cg_0.data[0x2C], 0x22);
+        assert!(update.cf_1.is_none());
+        assert!(update.cg_1.is_none());
+    }
+
+    #[test]
+    fn bootloader_identity_matches_filename_version_and_type() {
+        assert!(bootloader_matches_expected_name("cf_17559.bin", &test_cf_blob(17559, 0)).is_ok());
+        assert!(bootloader_matches_expected_name("cg_17559.bin", &test_cg_blob(17559, 0x22)).is_ok());
+    }
+
+    #[test]
+    fn bootloader_identity_rejects_wrong_version_or_type() {
+        let wrong_version = bootloader_matches_expected_name("cf_17559.bin", &test_cf_blob(17349, 0))
+            .unwrap_err();
+        let wrong_type =
+            bootloader_matches_expected_name("cf_17559.bin", &test_cg_blob(17559, 0x22)).unwrap_err();
+
+        assert!(wrong_version.contains("expected version 17559"));
+        assert!(wrong_type.contains("expected CF"));
     }
 }

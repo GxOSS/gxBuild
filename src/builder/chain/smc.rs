@@ -21,7 +21,6 @@
 */
 
 use super::BootloaderHeader;
-use crate::core::images::blocks::NandLayout;
 use crate::crypto::rsa::ExCryptRsa;
 use crate::crypto::{rot_sum_sha, verify_signature};
 use log::{info, warn};
@@ -472,123 +471,6 @@ impl RawSmc {
             self.data[len - 4 + i] = 0;
         }
         info!("[smc] Scrambled (RGH3)");
-    }
-}
-
-#[derive(Clone)]
-pub struct SmcConfig {
-    pub data: Box<[u8; 0x10000]>,
-}
-
-#[derive(Error, Debug)]
-pub enum SmcConfigError {
-    #[error("Invalid SMC Config size: got {got}, expected {expected}")]
-    InvalidSize { got: usize, expected: usize },
-}
-
-impl From<SmcConfigError> for String {
-    fn from(e: SmcConfigError) -> Self {
-        e.to_string()
-    }
-}
-
-impl SmcConfig {
-    pub const SIZE: usize = 0x10000;
-    pub const SETTINGS_SIZE: usize = 0x100;
-
-    pub fn get_scan_address(layout: &NandLayout) -> u32 {
-        match layout {
-            NandLayout::Emmc => 0x02FFC000,
-            NandLayout::Bb => 0x3DF0000,
-            _ => 0xF70000,
-        }
-    }
-
-    pub fn get_logical_address(layout: &NandLayout) -> u32 {
-        match layout {
-            NandLayout::Emmc => 0x0,
-            NandLayout::Bb => 0x3DF0000,
-            _ => 0xF70000,
-        }
-    }
-
-    pub fn new_empty() -> Self {
-        Self {
-            data: Box::new([0xFF; Self::SIZE]),
-        }
-    }
-
-    pub fn parse(data: &[u8]) -> std::result::Result<Self, SmcConfigError> {
-        if data.len() != Self::SIZE {
-            return Err(SmcConfigError::InvalidSize {
-                got: data.len(),
-                expected: Self::SIZE,
-            });
-        }
-        let mut config = Self {
-            data: Box::new([0; Self::SIZE]),
-        };
-        config.data.copy_from_slice(data);
-        Ok(config)
-    }
-
-    pub fn serialize(&mut self) -> &[u8; Self::SIZE] {
-        let checksum = self.calculate_checksum();
-        self.set_checksum(checksum);
-        &self.data
-    }
-
-    pub fn calculate_checksum(&self) -> u16 {
-        let mut sum: u32 = 0;
-        for i in 0x10..Self::SETTINGS_SIZE {
-            sum = sum.wrapping_add(self.data[i] as u32);
-        }
-        (!sum & 0xFFFF) as u16
-    }
-
-    pub fn set_checksum(&mut self, checksum: u16) {
-        let bytes = checksum.to_be_bytes();
-        self.data[0] = bytes[0];
-        self.data[1] = bytes[1];
-    }
-
-    pub fn set_fan_speed(&mut self, is_gpu: bool, mode_manual: bool, speed_pct: u8) {
-        let offset = if is_gpu { 0x12 } else { 0x11 };
-        let mut val = speed_pct & 0x7F;
-        if mode_manual {
-            val |= 0x80;
-        }
-        self.data[offset] = val;
-    }
-
-    pub fn set_thermal_targets(&mut self, cpu: u8, gpu: u8, ram: u8) {
-        self.data[0x29] = cpu;
-        self.data[0x2A] = gpu;
-        self.data[0x2B] = ram;
-    }
-
-    pub fn set_thermal_limits(&mut self, cpu: u8, gpu: u8, ram: u8) {
-        self.data[0x2C] = cpu;
-        self.data[0x2D] = gpu;
-        self.data[0x2E] = ram;
-    }
-
-    pub fn set_mac_address(&mut self, mac: &[u8; 6]) {
-        self.data[0x220..0x226].copy_from_slice(mac);
-    }
-
-    pub fn set_regions(&mut self, video: u16, game: u16, dvd: u8) {
-        let v_bytes = video.to_be_bytes();
-        self.data[0x22A] = v_bytes[0];
-        self.data[0x22B] = v_bytes[1];
-        let g_bytes = game.to_be_bytes();
-        self.data[0x22C] = g_bytes[0];
-        self.data[0x22D] = g_bytes[1];
-        self.data[0x237] = dvd;
-    }
-
-    pub fn set_reset_code(&mut self, code: &[u8; 4]) {
-        self.data[0x238..0x23C].copy_from_slice(code);
     }
 }
 

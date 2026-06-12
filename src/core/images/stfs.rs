@@ -32,6 +32,58 @@ use crate::builder::chain::BootloaderHeader;
 use stfs::StfsPackageReader;
 use zerocopy::FromBytes;
 
+pub struct XboxupdBootloaders {
+    pub cf: BootloaderCf,
+    pub cg: BootloaderCg,
+    pub cf_raw: Vec<u8>,
+    pub cg_raw: Vec<u8>,
+}
+
+pub struct XboxupdRawParts {
+    pub cf_raw: Vec<u8>,
+    pub cg_raw: Vec<u8>,
+}
+
+pub fn split_xboxupd_raw(xboxupd_bytes: &[u8]) -> Result<XboxupdRawParts, String> {
+    if xboxupd_bytes.len() < 0x20 {
+        return Err("xboxupd buffer too small to split".to_string());
+    }
+    if &xboxupd_bytes[0..2] != b"CF" {
+        return Err(format!(
+            "Invalid xboxupd magic: Expected 'CF' (0x4346), found 0x{:02X}{:02X}",
+            xboxupd_bytes[0], xboxupd_bytes[1]
+        ));
+    }
+
+    let (cf_header, _) = BootloaderHeader::read_from_prefix(xboxupd_bytes)
+        .map_err(|_| "Failed to parse CF header".to_string())?;
+    let cf_size = cf_header.size.get() as usize;
+    if xboxupd_bytes.len() < cf_size || cf_size < core::mem::size_of::<BootloaderHeader>() {
+        return Err("xboxupd buffer too small to contain full CF".to_string());
+    }
+
+    let cg_size = u32::from_be_bytes(
+        xboxupd_bytes[0x1C..0x20]
+            .try_into()
+            .map_err(|_| "Failed to read CF CG size field".to_string())?,
+    ) as usize;
+    let cg_offset = cf_size;
+    if xboxupd_bytes.len() < cg_offset + cg_size {
+        return Err("xboxupd buffer too small to contain full CG".to_string());
+    }
+
+    let (cg_header, _) = BootloaderHeader::read_from_prefix(&xboxupd_bytes[cg_offset..])
+        .map_err(|_| "Failed to parse CG header".to_string())?;
+    if (cg_header.magic.get() & 0x0FFF) != 0x347 {
+        return Err("CG header not found. invalid xboxupd.bin?".to_string());
+    }
+
+    Ok(XboxupdRawParts {
+        cf_raw: xboxupd_bytes[..cf_size].to_vec(),
+        cg_raw: xboxupd_bytes[cg_offset..cg_offset + cg_size].to_vec(),
+    })
+}
+
 pub const ONE_BL_KEY: [u8; 16] = [
     0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA,
 ];
@@ -140,23 +192,10 @@ impl<'a> StfsContainer<'a> {
     }
 }
 
-pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg), String> {
-    // 0. Quick Magic Validation
-    if xboxupd_bytes.len() < 2 {
-        return Err("xboxupd buffer too small to check magic".to_string());
-    }
-    if &xboxupd_bytes[0..2] != b"CF" {
-        return Err(format!("Invalid xboxupd magic: Expected 'CF' (0x4346), found 0x{:02X}{:02X}. Potential STFS misalignment.", xboxupd_bytes[0], xboxupd_bytes[1]));
-    }
-
-    // 1. Parse CF (slice to CF size so CF doesn't accidentally include CG bytes)
-    let (cf_header, _) = BootloaderHeader::read_from_prefix(xboxupd_bytes)
-        .map_err(|_| "Failed to parse CF header")?;
-    let cf_size = ((cf_header.size.get() as usize) + 0xF) & !0xF;
-    if xboxupd_bytes.len() < cf_size {
-        return Err("xboxupd buffer too small to contain full CF".to_string());
-    }
-    let mut cf = BootloaderCf::parse(&xboxupd_bytes[..cf_size])?;
+pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<XboxupdBootloaders, String> {
+    let raw = split_xboxupd_raw(xboxupd_bytes)?;
+    let cf_raw = raw.cf_raw;
+    let mut cf = BootloaderCf::parse(&cf_raw)?;
 
     if !cf.is_decrypted() {
         if let Err(e) = cf.decrypt(&ONE_BL_KEY) {
@@ -176,14 +215,8 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
         .metadata
         .as_ref()
         .ok_or("Failed to populate CF metadata")?;
-    let cf_size = (cf.header.size.get() as usize + 0xF) & !0xF;
-
-    if xboxupd_bytes.len() < cf_size {
-        return Err("xboxupd buffer too small to contain CG payload".to_string());
-    }
-
-    // 2. Slice memory exactly from CF endpoint to initialize CG
-    let mut cg = BootloaderCg::parse(&xboxupd_bytes[cf_size..])?;
+    let cg_raw = raw.cg_raw;
+    let mut cg = BootloaderCg::parse(&cg_raw)?;
 
     if !cg.is_decrypted() {
         if let Err(e) = cg.decrypt(&meta.cg_nonce) {
@@ -212,7 +245,12 @@ pub fn parse_xboxupd(xboxupd_bytes: &[u8]) -> Result<(BootloaderCf, BootloaderCg
         cg.header.version.get(),
         xboxupd_bytes.len()
     );
-    Ok((cf, cg))
+    Ok(XboxupdBootloaders {
+        cf,
+        cg,
+        cf_raw,
+        cg_raw,
+    })
 }
 
 #[cfg(test)]

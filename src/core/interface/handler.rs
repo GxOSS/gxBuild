@@ -185,6 +185,105 @@ impl Executor {
         1
     }
 
+    fn target_layout_and_motherboard(
+        session: &Session,
+    ) -> Result<
+        (
+            crate::core::images::blocks::NandLayout,
+            crate::builder::nand::types::MotherboardType,
+        ),
+        HandlerError,
+    > {
+        let console = session
+            .build_config
+            .console_type
+            .clone()
+            .ok_or(HandlerError::ConsoleTypeNotSet)?
+            .to_lowercase();
+
+        let (mut layout, motherboard) = match console.as_str() {
+            "xenon" => (
+                crate::core::images::blocks::NandLayout::Xsb,
+                crate::builder::nand::types::MotherboardType::Xenon,
+            ),
+            "zephyr" => (
+                crate::core::images::blocks::NandLayout::Sb,
+                crate::builder::nand::types::MotherboardType::Zephyr,
+            ),
+            "falcon" => (
+                crate::core::images::blocks::NandLayout::Sb,
+                crate::builder::nand::types::MotherboardType::Falcon,
+            ),
+            "jasper" | "jasper256" | "jasper512" | "jasperbb" | "jasperbigffs" => (
+                if console.contains("256")
+                    || console.contains("512")
+                    || console.contains("bb")
+                    || console.contains("bigffs")
+                {
+                    crate::core::images::blocks::NandLayout::Bb
+                } else {
+                    crate::core::images::blocks::NandLayout::Sb
+                },
+                crate::builder::nand::types::MotherboardType::Jasper,
+            ),
+            "trinity" | "trinitybb" | "trinitybigffs" => (
+                if console.contains("bigffs") || console.contains("bb") {
+                    crate::core::images::blocks::NandLayout::Bb
+                } else {
+                    crate::core::images::blocks::NandLayout::Sb
+                },
+                crate::builder::nand::types::MotherboardType::Trinity,
+            ),
+            "corona" => (
+                crate::core::images::blocks::NandLayout::Sb,
+                crate::builder::nand::types::MotherboardType::Corona,
+            ),
+            "corona4g" => (
+                crate::core::images::blocks::NandLayout::Emmc,
+                crate::builder::nand::types::MotherboardType::Corona,
+            ),
+            "winchester" | "winchester4g" => (
+                crate::core::images::blocks::NandLayout::Emmc,
+                crate::builder::nand::types::MotherboardType::Winchester,
+            ),
+            _ => (
+                crate::core::images::blocks::NandLayout::Sb,
+                crate::builder::nand::types::MotherboardType::Unknown,
+            ),
+        };
+
+        if layout != crate::core::images::blocks::NandLayout::Emmc {
+            if session.build_config.options.core_builder.xsb.unwrap_or(false) {
+                layout = crate::core::images::blocks::NandLayout::Xsb;
+            }
+            if session
+                .build_config
+                .options
+                .core_builder
+                .bigblock
+                .unwrap_or(false)
+            {
+                layout = crate::core::images::blocks::NandLayout::Bb;
+            }
+        }
+
+        Ok((layout, motherboard))
+    }
+
+    fn fresh_target_skeleton(
+        session: &Session,
+        source_nand: Option<&NandSkeleton>,
+    ) -> Result<NandSkeleton, HandlerError> {
+        let (layout, motherboard) = Self::target_layout_and_motherboard(session)?;
+        let mut skeleton = NandSkeleton::new_blank(layout);
+        skeleton.cpukey = session
+            .build_config
+            .pending_key
+            .or_else(|| source_nand.and_then(|nand| nand.cpukey));
+        skeleton.options.motherboard = motherboard;
+        Ok(skeleton)
+    }
+
     /// Resolves the pairing data: CB-priority, CF fallback, then [0,0,1].
     fn resolve_pairing(
         _options: &crate::core::interface::data::options::OptionsIni,
@@ -745,9 +844,9 @@ impl Executor {
             // SMC Configuration Patching
             let mut smc_config = if nand.extra.smc_config.is_empty() {
                 info!("[session] No SMC Config found in skeleton, initializing clean defaults.");
-                crate::builder::chain::smc::SmcConfig::new_empty()
+                crate::builder::chain::smc_config::SmcConfig::new_empty()
             } else {
-                crate::builder::chain::smc::SmcConfig::parse(&nand.extra.smc_config)
+                crate::builder::chain::smc_config::SmcConfig::parse(&nand.extra.smc_config)
                     .map_err(|e| HandlerError::message(e.to_string()))?
             };
 
@@ -767,17 +866,17 @@ impl Executor {
             let video = if let Some(s) = &session.build_config.options.keyvault.avregion {
                 Self::parse_u16_hex_or_dec(s)?
             } else {
-                (smc_config.data[0x22A] as u16) << 8 | smc_config.data[0x22B] as u16
+                smc_config.video_region()
             };
             let game = if let Some(s) = &session.build_config.options.keyvault.gameregion {
                 Self::parse_u16_hex_or_dec(s)?
             } else {
-                (smc_config.data[0x22C] as u16) << 8 | smc_config.data[0x22D] as u16
+                smc_config.game_region()
             };
             let dvd = if let Some(s) = &session.build_config.options.keyvault.dvdregion {
                 s.parse::<u8>().unwrap_or(0xFF)
             } else {
-                smc_config.data[0x237]
+                smc_config.dvd_region()
             };
             smc_config.set_regions(video, game, dvd);
 
@@ -785,17 +884,17 @@ impl Executor {
             let cpu_t = if let Some(s) = &session.build_config.options.smc_config.cputemp {
                 Self::parse_u8_hex_or_dec(s)?
             } else {
-                smc_config.data[0x29]
+                smc_config.thermal_targets().0
             };
             let gpu_t = if let Some(s) = &session.build_config.options.smc_config.gputemp {
                 Self::parse_u8_hex_or_dec(s)?
             } else {
-                smc_config.data[0x2A]
+                smc_config.thermal_targets().1
             };
             let ram_t = if let Some(s) = &session.build_config.options.smc_config.edramtemp {
                 Self::parse_u8_hex_or_dec(s)?
             } else {
-                smc_config.data[0x2B]
+                smc_config.thermal_targets().2
             };
             smc_config.set_thermal_targets(cpu_t, gpu_t, ram_t);
 
@@ -803,17 +902,17 @@ impl Executor {
             let cpu_m = if let Some(s) = &session.build_config.options.smc_config.overcputemp {
                 Self::parse_u8_hex_or_dec(s)?
             } else {
-                smc_config.data[0x2C]
+                smc_config.thermal_limits().0
             };
             let gpu_m = if let Some(s) = &session.build_config.options.smc_config.overgputemp {
                 Self::parse_u8_hex_or_dec(s)?
             } else {
-                smc_config.data[0x2D]
+                smc_config.thermal_limits().1
             };
             let ram_m = if let Some(s) = &session.build_config.options.smc_config.overedramtemp {
                 Self::parse_u8_hex_or_dec(s)?
             } else {
-                smc_config.data[0x2E]
+                smc_config.thermal_limits().2
             };
             smc_config.set_thermal_limits(cpu_m, gpu_m, ram_m);
 
@@ -1730,12 +1829,7 @@ impl Executor {
                 smc,
             } => {
                 info!("[session] Parsing INI for target {}...", target);
-                let mut nand_ref = session.active_nand.take();
-                if nand_ref.is_none() {
-                    return Err(HandlerError::message(
-                        "No active NAND skeleton active to apply INI map onto!",
-                    ));
-                }
+                let source_nand = session.active_nand.take();
                 match crate::core::interface::data::xeini::parse_xe_ini(&path, &target) {
                     Ok(ini) => {
                         let mut allow: std::collections::HashSet<String> =
@@ -1766,7 +1860,7 @@ impl Executor {
                             &data,
                             &payloads,
                             &smc,
-                            &nand_ref,
+                            &source_nand,
                             session.build_config.options.core.gxunsafe,
                             session.build_config.options.core_builder.nofcrt,
                             session.build_config.options.core_builder.nosecurity,
@@ -1774,19 +1868,13 @@ impl Executor {
                             session.build_config.options.core_builder.nochainpatch,
                         ) {
                             Ok(search) => {
-                                // Route each pool to its typed session pool
-                                session
-                                    .build_assets
-                                    .bootloader_assets
-                                    .extend(search.result.bootloader_assets);
-                                session
-                                    .build_assets
-                                    .security_assets
-                                    .extend(search.result.security_assets);
-                                session
-                                    .build_assets
-                                    .flashfs_assets
-                                    .extend(search.result.flashfs_assets);
+                                // Replace stale discovery pools with the graded result for this INI.
+                                session.build_assets.bootloader_assets =
+                                    search.result.bootloader_assets;
+                                session.build_assets.security_assets =
+                                    search.result.security_assets;
+                                session.build_assets.flashfs_assets =
+                                    search.result.flashfs_assets;
 
                                 // Security files that live in the FlashFS (not at fixed offsets).
                                 // Promote them into flashfs_assets so FinalizeFlashfs/build_from_memory
@@ -1813,8 +1901,8 @@ impl Executor {
                                     }
                                 }
 
-                                // Apply bootloaders using the improved apply_xe_ini
-                                let nand = nand_ref.take().unwrap();
+                                let nand =
+                                    Self::fresh_target_skeleton(session, source_nand.as_ref())?;
                                 let pending = crate::core::interface::data::xeini::PendingAssets {
                                     bootloaders: &session.build_assets.bootloader_assets,
                                     security: &session.build_assets.security_assets,
@@ -1834,7 +1922,7 @@ impl Executor {
                                 }
                             }
                             Err(e) => {
-                                session.active_nand = nand_ref;
+                                session.active_nand = source_nand;
                                 error!("[session] Configuration discovery failed: {}", e);
                                 return Err(HandlerError::message(format!(
                                     "Discovery failed: {}",
@@ -1844,7 +1932,7 @@ impl Executor {
                         }
                     }
                     Err(e) => {
-                        session.active_nand = nand_ref;
+                        session.active_nand = source_nand;
                         return Err(HandlerError::message(format!(
                             "Failed parsing INI descriptors: {}",
                             e
@@ -1858,6 +1946,7 @@ impl Executor {
                     Ok(raw_data) => {
                         // Use preprocess_nand_with_lba to track bad block remapping
                         let remap_bad_blocks = !session
+                            .build_config
                             .options
                             .core_builder
                             .noremap
@@ -1870,6 +1959,7 @@ impl Executor {
                                 // Scan FlashFS with LBA map for accurate block mapping
                                 let flashfs = crate::builder::filesystem::flashfs::FlashFS::scan_physical_with_lba(&raw_data, &layout, &lba_map);
                                 let mobile = if session
+                                    .build_config
                                     .options
                                     .core_builder
                                     .nomobile
@@ -2323,6 +2413,7 @@ impl Executor {
             }
             InternalCommand::FinalizeMobile => {
                 if session
+                    .build_config
                     .options
                     .core_builder
                     .nomobile

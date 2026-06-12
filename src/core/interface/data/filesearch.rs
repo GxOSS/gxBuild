@@ -21,8 +21,11 @@
 */
 use crate::builder::nand::builder::NandSkeleton;
 use crate::builder::filesystem::flashfs::{FileSystemEntry, FlashFS};
-use crate::core::interface::data::xeini::{strip_flashfs_path_indicator, XeBuildIni};
+use crate::core::interface::data::xeini::{
+    bootloader_matches_expected_name, strip_flashfs_path_indicator, XeBuildIni,
+};
 use log::{info, warn};
+use gxcrypt::crc::{bls_crc32_hex, crc32_hex};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -63,6 +66,92 @@ fn resolve_robust(base: &Path, cand: &str) -> PathBuf {
         }
     }
     p
+}
+
+fn select_flashfs_candidate(
+    candidates: &[Vec<u8>],
+    filename: &str,
+    expected: &Option<String>,
+    unsafe_mode: bool,
+) -> Option<Vec<u8>> {
+    for candidate in candidates {
+        if expected.is_none()
+            || check_crc32_simple(candidate, filename, expected, "Build STFS", unsafe_mode).is_some()
+        {
+            return Some(candidate.clone());
+        }
+    }
+    None
+}
+
+fn check_crc32_simple(
+    data: &[u8],
+    filename: &str,
+    expected: &Option<String>,
+    tier: &str,
+    unsafe_mode: bool,
+) -> Option<bool> {
+    if let Some(exp) = expected {
+        let actual = crc32_hex(data);
+        if actual.to_lowercase() == exp.to_lowercase() {
+            Some(true)
+        } else if unsafe_mode {
+            warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Got: {} in {} Tier). Continuing...", filename, exp, actual, tier);
+            Some(true)
+        } else {
+            info!(
+                "[ini] Hash mismatch for {} in {} Tier, trying next tier...",
+                filename, tier
+            );
+            None
+        }
+    } else {
+        Some(true)
+    }
+}
+
+fn check_bootloader_candidate(
+    data: &[u8],
+    filename: &str,
+    expected: &Option<String>,
+    tier: &str,
+    unsafe_mode: bool,
+) -> Option<bool> {
+    if let Err(reason) = bootloader_matches_expected_name(filename, data) {
+        info!(
+            "[ini] Rejecting {} from {} Tier: {}",
+            filename, tier, reason
+        );
+        return None;
+    }
+
+    if let Some(exp) = expected {
+        let actual = get_xebuild_crc32(data, filename);
+        if actual.eq_ignore_ascii_case(exp) {
+            Some(true)
+        } else if unsafe_mode {
+            warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in {} Tier). Continuing...", filename, exp, actual, tier);
+            Some(true)
+        } else {
+            info!(
+                "[ini] Hash mismatch for {} in {} Tier, trying next tier...",
+                filename, tier
+            );
+            None
+        }
+    } else {
+        Some(true)
+    }
+}
+
+fn check_stfs_bootloader_candidate(
+    raw_data: &[u8],
+    filename: &str,
+    expected: &Option<String>,
+    tier: &str,
+    unsafe_mode: bool,
+) -> Option<bool> {
+    check_bootloader_candidate(raw_data, filename, expected, tier, unsafe_mode)
 }
 
 pub struct DiscoveredBootloaders {
@@ -108,53 +197,7 @@ impl DiscoveredUpdate {
 }
 
 pub(crate) fn get_xebuild_crc32(data: &[u8], filename: &str) -> String {
-    let lower_name = filename.to_lowercase();
-
-    if data.len() < 0x10 {
-        return format!("{:08x}", crc32fast::hash(data));
-    }
-
-    let mut xe_len = u32::from_be_bytes([data[0x0C], data[0x0D], data[0x0E], data[0x0F]]) as usize;
-    if xe_len == 0 || xe_len > data.len() {
-        xe_len = data.len();
-    }
-
-    let mut working = data[..xe_len].to_vec();
-
-    // Zero out sensitive/nonce fields per xeBuild
-    if lower_name.starts_with("cb") || lower_name.starts_with("sb") {
-        let start = 0x10;
-        let end = std::cmp::min(0x40, working.len());
-        if working.len() > start {
-            for i in start..end {
-                working[i] = 0;
-            }
-        }
-    } else if lower_name.starts_with("cf") || lower_name.starts_with("sf") {
-        let start = 0x20;
-        let end = std::cmp::min(0x230, working.len());
-        if working.len() > start {
-            for i in start..end {
-                working[i] = 0;
-            }
-        }
-    } else if lower_name.starts_with("cd")
-        || lower_name.starts_with("sd")
-        || lower_name.starts_with("ce")
-        || lower_name.starts_with("se")
-        || lower_name.starts_with("cg")
-        || lower_name.starts_with("sg")
-    {
-        let start = 0x10;
-        let end = std::cmp::min(0x20, working.len());
-        if working.len() > start {
-            for i in start..end {
-                working[i] = 0;
-            }
-        }
-    }
-
-    format!("{:08x}", crc32fast::hash(&working))
+    bls_crc32_hex(data, filename)
 }
 
 pub struct IniSearchResult {
@@ -369,33 +412,6 @@ impl IniSearch {
             _ => return Err(FilesearchError::BadBuildFormat(ini.buildtype.clone())),
         }
         ini.patch.path = patch_path.clone();
-
-        let check_crc32_simple = |data: &[u8],
-                                  filename: &str,
-                                  expected: &Option<String>,
-                                  tier: &str,
-                                  unsafe_mode: bool|
-         -> Option<bool> {
-            if let Some(exp) = expected {
-                let mut hasher = crc32fast::Hasher::new();
-                hasher.update(data);
-                let actual = format!("{:08x}", hasher.finalize());
-                if actual.to_lowercase() == exp.to_lowercase() {
-                    Some(true)
-                } else if unsafe_mode {
-                    warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Got: {} in {} Tier). Continuing...", filename, exp, actual, tier);
-                    Some(true)
-                } else {
-                    info!(
-                        "[ini] Hash mismatch for {} in {} Tier, trying next tier...",
-                        filename, tier
-                    );
-                    None
-                }
-            } else {
-                Some(true)
-            }
-        };
 
         // security and extra
         if !ini.security.is_empty() {
@@ -636,6 +652,8 @@ impl IniSearch {
             }
         }
 
+        let mut stfs_flashfs_candidates: HashMap<String, Vec<Vec<u8>>> = HashMap::new();
+
         if !ini.main.is_empty() {
             result.bootloaders = Some(DiscoveredBootloaders::new());
             if ini.rebooter {
@@ -703,21 +721,8 @@ impl IniSearch {
 
                 macro_rules! check_hash {
                     ($c:expr, $name:expr, $tier:expr) => {
-                        if let Some(expected) = &entry.hash {
-                            let actual = get_xebuild_crc32(&$c, $name);
-                            if actual.to_lowercase() == expected.to_lowercase() {
-                                true
-                            } else {
-                                if unsafe_mode {
-                                    warn!("[ini] Unsafe Bypass: {} CRC32 mismatch (Expected: {}, Found: {} in {} Tier). Continuing...", $name, expected, actual, $tier);
-                                    true
-                                } else {
-                                    return Err(FilesearchError::HashMismatch($name.to_string()));
-                                }
-                            }
-                        } else {
-                            true
-                        }
+                        check_bootloader_candidate(&$c, $name, &entry.hash, $tier, unsafe_mode)
+                            .is_some()
                     };
                 }
 
@@ -765,22 +770,41 @@ impl IniSearch {
                     let p_xboxupd = build.join("xboxupd.bin");
                     if p_xboxupd.exists() {
                         if let Ok(data_upd) = std::fs::read(&p_xboxupd) {
-                            if let Ok((cf, cg)) =
-                                crate::core::images::stfs::parse_xboxupd(&data_upd)
+                            if let Ok(parts) = crate::core::images::stfs::split_xboxupd_raw(&data_upd)
                             {
-                                result
-                                    .bootloader_assets
-                                    .insert(expected_cf.clone(), cf.serialize());
-                                result
-                                    .bootloader_assets
-                                    .insert(expected_cg.clone(), cg.serialize());
-                                if let Some(c) = result.bootloader_assets.get(&lower_name).cloned()
-                                {
-                                    if check_hash!(c, filename, "Build STFS (xboxupd.bin)") {
-                                        found_content = Some(c);
-                                        found_path = Some(p_xboxupd);
-                                    }
+                                let stfs_match = if lower_name == expected_cf {
+                                    check_stfs_bootloader_candidate(
+                                        &parts.cf_raw,
+                                        filename,
+                                        &entry.hash,
+                                        "Build STFS (xboxupd.bin)",
+                                        unsafe_mode,
+                                    )
+                                    .map(|_| parts.cf_raw.clone())
+                                } else if lower_name == expected_cg {
+                                    check_stfs_bootloader_candidate(
+                                        &parts.cg_raw,
+                                        filename,
+                                        &entry.hash,
+                                        "Build STFS (xboxupd.bin)",
+                                        unsafe_mode,
+                                    )
+                                    .map(|_| parts.cg_raw.clone())
+                                } else {
+                                    None
+                                };
+
+                                if let Some(c) = stfs_match {
+                                    found_content = Some(c);
+                                    found_path = Some(p_xboxupd.clone());
                                 }
+                            }
+
+                            if let Err(e) = crate::core::images::stfs::parse_xboxupd(&data_upd) {
+                                info!(
+                                    "[ini] Failed to fully validate xboxupd.bin for {} in Build STFS tier: {}",
+                                    filename, e
+                                );
                             }
                         }
                     }
@@ -803,28 +827,51 @@ impl IniSearch {
                                                             || (k_lower.starts_with("su")
                                                                 && !k_lower.contains('.'))
                                                         {
-                                                            if let Ok((cf, cg)) = crate::core::images::stfs::parse_xboxupd(&v) {
-                                                                result.bootloader_assets.insert(expected_cf.clone(), cf.serialize());
-                                                                result.bootloader_assets.insert(expected_cg.clone(), cg.serialize());
-                                                            }
-                                                        } else {
-                                                            if allowed_flashfs_from_ini
-                                                                .contains(&k_lower)
+                                                            if let Ok(parts) =
+                                                                crate::core::images::stfs::split_xboxupd_raw(&v)
                                                             {
-                                                                result
-                                                                    .flashfs_assets
-                                                                    .insert(k_lower, v);
+                                                                let stfs_match = if lower_name == expected_cf {
+                                                                    check_stfs_bootloader_candidate(
+                                                                        &parts.cf_raw,
+                                                                        filename,
+                                                                        &entry.hash,
+                                                                        "STFS",
+                                                                        unsafe_mode,
+                                                                    )
+                                                                    .map(|_| parts.cf_raw.clone())
+                                                                } else if lower_name == expected_cg {
+                                                                    check_stfs_bootloader_candidate(
+                                                                        &parts.cg_raw,
+                                                                        filename,
+                                                                        &entry.hash,
+                                                                        "STFS",
+                                                                        unsafe_mode,
+                                                                    )
+                                                                    .map(|_| parts.cg_raw.clone())
+                                                                } else {
+                                                                    None
+                                                                };
+                                                                if let Some(c) = stfs_match {
+                                                                    found_content = Some(c);
+                                                                    found_path = Some(stfs_entry.path());
+                                                                }
                                                             }
-                                                        }
-                                                    }
-                                                    if let Some(c) = result
-                                                        .bootloader_assets
-                                                        .get(&lower_name)
-                                                        .cloned()
-                                                    {
-                                                        if check_hash!(c, filename, "STFS") {
-                                                            found_content = Some(c);
-                                                            found_path = Some(stfs_entry.path());
+
+                                                            if let Err(e) = crate::core::images::stfs::parse_xboxupd(&v) {
+                                                                info!(
+                                                                    "[ini] Failed to fully validate STFS xboxupd candidate '{}' for {}: {}",
+                                                                    k,
+                                                                    filename,
+                                                                    e
+                                                                );
+                                                            }
+                                                        } else if allowed_flashfs_from_ini
+                                                            .contains(&k_lower)
+                                                        {
+                                                            stfs_flashfs_candidates
+                                                                .entry(k_lower)
+                                                                .or_default()
+                                                                .push(v);
                                                         }
                                                     }
                                                 }
@@ -900,8 +947,10 @@ impl IniSearch {
                         }
 
                         if let Some(c) = nand_data {
-                            found_content = Some(c);
-                            found_path = Some(PathBuf::from("NAND_IMAGE"));
+                            if check_hash!(c, filename, "NAND Image") {
+                                found_content = Some(c);
+                                found_path = Some(PathBuf::from("NAND_IMAGE"));
+                            }
                         }
                     }
                 }
@@ -1046,17 +1095,14 @@ impl IniSearch {
                         format!("{}2", lower_basename),
                     ];
                     for cand in &cand_names {
-                        if let Some(c) = result.flashfs_assets.get(cand).cloned() {
-                            if check_crc32_simple(
-                                &c,
+                        if let Some(candidates) = stfs_flashfs_candidates.get(cand) {
+                            found_content = select_flashfs_candidate(
+                                candidates,
                                 &basename,
                                 &entry.hash,
-                                "Build STFS",
                                 unsafe_mode,
-                            )
-                            .is_some()
-                            {
-                                found_content = Some(c);
+                            );
+                            if found_content.is_some() {
                                 break;
                             }
                         }
@@ -1193,6 +1239,40 @@ impl PatchSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gxcrypt::crc::{bls_crc32_hex, crc32_hex};
+
+    #[test]
+    fn flashfs_hashes_use_raw_crc32() {
+        let mut data = vec![0u8; 0x260];
+        let declared_len = data.len() as u32;
+        data[0x0C..0x10].copy_from_slice(&declared_len.to_be_bytes());
+        for (i, byte) in data.iter_mut().enumerate() {
+            *byte = (i & 0xFF) as u8;
+        }
+
+        let flashfs_hash = crc32_hex(&data);
+        let bootloader_hash = get_xebuild_crc32(&data, "cf_5772.bin");
+
+        assert_eq!(flashfs_hash, crc32_hex(&data));
+        assert_eq!(bootloader_hash, bls_crc32_hex(&data, "cf_5772.bin"));
+        assert_ne!(flashfs_hash, bootloader_hash);
+    }
+
+    #[test]
+    fn select_flashfs_candidate_tries_all_candidates_by_crc() {
+        let first = b"wrong".to_vec();
+        let second = b"right".to_vec();
+        let expected = Some(crc32_hex(&second));
+
+        let selected = select_flashfs_candidate(
+            &[first.clone(), second.clone()],
+            "dash.xex",
+            &expected,
+            false,
+        );
+
+        assert_eq!(selected, Some(second));
+    }
 
     // Verifies that get_xebuild_crc32 produces a hash matching a real xeBuild INI entry for CF.
     //

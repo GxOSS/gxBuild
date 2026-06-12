@@ -23,7 +23,7 @@
 use crate::builder::nand::ecc::handle_extract_ecc;
 #[cfg(feature = "rhai")]
 use crate::core::interface::rhai::GxScriptEngine;
-use crate::core::interface::handler::{execute_internal_commands, Executor, InternalCommand};
+use crate::core::interface::handler::{execute_internal_commands, InternalCommand};
 use crate::core::interface::data::options::{parse_options_ini, OptionsIni};
 use crate::core::interface::data::{BuildAssets, BuildConfig, Session};
 use crate::core::logger;
@@ -458,28 +458,31 @@ pub fn ggx_cli() {
 
     info!("{}", LICENSE_TEXT);
 
-    let mut session = Session::default();
-
-    let mut session_prepared = true;
-    match args.mode.clone() {
+    let (session, session_prepared) = match args.mode.clone() {
         Some(GgxMode::Build { .. }) | None => {
             match create_build(&args) {
                 Ok(built_session) => {
-                    session = built_session;
+                    (built_session, true)
                 }
                 Err(e) => {
                     error!("[cli] Build Setup Failed: {}", e);
-                    session_prepared = false;
+                    (Session::default(), false)
                 }
             }
         }
         Some(GgxMode::Extract { .. }) => {
+            let mut session = Session::default();
             if let Err(e) = handle_extract(&args, &mut session) {
                 error!("[cli] Extract Setup Failed: {}", e);
-                session_prepared = false;
+                (session, false)
+            } else {
+                (session, true)
             }
         }
-    }
+    };
+
+    #[cfg(not(feature = "rhai"))]
+    let _ = &session;
 
     if session_prepared {
         // --- Scripting & Shell Handlers ---

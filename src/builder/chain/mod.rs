@@ -6,6 +6,7 @@ pub mod cg;
 pub mod kv;
 pub mod sc;
 pub mod smc;
+pub mod smc_config;
 pub mod xell;
 
 use zerocopy::byteorder::{BigEndian as ZBigEndian, U16, U32};

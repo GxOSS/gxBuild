@@ -2,8 +2,11 @@ use crate::builder::filesystem::flashfs::FlashFS;
 use crate::builder::filesystem::mobile::MobileStore;
 use crate::builder::nand::builder::NandSkeleton;
 use crate::core::interface::data::filesearch::get_xebuild_crc32;
-use crate::core::interface::data::xeini::{strip_flashfs_path_indicator, XeBuildIni};
+use crate::core::interface::data::xeini::{
+    bootloader_matches_expected_name, strip_flashfs_path_indicator, XeBuildIni,
+};
 use crate::core::images::blocks::{BlocksError, NandProcessor};
+use gxcrypt::crc::crc32_hex;
 use log::info;
 use std::collections::HashMap;
 use thiserror::Error;
@@ -55,11 +58,10 @@ fn normalize_optional_hash(hash: &Option<String>) -> Option<&str> {
     })
 }
 
-fn crc32_hex(data: &[u8]) -> String {
-    format!("{:08x}", crc32fast::hash(data))
-}
-
 fn hash_match_xebuild_style(data: &[u8], filename: &str, expected: &Option<String>) -> bool {
+    if bootloader_matches_expected_name(filename, data).is_err() {
+        return false;
+    }
     let Some(exp) = normalize_optional_hash(expected) else {
         return true;
     };

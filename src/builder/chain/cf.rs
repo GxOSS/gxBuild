@@ -366,10 +366,11 @@ impl BootloaderCf {
     }
 
     pub fn verify_decrypted(&self) -> bool {
-        if self.data.len() < 0x200 {
+        if self.data.len() < 0x21 {
             return false;
         }
-        self.data[0x1E0..0x200].iter().all(|&b| b == 0)
+        // xenon-bltool uses the first byte of the decrypted pairing area.
+        self.data[0x20] == 0
     }
 
     pub fn serialize(&self) -> Vec<u8> {
