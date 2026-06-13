@@ -40,7 +40,7 @@ byteorder = "1.5.0"
 log = "0.4"
 fern = { version = "0.6", features = ["colored"] }
 rhai = { version = "1.19.0", optional = true }
-gxcrypt = { path = "../GxCrypt" }
+gxcrypt = { git = "https://github.com/GxOSS/GxCrypt" }
 stfs = { path = "crates/stfs" }
 
 [features]
