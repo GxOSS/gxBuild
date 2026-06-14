@@ -32,7 +32,7 @@ use crate::builder::filesystem::mobile::MobileStore;
 pub use crate::builder::nand::types::*;
 use crate::core::images::blocks::*;
 use crate::core::images::gxpatch::{apply_records, serialize_records, GxpBinary, GxpPatchType};
-use crate::crypto::calculate_smc_hash;
+use crate::crypto::{calculate_smc_hash, hmac_sha};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InferredImageType {
@@ -81,7 +81,7 @@ impl NandSkeleton {
                     entrypoint: U32::new(0),
                     size: U32::new(0),
                 },
-                copyright: [0u8; 0x40],
+                copyright: NandHeader::default_copyright(),
                 payload_indicator: U16::new(0),
                 unused: [0u8; 0x0E],
                 kv_size: U32::new(0x4000),
@@ -285,8 +285,16 @@ impl NandSkeleton {
                 if cb_b.metadata.is_none() {
                     info!("[builder] CB_B has no metadata — decrypting");
                     if let Some(cb_a) = self.bootloaders.cb_a.as_ref() {
-                        if let Some(cb_a_key_slice) = cb_a.data.get(0..16) {
-                            let cb_a_key: [u8; 16] = cb_a_key_slice.try_into().unwrap();
+                        let cb_a_key = cb_a.derived_key().or_else(|| {
+                            cb_a.data.get(0..16).and_then(|nonce| {
+                                let derived = hmac_sha(&ONEBL_KEY, &[nonce]).ok()?;
+                                let mut key = [0u8; 16];
+                                key.copy_from_slice(&derived[..16]);
+                                Some(key)
+                            })
+                        });
+
+                        if let Some(cb_a_key) = cb_a_key {
                             let uses_new_crypto = (cb_a.header.flags.get() & 0x1000) != 0;
                             if uses_new_crypto {
                                 if let Err(e) = cb_b.decrypt_v2(&cb_a.header, &cb_a_key, &cpukey) {
@@ -307,7 +315,7 @@ impl NandSkeleton {
                                 );
                             }
                         } else {
-                            warn!("[builder] CB_A is too small to derive CB_B key");
+                            warn!("[builder] CB_A has no derived key and nonce-based fallback failed");
                         }
                     } else {
                         warn!(
@@ -966,6 +974,19 @@ impl NandSkeleton {
             logical_image[kv_offset..kv_offset + self.extra.keyvault.len()]
                 .copy_from_slice(&self.extra.keyvault);
         }
+        if !self.extra.smc_config.is_empty() {
+            let smc_config_offset = header.smc_config_offset.get() as usize;
+            if smc_config_offset + self.extra.smc_config.len() > logical_image.len() {
+                return Err(BuilderError::OutOfBounds {
+                    component: "SMC config".to_string(),
+                    offset: smc_config_offset,
+                    size: self.extra.smc_config.len(),
+                    image_len: logical_image.len(),
+                });
+            }
+            logical_image[smc_config_offset..smc_config_offset + self.extra.smc_config.len()]
+                .copy_from_slice(&self.extra.smc_config);
+        }
 
         if let Some(cf0d) = cf0 {
             let cf0_offset = target_cf_offset;
@@ -1308,6 +1329,19 @@ impl NandSkeleton {
             }
         }
 
+        let base_kernel_version = self
+            .bootloaders
+            .ce
+            .as_ref()
+            .map(|ce| ce.header.version.get())
+            .filter(|&v| v != 0)
+            .or_else(|| match self.header.prefix.version.get() {
+                0 => None,
+                version => Some(version),
+            })
+            .unwrap_or(1888);
+
+        header.prefix.version.set(base_kernel_version);
         header.prefix.entrypoint.set(bootchain_start as u32);
         let mut opts_for_flags = self.options.clone();
         opts_for_flags.image_profile = build_profile;
