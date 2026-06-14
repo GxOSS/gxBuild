@@ -19,13 +19,13 @@
      misrepresented as being the original software.
   3. This notice may not be removed or altered from any source distribution.
 */
-use crate::builder::nand::builder::NandSkeleton;
 use crate::builder::filesystem::flashfs::{FileSystemEntry, FlashFS};
+use crate::builder::nand::builder::NandSkeleton;
 use crate::core::interface::data::xeini::{
     bootloader_matches_expected_name, strip_flashfs_path_indicator, XeBuildIni,
 };
-use log::{info, warn};
 use gxcrypt::crc::{bls_crc32_hex, crc32_hex};
+use log::{info, warn};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -76,7 +76,8 @@ fn select_flashfs_candidate(
 ) -> Option<Vec<u8>> {
     for candidate in candidates {
         if expected.is_none()
-            || check_crc32_simple(candidate, filename, expected, "Build STFS", unsafe_mode).is_some()
+            || check_crc32_simple(candidate, filename, expected, "Build STFS", unsafe_mode)
+                .is_some()
         {
             return Some(candidate.clone());
         }
@@ -569,14 +570,18 @@ impl IniSearch {
             if p.exists() {
                 if let Ok(c) = std::fs::read(&p) {
                     info!("[ini] Discovered SMC Config: {}", p.display());
-                    result.security_assets.insert("smc_config.bin".to_string(), c);
+                    result
+                        .security_assets
+                        .insert("smc_config.bin".to_string(), c);
                 }
             } else {
                 let p = common.join(format!("smc_config_{}.bin", platform_token.to_lowercase()));
                 if p.exists() {
                     if let Ok(c) = std::fs::read(&p) {
                         info!("[ini] Discovered SMC Config: {}", p.display());
-                        result.security_assets.insert("smc_config.bin".to_string(), c);
+                        result
+                            .security_assets
+                            .insert("smc_config.bin".to_string(), c);
                     }
                 }
             }
@@ -770,7 +775,8 @@ impl IniSearch {
                     let p_xboxupd = build.join("xboxupd.bin");
                     if p_xboxupd.exists() {
                         if let Ok(data_upd) = std::fs::read(&p_xboxupd) {
-                            if let Ok(parts) = crate::core::images::stfs::split_xboxupd_raw(&data_upd)
+                            if let Ok(parts) =
+                                crate::core::images::stfs::split_xboxupd_raw(&data_upd)
                             {
                                 let stfs_match = if lower_name == expected_cf {
                                     check_stfs_bootloader_candidate(

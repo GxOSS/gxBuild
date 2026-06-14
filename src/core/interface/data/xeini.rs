@@ -678,9 +678,7 @@ pub fn apply_xe_ini(
                     }
                 }
 
-                nand.payloads
-                    .get_or_insert_with(Vec::new)
-                    .push(p_entry);
+                nand.payloads.get_or_insert_with(Vec::new).push(p_entry);
                 info!(
                     "[ini] Assigned payload '{}' ({} bytes)",
                     filename,
@@ -869,8 +867,10 @@ cba_9188.bin = 00000000
     #[test]
     fn apply_xe_ini_overwrites_existing_update_slots_by_chain_id() {
         let mut nand = empty_test_nand();
-        let original_cf = crate::builder::chain::cf::BootloaderCf::parse(&test_cf_blob(1, 0)).unwrap();
-        let original_cg = crate::builder::chain::cg::BootloaderCg::parse(&test_cg_blob(1, 0x11)).unwrap();
+        let original_cf =
+            crate::builder::chain::cf::BootloaderCf::parse(&test_cf_blob(1, 0)).unwrap();
+        let original_cg =
+            crate::builder::chain::cg::BootloaderCg::parse(&test_cg_blob(1, 0x11)).unwrap();
         let new_cf_blob = test_cf_blob(2, 0);
         let new_cg_blob = test_cg_blob(2, 0x22);
 
@@ -937,15 +937,18 @@ cba_9188.bin = 00000000
     #[test]
     fn bootloader_identity_matches_filename_version_and_type() {
         assert!(bootloader_matches_expected_name("cf_17559.bin", &test_cf_blob(17559, 0)).is_ok());
-        assert!(bootloader_matches_expected_name("cg_17559.bin", &test_cg_blob(17559, 0x22)).is_ok());
+        assert!(
+            bootloader_matches_expected_name("cg_17559.bin", &test_cg_blob(17559, 0x22)).is_ok()
+        );
     }
 
     #[test]
     fn bootloader_identity_rejects_wrong_version_or_type() {
-        let wrong_version = bootloader_matches_expected_name("cf_17559.bin", &test_cf_blob(17349, 0))
-            .unwrap_err();
+        let wrong_version =
+            bootloader_matches_expected_name("cf_17559.bin", &test_cf_blob(17349, 0)).unwrap_err();
         let wrong_type =
-            bootloader_matches_expected_name("cf_17559.bin", &test_cg_blob(17559, 0x22)).unwrap_err();
+            bootloader_matches_expected_name("cf_17559.bin", &test_cg_blob(17559, 0x22))
+                .unwrap_err();
 
         assert!(wrong_version.contains("expected version 17559"));
         assert!(wrong_type.contains("expected CF"));

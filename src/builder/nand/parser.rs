@@ -1,7 +1,7 @@
 use crate::builder::nand::types::*;
 use crate::crypto::{hmac_sha, Rc4};
 use log::info;
-use log::{warn};
+use log::warn;
 use zerocopy::FromBytes;
 
 use crate::builder::chain::*;
@@ -12,8 +12,6 @@ use crate::builder::chain::{
 use crate::builder::filesystem::corona::{self};
 use crate::builder::filesystem::flashfs::FlashFS;
 use crate::core::images::blocks::*;
-
-
 
 impl NandSkeleton {
     pub fn parse_clean_encrypted(
@@ -873,7 +871,6 @@ impl NandSkeleton {
         Ok((bl, update))
     }
 }
-
 
 pub fn bl_is_valid_magic(magic: u16) -> bool {
     matches!(

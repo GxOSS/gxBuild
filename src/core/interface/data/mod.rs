@@ -1,15 +1,15 @@
-use crate::builder::nand::builder::NandSkeleton;
-use crate::builder::nand::parser::hex_to_bytes;
 use self::filesearch::{FilesearchError, IniSearch};
 use self::nandsearch::{NandSearch, NandSearchError};
+use crate::builder::nand::builder::NandSkeleton;
+use crate::builder::nand::parser::hex_to_bytes;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use thiserror::Error;
 
 pub mod filesearch;
 pub mod nandsearch;
-pub mod xeini;
 pub mod options;
+pub mod xeini;
 
 #[derive(Error, Debug)]
 pub enum BuildAssetsError {
@@ -29,11 +29,9 @@ pub enum BuildAssetsError {
     NandSearch(#[from] NandSearchError),
 }
 
-
-
 pub struct BuildConfig {
     pub pending_key: Option<[u8; 16]>,
-    pub build_type: Option<String>, // INI name
+    pub build_type: Option<String>,   // INI name
     pub console_type: Option<String>, // INI section
     pub xe_ini: Option<xeini::XeBuildIni>,
     pub options: options::OptionsIni,
@@ -42,7 +40,7 @@ pub struct BuildConfig {
     pub data_dir: Option<std::path::PathBuf>,
     pub output_path: Option<std::path::PathBuf>,
     pub ini_ext: Option<String>, // INI name extension
-    pub bl_ext: Option<String>, // INI section extension
+    pub bl_ext: Option<String>,  // INI section extension
     pub addons: Vec<String>,
 }
 impl Default for BuildConfig {
@@ -236,7 +234,10 @@ impl BuildAssets {
                     .or_insert(search.smc_config);
             }
             if let Some(fcrt) = search.fcrt {
-                assets.security_assets.entry("fcrt.bin".to_string()).or_insert(fcrt);
+                assets
+                    .security_assets
+                    .entry("fcrt.bin".to_string())
+                    .or_insert(fcrt);
             }
             for (name, data) in search.flashfs_assets {
                 assets.flashfs_assets.entry(name).or_insert(data);

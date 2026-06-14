@@ -1,11 +1,11 @@
 use crate::builder::filesystem::flashfs::FlashFS;
 use crate::builder::filesystem::mobile::MobileStore;
 use crate::builder::nand::builder::NandSkeleton;
+use crate::core::images::blocks::{BlocksError, NandProcessor};
 use crate::core::interface::data::filesearch::get_xebuild_crc32;
 use crate::core::interface::data::xeini::{
     bootloader_matches_expected_name, strip_flashfs_path_indicator, XeBuildIni,
 };
-use crate::core::images::blocks::{BlocksError, NandProcessor};
 use gxcrypt::crc::crc32_hex;
 use log::info;
 use std::collections::HashMap;
@@ -78,8 +78,13 @@ fn hash_match_simple(data: &[u8], expected: &Option<String>) -> bool {
 }
 
 impl NandSearch {
-    pub fn new(ini: XeBuildIni, nand_image: &[u8], cpukey: [u8; 16]) -> Result<Self, NandSearchError> {
-        let (clean_data, layout, lba_map) = NandProcessor::preprocess_nand_with_lba_options(nand_image, true)?;
+    pub fn new(
+        ini: XeBuildIni,
+        nand_image: &[u8],
+        cpukey: [u8; 16],
+    ) -> Result<Self, NandSearchError> {
+        let (clean_data, layout, lba_map) =
+            NandProcessor::preprocess_nand_with_lba_options(nand_image, true)?;
 
         let flashfs = FlashFS::scan_physical_with_lba(nand_image, &layout, &lba_map);
         let mobile = MobileStore::scan_physical(nand_image, &layout);
@@ -180,16 +185,13 @@ impl NandSearch {
         }
 
         let keyvault = skeleton.extra.keyvault.clone();
-        let fcrt = skeleton
-            .flashfs
-            .as_ref()
-            .and_then(|f| {
-                f.root
-                    .entries
-                    .iter()
-                    .find(|e| !e.deleted && e.file_name.eq_ignore_ascii_case("fcrt.bin"))
-                    .map(|e| e.data.clone())
-            });
+        let fcrt = skeleton.flashfs.as_ref().and_then(|f| {
+            f.root
+                .entries
+                .iter()
+                .find(|e| !e.deleted && e.file_name.eq_ignore_ascii_case("fcrt.bin"))
+                .map(|e| e.data.clone())
+        });
         let smc_config = skeleton.extra.smc_config.clone();
 
         let cb = {

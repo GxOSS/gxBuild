@@ -1,10 +1,10 @@
-use crate::core::images::blocks::{LbaMap, NandLayout};
-use zerocopy::byteorder::{BigEndian, I16, U16, U32};
-use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
-use crate::builder::filesystem::corona::{CoronaFsSlots};
+use crate::builder::filesystem::corona::CoronaFsSlots;
 use crate::builder::filesystem::flashfs::FlashFS;
 use crate::builder::filesystem::mobile::MobileStore;
+use crate::core::images::blocks::{LbaMap, NandLayout};
 use thiserror::Error;
+use zerocopy::byteorder::{BigEndian, I16, U16, U32};
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 #[derive(Error, Debug)]
 pub enum BuilderError {
@@ -108,7 +108,6 @@ impl From<BuilderError> for String {
 }
 
 pub type Result<T, E = BuilderError> = std::result::Result<T, E>;
-
 
 pub const NAND_RETAIL_1BL_KEY: [u8; 16] = [
     0xDD, 0x88, 0xAD, 0x0C, 0x9E, 0xD6, 0x69, 0xE7, 0xB5, 0x67, 0x94, 0xFB, 0x68, 0x56, 0x3E, 0xFA,
@@ -510,14 +509,12 @@ pub struct BuildOptions {
     pub verbose: bool,
 }
 
-
-
 #[derive(Clone)]
 pub struct NandSkeleton {
     pub cpukey: Option<[u8; 16]>,
     pub build_options: BuildOptions,
     pub options: NandConfig,
-    
+
     pub header: NandHeader,
     pub image: Vec<u8>,
     pub extra: NandExtra,
@@ -528,7 +525,6 @@ pub struct NandSkeleton {
     pub flashfs: Option<FlashFS>,
     pub mobile: Option<MobileStore>,
     pub corona_fs: Option<CoronaFsSlots>,
-
     // pub lba_map: Option<LbaMap>,
     // pub input_ldv_cb: Option<u8>,
     // pub input_ldv_cf: Option<u8>,

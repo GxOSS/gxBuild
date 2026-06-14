@@ -24,14 +24,13 @@ use crate::builder::chain::{
     cb::BootloaderCb, cd::BootloaderCd, ce::BootloaderCe, cf::BootloaderCf, cg::BootloaderCg,
     sc::BootloaderSc, smc::RawSmc, BootloaderHeader, XenonBlType,
 };
+use crate::builder::nand::types::*;
 use crate::builder::nand::types::{BuilderError, Result};
+use crate::core::images::blocks::strip_ecc;
 use crate::core::images::blocks::NandLayout;
 use log::info;
 use std::path::Path;
 use zerocopy::FromBytes;
-use crate::core::images::blocks::strip_ecc;
-use crate::builder::nand::types::*;
-
 
 /// Smaller skeleton structure for ECC extraction.
 /// Holds extracted components without the full builder state.

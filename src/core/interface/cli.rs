@@ -21,11 +21,11 @@
 */
 
 use crate::builder::nand::ecc::handle_extract_ecc;
-#[cfg(feature = "rhai")]
-use crate::core::interface::rhai::GxScriptEngine;
-use crate::core::interface::handler::{execute_internal_commands, InternalCommand};
 use crate::core::interface::data::options::{parse_options_ini, OptionsIni};
 use crate::core::interface::data::{BuildAssets, BuildConfig, Session};
+use crate::core::interface::handler::{execute_internal_commands, InternalCommand};
+#[cfg(feature = "rhai")]
+use crate::core::interface::rhai::GxScriptEngine;
 use crate::core::logger;
 use clap::ValueEnum;
 use clap::{CommandFactory, Parser, Subcommand};
@@ -174,7 +174,11 @@ pub struct GgxArgs {
     #[arg(long = "fullimage", global = true)]
     pub full_image: bool,
 
-    #[arg(long = "bigblock", global = true, help = "Force Big Block layout for the final skeleton")]
+    #[arg(
+        long = "bigblock",
+        global = true,
+        help = "Force Big Block layout for the final skeleton"
+    )]
     pub bigblock: bool,
 
     /// Run a Rhai script file
@@ -227,8 +231,9 @@ This program has NO WARRANTY
 
 fn parse_cpu_key_hex(text: &str) -> Result<([u8; 16], String), CliError> {
     let clean = text.trim();
-    let bytes = crate::builder::nand::parser::hex_to_bytes(clean)
-        .map_err(|e| CliError::Message(format!("Invalid formatting for CPU Key '{}': {}", clean, e)))?;
+    let bytes = crate::builder::nand::parser::hex_to_bytes(clean).map_err(|e| {
+        CliError::Message(format!("Invalid formatting for CPU Key '{}': {}", clean, e))
+    })?;
     let key: [u8; 16] = bytes
         .as_slice()
         .try_into()
@@ -237,7 +242,10 @@ fn parse_cpu_key_hex(text: &str) -> Result<([u8; 16], String), CliError> {
     Ok((key, normalized))
 }
 
-fn load_cpu_key(args: &GgxArgs, data_dir: &PathBuf) -> Result<Option<([u8; 16], String)>, CliError> {
+fn load_cpu_key(
+    args: &GgxArgs,
+    data_dir: &PathBuf,
+) -> Result<Option<([u8; 16], String)>, CliError> {
     if let Some(key) = &args.cpu_key {
         return parse_cpu_key_hex(key).map(Some);
     }
@@ -278,7 +286,9 @@ fn apply_cli_option_override(options: &mut OptionsIni, key: &str, value: &str) {
         "noenter" => options.core.noenter = Some(value.eq_ignore_ascii_case("true")),
         "noremap" => options.core_builder.noremap = Some(value.eq_ignore_ascii_case("true")),
         "nandmu" => options.core_builder.nandmu = Some(value.eq_ignore_ascii_case("true")),
-        "nochainpatch" => options.core_builder.nochainpatch = Some(value.eq_ignore_ascii_case("true")),
+        "nochainpatch" => {
+            options.core_builder.nochainpatch = Some(value.eq_ignore_ascii_case("true"))
+        }
         "bigblock" => options.core_builder.bigblock = Some(value.eq_ignore_ascii_case("true")),
         "cputemp" => options.smc_config.cputemp = Some(value.to_string()),
         "gputemp" => options.smc_config.gputemp = Some(value.to_string()),
@@ -315,9 +325,7 @@ fn resolve_ini_target(
     bl_ext: Option<&String>,
     ini_dir: &PathBuf,
 ) -> (PathBuf, String) {
-    let ini_suffix = ini_ext
-        .map(|ext| format!("_{}", ext))
-        .unwrap_or_default();
+    let ini_suffix = ini_ext.map(|ext| format!("_{}", ext)).unwrap_or_default();
     let ini_filename = format!("_{}{}.ini", build_type, ini_suffix);
     let ini_path = ini_dir.join(&ini_filename);
 
@@ -343,7 +351,10 @@ fn build_config_from_args(args: &GgxArgs) -> Result<BuildConfig, CliError> {
     let console_base = format!("{:?}", console_type).to_lowercase();
 
     let ini_dir = args.data_dir.clone().unwrap_or_else(|| PathBuf::from("."));
-    let data_dir = args.fw_dir.clone().unwrap_or_else(|| PathBuf::from("mydata"));
+    let data_dir = args
+        .fw_dir
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("mydata"));
     let common_dir = args
         .common_dir
         .clone()
@@ -459,17 +470,13 @@ pub fn ggx_cli() {
     info!("{}", LICENSE_TEXT);
 
     let (session, session_prepared) = match args.mode.clone() {
-        Some(GgxMode::Build { .. }) | None => {
-            match create_build(&args) {
-                Ok(built_session) => {
-                    (built_session, true)
-                }
-                Err(e) => {
-                    error!("[cli] Build Setup Failed: {}", e);
-                    (Session::default(), false)
-                }
+        Some(GgxMode::Build { .. }) | None => match create_build(&args) {
+            Ok(built_session) => (built_session, true),
+            Err(e) => {
+                error!("[cli] Build Setup Failed: {}", e);
+                (Session::default(), false)
             }
-        }
+        },
         Some(GgxMode::Extract { .. }) => {
             let mut session = Session::default();
             if let Err(e) = handle_extract(&args, &mut session) {
@@ -725,7 +732,11 @@ fn create_build(args: &GgxArgs) -> Result<Session, CliError> {
                 PathBuf::from(filename)
             } else {
                 let p = data_dir.join(filename);
-                if p.exists() { p } else { ini_dir.join(filename) }
+                if p.exists() {
+                    p
+                } else {
+                    ini_dir.join(filename)
+                }
             };
 
             let offset = if offset_str.starts_with("0x") {

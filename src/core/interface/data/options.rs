@@ -495,8 +495,12 @@ pub fn parse_options_ini(content: &str) -> Result<OptionsIni, OptionsIniError> {
                     "xellbutton2" => options.builder.xellbutton2 = Some(value.clone()),
                     "cygnos" => options.jtag.cygnos = Some(value.eq_ignore_ascii_case("true")),
                     "demon" => options.jtag.demon = Some(value.eq_ignore_ascii_case("true")),
-                    "smcnoeject" => options.jtag.smcnoeject = Some(value.eq_ignore_ascii_case("true")),
-                    "smcnoblink" => options.jtag.smcnoblink = Some(value.eq_ignore_ascii_case("true")),
+                    "smcnoeject" => {
+                        options.jtag.smcnoeject = Some(value.eq_ignore_ascii_case("true"))
+                    }
+                    "smcnoblink" => {
+                        options.jtag.smcnoblink = Some(value.eq_ignore_ascii_case("true"))
+                    }
                     "patchsmc" => options.jtag.patchsmc = Some(value.eq_ignore_ascii_case("true")),
                     "olddvd" => options.jtag.olddvd = Some(value.eq_ignore_ascii_case("true")),
                     "nodvd" => options.jtag.nodvd = Some(value.eq_ignore_ascii_case("true")),
@@ -504,22 +508,37 @@ pub fn parse_options_ini(content: &str) -> Result<OptionsIni, OptionsIniError> {
                     "nomobile" => {
                         options.core_builder.nomobile = Some(value.eq_ignore_ascii_case("true"))
                     }
-                    "noremap" => options.core_builder.noremap = Some(value.eq_ignore_ascii_case("true")),
-                    "noecdremap" => options.builder.noecdremap = Some(value.eq_ignore_ascii_case("true")),
-                    "nandmu" => options.core_builder.nandmu = Some(value.eq_ignore_ascii_case("true")),
-                    "nosecurity" => options.core_builder.nosecurity = Some(value.eq_ignore_ascii_case("true")),
+                    "noremap" => {
+                        options.core_builder.noremap = Some(value.eq_ignore_ascii_case("true"))
+                    }
+                    "noecdremap" => {
+                        options.builder.noecdremap = Some(value.eq_ignore_ascii_case("true"))
+                    }
+                    "nandmu" => {
+                        options.core_builder.nandmu = Some(value.eq_ignore_ascii_case("true"))
+                    }
+                    "nosecurity" => {
+                        options.core_builder.nosecurity = Some(value.eq_ignore_ascii_case("true"))
+                    }
                     "nosusecurity" => {
                         options.core_builder.nosusecurity = Some(value.eq_ignore_ascii_case("true"))
                     }
-                    "noecc" => options.core_builder.noecc = Some(value.eq_ignore_ascii_case("true")),
+                    "noecc" => {
+                        options.core_builder.noecc = Some(value.eq_ignore_ascii_case("true"))
+                    }
                     "bigblock" => {
                         options.core_builder.bigblock = Some(value.eq_ignore_ascii_case("true"))
                     }
-                    "noflashfs" => options.builder.noflashfs = Some(value.eq_ignore_ascii_case("true")),
-                    "dualpatchslots" => {
-                        options.core_builder.dualpatchslots = Some(value.eq_ignore_ascii_case("true"))
+                    "noflashfs" => {
+                        options.builder.noflashfs = Some(value.eq_ignore_ascii_case("true"))
                     }
-                    "smcnocheck" => options.builder.smcnocheck = Some(value.eq_ignore_ascii_case("true")),
+                    "dualpatchslots" => {
+                        options.core_builder.dualpatchslots =
+                            Some(value.eq_ignore_ascii_case("true"))
+                    }
+                    "smcnocheck" => {
+                        options.builder.smcnocheck = Some(value.eq_ignore_ascii_case("true"))
+                    }
                     "noenter" => options.core.noenter = Some(value.eq_ignore_ascii_case("true")),
                     "nolog" => options.core.nolog = Some(value.eq_ignore_ascii_case("true")),
                     "noinfo" => options.core.noinfo = Some(value.eq_ignore_ascii_case("true")),
@@ -552,7 +571,9 @@ pub fn parse_options_ini(content: &str) -> Result<OptionsIni, OptionsIniError> {
                     "consoleid" => options.keyvault.consoleid = Some(value.clone()),
                     "osig" => options.keyvault.osig = Some(value.clone()),
                     "mfdate" => options.keyvault.mfdate = Some(value.clone()),
-                    "nofcrt" => options.core_builder.nofcrt = Some(value.eq_ignore_ascii_case("true")),
+                    "nofcrt" => {
+                        options.core_builder.nofcrt = Some(value.eq_ignore_ascii_case("true"))
+                    }
                     "mfg" => options.core_builder.mfg = Some(value.eq_ignore_ascii_case("true")),
                     "xsb" => options.core_builder.xsb = Some(value.eq_ignore_ascii_case("true")),
                     "full_image" => {

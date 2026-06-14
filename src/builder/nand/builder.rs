@@ -177,11 +177,7 @@ impl NandSkeleton {
             })
             .unwrap_or((false, false, false, false));
 
-        let has_khv_patches = self
-            .extra
-            .khvpatch
-            .as_ref()
-            .is_some_and(|p| !p.is_empty());
+        let has_khv_patches = self.extra.khvpatch.as_ref().is_some_and(|p| !p.is_empty());
 
         if !has_ce && !has_cf && !has_cg && has_xell {
             return InferredImageType::Xell;
@@ -315,7 +311,9 @@ impl NandSkeleton {
                                 );
                             }
                         } else {
-                            warn!("[builder] CB_A has no derived key and nonce-based fallback failed");
+                            warn!(
+                                "[builder] CB_A has no derived key and nonce-based fallback failed"
+                            );
                         }
                     } else {
                         warn!(
@@ -771,26 +769,24 @@ impl NandSkeleton {
                 }
             }
             NandLayout::Emmc => 0xB0000,
-            NandLayout::Sb | NandLayout::Xsb => {
-                match inferred {
-                    InferredImageType::DevGl
-                    | InferredImageType::RgLoader
-                    | InferredImageType::XdkBuild => 0xD0000,
-                    InferredImageType::Glitch3 => 0xB0000,
-                    _ => {
-                        if build_profile_l == "glitch2m"
-                            || build_profile_l.contains("glitch2m")
-                            || build_profile_l.contains("glitch")
-                            || build_profile_l.contains("glitchr")
-                            || build_profile_l.contains("glitch2r")
-                        {
-                            0xB0000
-                        } else {
-                            0x70000
-                        }
+            NandLayout::Sb | NandLayout::Xsb => match inferred {
+                InferredImageType::DevGl
+                | InferredImageType::RgLoader
+                | InferredImageType::XdkBuild => 0xD0000,
+                InferredImageType::Glitch3 => 0xB0000,
+                _ => {
+                    if build_profile_l == "glitch2m"
+                        || build_profile_l.contains("glitch2m")
+                        || build_profile_l.contains("glitch")
+                        || build_profile_l.contains("glitchr")
+                        || build_profile_l.contains("glitch2r")
+                    {
+                        0xB0000
+                    } else {
+                        0x70000
                     }
                 }
-            }
+            },
         };
 
         // If the bootchain has realigned/extended into the CF area, shift CF to the next 64KB block
@@ -847,12 +843,7 @@ impl NandSkeleton {
             let bm_count = page_size / 2;
             let fn_count = page_size / 0x20;
 
-            let non_deleted_count = flashfs
-                .root
-                .entries
-                .iter()
-                .filter(|e| !e.deleted)
-                .count();
+            let non_deleted_count = flashfs.root.entries.iter().filter(|e| !e.deleted).count();
             let required_data_blocks: usize = flashfs
                 .root
                 .entries
@@ -1204,9 +1195,7 @@ impl NandSkeleton {
         });
         let patch_slot_size: u32 = 0x10000;
 
-        let xell_payloads = [
-            (self.bootloaders.xell.as_ref(), false),
-        ];
+        let xell_payloads = [(self.bootloaders.xell.as_ref(), false)];
 
         for (xell_opt, _is_rebooter) in xell_payloads {
             if let Some(xell) = xell_opt {
@@ -1464,12 +1453,7 @@ impl NandSkeleton {
         }
 
         if layout == NandLayout::Emmc {
-            corona::write_back(
-                &mut logical_image,
-                corona_fs,
-                &flashfs.root,
-                mobile,
-            )?;
+            corona::write_back(&mut logical_image, corona_fs, &flashfs.root, mobile)?;
         }
 
         Ok(logical_image)
@@ -1513,7 +1497,9 @@ impl NandSkeleton {
                 if let Some(rc4_key) = cb_b.derived_key() {
                     cb_b.recalculate_per_box_digest(&cpukey, &rc4_key, &smc_hash);
                 } else {
-                    log::warn!("[builder] CB_B has no derived key, skipping per-box digest recalculation");
+                    log::warn!(
+                        "[builder] CB_B has no derived key, skipping per-box digest recalculation"
+                    );
                 }
             }
         }
@@ -1542,21 +1528,13 @@ impl NandSkeleton {
         };
 
         if let Some(h) = current_max {
-            if let Some(meta) = update
-                .cf_0
-                .as_mut()
-                .and_then(|cf| cf.metadata.as_mut())
-            {
+            if let Some(meta) = update.cf_0.as_mut().and_then(|cf| cf.metadata.as_mut()) {
                 if meta.lockdown_value != h {
                     info!("[builder] Syncing CF_0 LDV to target: {}", h);
                     meta.lockdown_value = h;
                 }
             }
-            if let Some(meta) = update
-                .cf_1
-                .as_mut()
-                .and_then(|cf| cf.metadata.as_mut())
-            {
+            if let Some(meta) = update.cf_1.as_mut().and_then(|cf| cf.metadata.as_mut()) {
                 if meta.lockdown_value != h {
                     info!("[builder] Syncing CF_1 LDV to target: {}", h);
                     meta.lockdown_value = h;
@@ -1655,13 +1633,13 @@ impl NandSkeleton {
         }
 
         if let Some(cb) = patch.cb {
-                if let Some(cbb_bl) = &mut self.bootloaders.cb_b {
-                    info!("[builder] Split/Glitch3 CB: Applying primary patch section to CB_B");
-                    apply_records(&cb.records, &mut cbb_bl.data).map_err(|e| e.to_string())?;
-                } else if let Some(cb_bl) = &mut self.bootloaders.cb {
-                    info!("[builder] Single CB: Applying patches to CB");
-                    apply_records(&cb.records, &mut cb_bl.data).map_err(|e| e.to_string())?;
-                }
+            if let Some(cbb_bl) = &mut self.bootloaders.cb_b {
+                info!("[builder] Split/Glitch3 CB: Applying primary patch section to CB_B");
+                apply_records(&cb.records, &mut cbb_bl.data).map_err(|e| e.to_string())?;
+            } else if let Some(cb_bl) = &mut self.bootloaders.cb {
+                info!("[builder] Single CB: Applying patches to CB");
+                apply_records(&cb.records, &mut cb_bl.data).map_err(|e| e.to_string())?;
+            }
         }
 
         if let Some(cd) = patch.cd {

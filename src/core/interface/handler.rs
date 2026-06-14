@@ -1,11 +1,11 @@
 use crate::builder::nand::builder::NandSkeleton;
 use crate::builder::nand::parser::hex_to_bytes;
 use crate::builder::nand::types::{layout_calculator, SouthbridgeType};
+use crate::core::images::blocks::{LbaMap, SpareMetaType};
+use crate::core::images::gxpatch::parse_patch_binary;
 use crate::core::interface::data::filesearch::IniSearch;
 use crate::core::interface::data::nandsearch::NandSearch;
 use crate::core::interface::data::Session;
-use crate::core::images::blocks::{LbaMap, SpareMetaType};
-use crate::core::images::gxpatch::parse_patch_binary;
 use log::{error, info, warn};
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
@@ -253,7 +253,13 @@ impl Executor {
         };
 
         if layout != crate::core::images::blocks::NandLayout::Emmc {
-            if session.build_config.options.core_builder.xsb.unwrap_or(false) {
+            if session
+                .build_config
+                .options
+                .core_builder
+                .xsb
+                .unwrap_or(false)
+            {
                 layout = crate::core::images::blocks::NandLayout::Xsb;
             }
             if session
@@ -496,9 +502,11 @@ impl Executor {
                     target_filenames.insert(e.filename.to_lowercase());
                 }
             }
-            Err(_) => return Err(HandlerError::IniRead {
-                path: ini_path.clone(),
-            }),
+            Err(_) => {
+                return Err(HandlerError::IniRead {
+                    path: ini_path.clone(),
+                })
+            }
         }
 
         info!(
@@ -610,7 +618,9 @@ impl Executor {
         }
 
         // CPU key (cpukey.txt / cpukey.bin in data dir)
-        if session.build_config.pending_key.is_none() && session.build_config.options.keys.cpukey.is_none() {
+        if session.build_config.pending_key.is_none()
+            && session.build_config.options.keys.cpukey.is_none()
+        {
             let key_txt = data_dir.join("cpukey.txt");
             let key_bin = data_dir.join("cpukey.bin");
             if key_bin.exists() {
@@ -643,7 +653,14 @@ impl Executor {
             "kv.bin",
             "keyvault.bin",
         ] {
-            if name == &"fcrt.bin" && session.build_config.options.core_builder.nofcrt.unwrap_or(false) {
+            if name == &"fcrt.bin"
+                && session
+                    .build_config
+                    .options
+                    .core_builder
+                    .nofcrt
+                    .unwrap_or(false)
+            {
                 continue;
             }
             let p = data_dir.join(name);
@@ -734,7 +751,8 @@ impl Executor {
 
                 if let Some(meta) = &kv.metadata {
                     if session.build_config.options.keyvault.gameregion.is_none() {
-                        session.build_config.options.keyvault.gameregion = Some(format!("0x{:04X}", meta.region));
+                        session.build_config.options.keyvault.gameregion =
+                            Some(format!("0x{:04X}", meta.region));
                     }
                     if session.build_config.options.keyvault.dvdkey.is_none() {
                         session.build_config.options.keyvault.dvdkey =
@@ -1011,7 +1029,10 @@ impl Executor {
 
     /// Applies a batch of signature patches (JSON format) to the active NAND's decrypted SMC.
     /// Returns the total number of patches applied.
-    pub fn apply_smc_signature_batch(session: &mut Session, json_str: &str) -> Result<usize, HandlerError> {
+    pub fn apply_smc_signature_batch(
+        session: &mut Session,
+        json_str: &str,
+    ) -> Result<usize, HandlerError> {
         if let Some(nand) = &mut session.active_nand {
             info!("[session] Applying signature batch to SMC...");
             let mut smc = crate::builder::chain::smc::RawSmc::new(nand.extra.smc.clone());
@@ -1054,15 +1075,17 @@ impl Executor {
                 error: e.to_string(),
             })
         } else {
-            s.parse::<u8>()
-                .map_err(|e| HandlerError::InvalidDecimalU8 {
-                    value: s.to_string(),
-                    error: e.to_string(),
-                })
+            s.parse::<u8>().map_err(|e| HandlerError::InvalidDecimalU8 {
+                value: s.to_string(),
+                error: e.to_string(),
+            })
         }
     }
 
-    pub fn execute_command(session: &mut Session, command: InternalCommand) -> Result<(), HandlerError> {
+    pub fn execute_command(
+        session: &mut Session,
+        command: InternalCommand,
+    ) -> Result<(), HandlerError> {
         match command {
             InternalCommand::ExtractAll {
                 output_dir,
@@ -1328,9 +1351,7 @@ impl Executor {
                 let ini_filename = format!("_{}{}.ini", build_type, ini_suffix);
                 let ini_path = ini_dir.join(&ini_filename);
                 let console_section_base = match console.as_str() {
-                    "jasper256" | "jasper512" | "jasperbb" | "jasperbigffs" => {
-                        "jasper".to_string()
-                    }
+                    "jasper256" | "jasper512" | "jasperbb" | "jasperbigffs" => "jasper".to_string(),
                     "trinitybb" | "trinitybigffs" => "trinity".to_string(),
                     "corona4g" => "corona".to_string(),
                     "winchester4g" => "winchester".to_string(),
@@ -1341,25 +1362,21 @@ impl Executor {
                     None => console_section_base,
                 };
 
-                let ini = crate::core::interface::data::xeini::parse_xe_ini(&ini_path, &console_section)
-                    .map_err(|_| HandlerError::IniRead {
-                        path: ini_path.clone(),
-                    })?;
+                let ini =
+                    crate::core::interface::data::xeini::parse_xe_ini(&ini_path, &console_section)
+                        .map_err(|_| HandlerError::IniRead {
+                            path: ini_path.clone(),
+                        })?;
 
                 let cpukey = if let Some(k) = session.build_config.pending_key {
                     k
                 } else if let Some(k) = &session.build_config.options.keys.cpukey {
-                    let bytes = hex_to_bytes(k)
-                        .map_err(|e| {
-                            HandlerError::message(format!("Build: invalid CPU key '{}': {}", k, e))
-                        })?;
-                    let arr: [u8; 16] = bytes
-                        .try_into()
-                        .map_err(|_| {
-                            HandlerError::message(
-                                "Build: CPU key must be 32 hex chars / 16 bytes",
-                            )
-                        })?;
+                    let bytes = hex_to_bytes(k).map_err(|e| {
+                        HandlerError::message(format!("Build: invalid CPU key '{}': {}", k, e))
+                    })?;
+                    let arr: [u8; 16] = bytes.try_into().map_err(|_| {
+                        HandlerError::message("Build: CPU key must be 32 hex chars / 16 bytes")
+                    })?;
                     arr
                 } else {
                     return Err(HandlerError::message("Build: CPU key not set"));
@@ -1381,22 +1398,26 @@ impl Executor {
                     .find(|p| p.exists())
                     .cloned()
                     .ok_or_else(|| {
-                        HandlerError::message("Build: no NAND image found in data dir for NandSearch")
+                        HandlerError::message(
+                            "Build: no NAND image found in data dir for NandSearch",
+                        )
                     })?;
-                let raw_nand = fs::read(&nand_path)
-                    .map_err(|e| {
-                        HandlerError::message(format!(
-                            "Build: failed to read NAND image {:?}: {}",
-                            nand_path, e
-                        ))
-                    })?;
-                let nand_search = NandSearch::new(ini.clone(), &raw_nand, cpukey)
-                    .map_err(|e| HandlerError::message(format!("Build: NandSearch failed: {}", e)))?;
+                let raw_nand = fs::read(&nand_path).map_err(|e| {
+                    HandlerError::message(format!(
+                        "Build: failed to read NAND image {:?}: {}",
+                        nand_path, e
+                    ))
+                })?;
+                let nand_search = NandSearch::new(ini.clone(), &raw_nand, cpukey).map_err(|e| {
+                    HandlerError::message(format!("Build: NandSearch failed: {}", e))
+                })?;
 
                 let mut allow: HashSet<String> = HashSet::new();
                 for fs_entry in &ini.flashfs {
                     let basename =
-                        crate::core::interface::data::xeini::strip_flashfs_path_indicator(&fs_entry.filename);
+                        crate::core::interface::data::xeini::strip_flashfs_path_indicator(
+                            &fs_entry.filename,
+                        );
                     allow.insert(basename.to_lowercase());
                 }
                 for name in &[
@@ -1462,10 +1483,22 @@ impl Executor {
                 };
 
                 if layout != crate::core::images::blocks::NandLayout::Emmc {
-                    if session.build_config.options.core_builder.xsb.unwrap_or(false) {
+                    if session
+                        .build_config
+                        .options
+                        .core_builder
+                        .xsb
+                        .unwrap_or(false)
+                    {
                         layout = crate::core::images::blocks::NandLayout::Xsb;
                     }
-                    if session.build_config.options.core_builder.bigblock.unwrap_or(false) {
+                    if session
+                        .build_config
+                        .options
+                        .core_builder
+                        .bigblock
+                        .unwrap_or(false)
+                    {
                         layout = crate::core::images::blocks::NandLayout::Bb;
                     }
                 }
@@ -1542,13 +1575,7 @@ impl Executor {
                     .as_ref()
                     .map(|m| m.ldv)
                     .filter(|v| *v != 0)
-                    .or_else(|| {
-                        nand_search
-                            .cf_1
-                            .as_ref()
-                            .map(|m| m.ldv)
-                            .filter(|v| *v != 0)
-                    })
+                    .or_else(|| nand_search.cf_1.as_ref().map(|m| m.ldv).filter(|v| *v != 0))
                     .unwrap_or(cb_ldv);
 
                 let mut pd_sync = pairing;
@@ -1603,7 +1630,13 @@ impl Executor {
                 fresh_nand.extra.lba_map = fresh_lba;
                 fresh_nand.options.total_blocks = total_blocks;
 
-                if !session.build_config.options.core_builder.nomobile.unwrap_or(false) {
+                if !session
+                    .build_config
+                    .options
+                    .core_builder
+                    .nomobile
+                    .unwrap_or(false)
+                {
                     let mobile = fresh_nand
                         .mobile
                         .get_or_insert_with(crate::builder::filesystem::mobile::MobileStore::new);
@@ -1628,11 +1661,19 @@ impl Executor {
                     "odd.bin",
                 ] {
                     if let Some(data) = security_assets.get(*name).cloned() {
-                        merged_flashfs_assets.entry((*name).to_string()).or_insert(data);
+                        merged_flashfs_assets
+                            .entry((*name).to_string())
+                            .or_insert(data);
                     }
                 }
 
-                if !session.build_config.options.builder.noflashfs.unwrap_or(false) {
+                if !session
+                    .build_config
+                    .options
+                    .builder
+                    .noflashfs
+                    .unwrap_or(false)
+                {
                     let flashfs = fresh_nand
                         .flashfs
                         .get_or_insert_with(crate::builder::filesystem::flashfs::FlashFS::new);
@@ -1678,13 +1719,18 @@ impl Executor {
                         3,
                         0x30,
                     );
-                    root.create_defaults(fresh_nand.image.len(), &fresh_nand.options.layout, fs_start);
+                    root.create_defaults(
+                        fresh_nand.image.len(),
+                        &fresh_nand.options.layout,
+                        fs_start,
+                    );
                     for (name, content) in merged_flashfs_assets {
                         let key = name.to_lowercase();
                         if !allow.contains(&key) {
                             continue;
                         }
-                        let mut entry = crate::builder::filesystem::flashfs::FileSystemEntry::new(0);
+                        let mut entry =
+                            crate::builder::filesystem::flashfs::FileSystemEntry::new(0);
                         entry.file_name = key;
                         entry.data = content;
                         entry.size = entry.data.len() as u32;
@@ -1733,9 +1779,16 @@ impl Executor {
                     .build_in_place(cpukey)
                     .map_err(|e| HandlerError::message(format!("Build failed: {}", e)))?;
 
-                if session.build_config.options.core_builder.noecc.unwrap_or(false) {
-                    std::fs::write(&output, &clean_bytes)
-                        .map_err(|e| HandlerError::message(format!("Failed to write output: {}", e)))?;
+                if session
+                    .build_config
+                    .options
+                    .core_builder
+                    .noecc
+                    .unwrap_or(false)
+                {
+                    std::fs::write(&output, &clean_bytes).map_err(|e| {
+                        HandlerError::message(format!("Failed to write output: {}", e))
+                    })?;
                     info!(
                         "[session] Build complete: wrote logical image (noecc) to '{}' (Size: 0x{:X})",
                         output.display(),
@@ -1792,7 +1845,13 @@ impl Executor {
                     }
                 }
 
-                let mobile_meta = if session.build_config.options.core_builder.nomobile.unwrap_or(false) {
+                let mobile_meta = if session
+                    .build_config
+                    .options
+                    .core_builder
+                    .nomobile
+                    .unwrap_or(false)
+                {
                     std::collections::HashMap::new()
                 } else {
                     built_nand
@@ -1840,9 +1899,10 @@ impl Executor {
                         let mut allow: std::collections::HashSet<String> =
                             std::collections::HashSet::new();
                         for fs_entry in &ini.flashfs {
-                            let basename = crate::core::interface::data::xeini::strip_flashfs_path_indicator(
-                                &fs_entry.filename,
-                            );
+                            let basename =
+                                crate::core::interface::data::xeini::strip_flashfs_path_indicator(
+                                    &fs_entry.filename,
+                                );
                             allow.insert(basename.to_lowercase());
                         }
                         for name in &[
@@ -1878,8 +1938,7 @@ impl Executor {
                                     search.result.bootloader_assets;
                                 session.build_assets.security_assets =
                                     search.result.security_assets;
-                                session.build_assets.flashfs_assets =
-                                    search.result.flashfs_assets;
+                                session.build_assets.flashfs_assets = search.result.flashfs_assets;
 
                                 // Security files that live in the FlashFS (not at fixed offsets).
                                 // Promote them into flashfs_assets so FinalizeFlashfs/build_from_memory
@@ -1892,11 +1951,8 @@ impl Executor {
                                     "secdata.bin",
                                     "odd.bin",
                                 ] {
-                                    if let Some(data) = session
-                                        .build_assets
-                                        .security_assets
-                                        .get(*name)
-                                        .cloned()
+                                    if let Some(data) =
+                                        session.build_assets.security_assets.get(*name).cloned()
                                     {
                                         session
                                             .build_assets
@@ -1912,7 +1968,9 @@ impl Executor {
                                     bootloaders: &session.build_assets.bootloader_assets,
                                     security: &session.build_assets.security_assets,
                                 };
-                                match crate::core::interface::data::xeini::apply_xe_ini(nand, ini, pending) {
+                                match crate::core::interface::data::xeini::apply_xe_ini(
+                                    nand, ini, pending,
+                                ) {
                                     Ok(updated_nand) => {
                                         session.active_nand = Some(updated_nand);
                                         info!("[session] INI bootloaders and assets applied to NAND skeleton.");
@@ -2042,14 +2100,13 @@ impl Executor {
                     return Ok(());
                 };
 
-                let ecc_raw = fs::read(&path)
-                    .map_err(|e| {
-                        HandlerError::message(format!(
-                            "Failed to read ECC file '{}': {}",
-                            path.display(),
-                            e
-                        ))
-                    })?;
+                let ecc_raw = fs::read(&path).map_err(|e| {
+                    HandlerError::message(format!(
+                        "Failed to read ECC file '{}': {}",
+                        path.display(),
+                        e
+                    ))
+                })?;
 
                 let (ecc_clean, ecc_layout, _ecc_lba) =
                     crate::core::images::blocks::NandProcessor::preprocess_nand_with_lba_options(
@@ -2160,7 +2217,8 @@ impl Executor {
                             } else {
                                 "single"
                             };
-                            let (_, _, phys_fs_block) = layout_calculator(sb, chain_profile, layout);
+                            let (_, _, phys_fs_block) =
+                                layout_calculator(sb, chain_profile, layout);
                             if phys_fs_block != 0 {
                                 phys_fs_block as u16
                             } else {
@@ -2178,12 +2236,12 @@ impl Executor {
                         Ok(new_root) => {
                             flashfs.root = new_root;
                             if matches!(layout, crate::core::images::blocks::NandLayout::Emmc) {
-                                let corona_slots = nand
-                                    .corona_fs
-                                    .get_or_insert_with(|| [Default::default(), Default::default()]);
-                                let mobile = nand
-                                    .mobile
-                                    .get_or_insert_with(crate::builder::filesystem::mobile::MobileStore::new);
+                                let corona_slots = nand.corona_fs.get_or_insert_with(|| {
+                                    [Default::default(), Default::default()]
+                                });
+                                let mobile = nand.mobile.get_or_insert_with(
+                                    crate::builder::filesystem::mobile::MobileStore::new,
+                                );
                                 if let Err(e) = crate::builder::filesystem::corona::write_back(
                                     &mut nand.image,
                                     corona_slots,
@@ -2274,10 +2332,9 @@ impl Executor {
                         .update
                         .get_or_insert_with(crate::builder::nand::types::NandUpdate::default);
 
-                    let data = fs::read(&path)
-                        .map_err(|e| {
-                            HandlerError::message(format!("Failed to read swap bootloader: {}", e))
-                        })?;
+                    let data = fs::read(&path).map_err(|e| {
+                        HandlerError::message(format!("Failed to read swap bootloader: {}", e))
+                    })?;
                     match bl_type.to_lowercase().as_str() {
                         "cb" | "cba" | "cbb" | "cbx" => {
                             let bl = crate::builder::chain::cb::BootloaderCb::parse(&data)
@@ -2402,7 +2459,10 @@ impl Executor {
                             .unwrap_or_default()
                             .to_string_lossy()
                             .to_lowercase();
-                        session.build_assets.pending_assets.insert(name.clone(), data);
+                        session
+                            .build_assets
+                            .pending_assets
+                            .insert(name.clone(), data);
                         info!(
                             "[session] Discovered asset '{}' added to session pool.",
                             name
@@ -2556,10 +2616,7 @@ impl Executor {
                             println!(" -> STFS extraction complete.");
                         }
                         Err(e) => {
-                            return Err(HandlerError::message(format!(
-                                "STFS Format Error: {}",
-                                e
-                            )))
+                            return Err(HandlerError::message(format!("STFS Format Error: {}", e)))
                         }
                     },
                     Err(e) => {
