@@ -280,6 +280,11 @@ impl Executor {
             .build_config
             .pending_key
             .or_else(|| source_nand.and_then(|nand| nand.cpukey));
+        if let Some(source) = source_nand {
+            if source.header.has_copyright_bytes() {
+                skeleton.header.copyright = source.header.copyright;
+            }
+        }
         skeleton.options.motherboard = motherboard;
         Ok(skeleton)
     }

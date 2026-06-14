@@ -302,6 +302,19 @@ impl NandHeader {
     const XEBUILD_XELL_ALT_POC_OFFSET: usize = 0x3E;
     const XEBUILD_XELL_POC_OFFSET: usize = 0x3F;
 
+    pub fn default_copyright() -> [u8; 0x40] {
+        let mut copyright = [0u8; 0x40];
+        let source = b"\xA9 2004-2009 Microsoft Corporation. All rights reserved.";
+        copyright[..source.len()].copy_from_slice(source);
+        copyright[0x3B] = 1;
+        copyright[0x3F] = 0x12;
+        copyright
+    }
+
+    pub fn has_copyright_bytes(&self) -> bool {
+        self.copyright.iter().any(|&b| b != 0)
+    }
+
     pub fn validate(&self) -> Result<(), crate::builder::nand::types::BuilderError> {
         if self.prefix.magic.get() != Self::MAGIC {
             return Err(crate::builder::nand::types::BuilderError::InvalidMagic {
