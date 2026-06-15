@@ -128,6 +128,22 @@ impl NandSkeleton {
         }
     }
 
+    fn inferred_smc_type(&self) -> Option<crate::builder::chain::smc::SmcType> {
+        self.extra
+            .smc_metadata
+            .as_ref()
+            .map(|meta| meta.smc_type)
+            .or_else(|| {
+                if self.extra.smc.is_empty() {
+                    return None;
+                }
+
+                let mut smc = crate::builder::chain::smc::RawSmc::new(self.extra.smc.clone());
+                smc.ensure_decrypted();
+                smc.metadata.map(|meta| meta.smc_type)
+            })
+    }
+
     pub fn infer_image_type(&self) -> InferredImageType {
         let has_cb = self.bootloaders.cb.is_some();
         let has_cb_a = self.bootloaders.cb_a.is_some();
@@ -178,6 +194,13 @@ impl NandSkeleton {
             .unwrap_or((false, false, false, false));
 
         let has_khv_patches = self.extra.khvpatch.as_ref().is_some_and(|p| !p.is_empty());
+        let smc_type = self.inferred_smc_type();
+        let smc_is_glitch = matches!(
+            smc_type,
+            Some(crate::builder::chain::smc::SmcType::Glitch)
+                | Some(crate::builder::chain::smc::SmcType::RJtag)
+        );
+        let smc_is_retail = matches!(smc_type, Some(crate::builder::chain::smc::SmcType::Retail));
 
         if !has_ce && !has_cf && !has_cg && has_xell {
             return InferredImageType::Xell;
@@ -205,11 +228,18 @@ impl NandSkeleton {
             return InferredImageType::XdkBuild;
         }
 
-        if has_cb_a && has_cb_x && has_cb_b && has_cd && has_ce && has_cf && has_cg {
+        if has_cb_a && has_cb_x && has_cb_b && has_cd && has_ce && has_cf && has_cg && smc_is_glitch
+        {
             return InferredImageType::Glitch3;
         }
 
         if has_cb_a && has_cb_b && has_cd && has_ce && has_cf && has_cg {
+            if smc_is_glitch {
+                return InferredImageType::Glitch2;
+            }
+            if smc_is_retail {
+                return InferredImageType::RetailSplitCb;
+            }
             if has_khv_patches {
                 return InferredImageType::Glitch2;
             }
@@ -217,10 +247,20 @@ impl NandSkeleton {
         }
 
         if has_cb && has_cd && has_ce && has_cf && has_cg {
+            if smc_is_glitch {
+                return InferredImageType::Glitch1;
+            }
+            if smc_is_retail {
+                return InferredImageType::RetailSingleCb;
+            }
             if has_khv_patches {
                 return InferredImageType::Glitch1;
             }
             return InferredImageType::RetailSingleCb;
+        }
+
+        if has_cb_a && has_cb_x && has_cb_b && has_cd && has_ce && has_cf && has_cg {
+            return InferredImageType::Glitch3;
         }
 
         InferredImageType::Unknown

@@ -71,6 +71,9 @@ impl NandSkeleton {
             smc_offset, smc_size
         );
         let smc_data = image[smc_offset..smc_offset + smc_size].to_vec();
+        let mut smc_probe = crate::builder::chain::smc::RawSmc::new(smc_data.clone());
+        smc_probe.ensure_decrypted();
+        let smc_metadata = smc_probe.metadata.clone();
 
         let config_offset = header.smc_config_offset.get() as usize;
         let config_size = 0x10000;
@@ -101,7 +104,7 @@ impl NandSkeleton {
 
         let mut extra = NandExtra {
             smc: smc_data,
-            smc_metadata: None,
+            smc_metadata: smc_metadata.clone(),
             smc_config: config_data,
             keyvault: kv.data.clone(),
             fcrt: None,
@@ -120,7 +123,10 @@ impl NandSkeleton {
             &flashfs,
         )?;
 
-        let motherboard = MotherboardType::Unknown;
+        let motherboard = smc_metadata
+            .as_ref()
+            .map(|meta| MotherboardType::from_smc(meta.type_byte))
+            .unwrap_or(MotherboardType::Unknown);
 
         let mut final_flashfs = flashfs;
         if matches!(layout, NandLayout::Sb | NandLayout::Xsb) && final_flashfs.root.block_number < 0
@@ -162,12 +168,19 @@ impl NandSkeleton {
             build_options: BuildOptions::default(),
             options: NandConfig {
                 layout,
-                image_profile: (if bootloaders.cb_b.is_some() {
-                    "split"
-                } else {
-                    "single"
-                })
-                .to_string(),
+                image_profile: match smc_metadata.as_ref().map(|meta| meta.smc_type) {
+                    Some(crate::builder::chain::smc::SmcType::Retail) => "retail".to_string(),
+                    Some(crate::builder::chain::smc::SmcType::Glitch) => "glitch".to_string(),
+                    Some(crate::builder::chain::smc::SmcType::Jtag)
+                    | Some(crate::builder::chain::smc::SmcType::RJtag) => "jtag".to_string(),
+                    Some(crate::builder::chain::smc::SmcType::Cygnos) => "cygnos".to_string(),
+                    _ => (if bootloaders.cb_b.is_some() {
+                        "split"
+                    } else {
+                        "single"
+                    })
+                    .to_string(),
+                },
                 build_mode: BuildMode::Normal,
                 motherboard,
                 total_blocks,
