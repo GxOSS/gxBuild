@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import struct
 from pathlib import Path
 
@@ -38,6 +39,7 @@ MAGIC_NAMES = {
     0x4347: "CG",
     0x5343: "SC",
 }
+DECRYPTABLE_BOOTLOADERS = {"CB", "CD", "CE", "CF", "CG"}
 
 
 def sha256_hex(data: bytes) -> str:
@@ -52,6 +54,120 @@ def format_value(value: int) -> str:
 
 def load(path: Path) -> bytes:
     return path.read_bytes()
+
+
+def parse_hex_key(value: str, name: str) -> bytes:
+    compact = value.strip().replace(" ", "").replace("\t", "").replace("\n", "")
+    compact = compact.replace(":", "").replace("-", "")
+    if compact.lower().startswith("0x"):
+        compact = compact[2:]
+    if len(compact) % 2 != 0:
+        raise ValueError(f"{name} must contain an even number of hex characters")
+    try:
+        return bytes.fromhex(compact)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a hex string") from exc
+
+
+def load_key(value: str | None, file_path: Path | None, name: str) -> bytes | None:
+    if value and file_path:
+        raise ValueError(f"Provide either --{name} or --{name}-file, not both")
+    if value:
+        return parse_hex_key(value, name)
+    if file_path:
+        raw = load(file_path)
+        try:
+            text = raw.decode("ascii").strip()
+        except UnicodeDecodeError:
+            text = ""
+        if text:
+            try:
+                raw = parse_hex_key(text, name)
+            except ValueError:
+                pass
+        if not raw:
+            raise ValueError(f"{name} cannot be empty")
+        if len(raw) != 0x10:
+            raise ValueError(f"{name} must be 16 bytes")
+        return raw
+    return None
+
+
+def require_key_length(key: bytes | None, name: str) -> bytes | None:
+    if key is None:
+        return None
+    if len(key) != 0x10:
+        raise ValueError(f"{name} must be 16 bytes")
+    return key
+
+
+def load_and_validate_key(value: str | None, file_path: Path | None, name: str) -> bytes | None:
+    return require_key_length(load_key(value, file_path, name), name)
+
+
+def rc4_crypt(key: bytes, data: bytes) -> bytes:
+    s = list(range(256))
+    j = 0
+    for i in range(256):
+        j = (j + s[i] + key[i % len(key)]) & 0xFF
+        s[i], s[j] = s[j], s[i]
+
+    out = bytearray(len(data))
+    i = 0
+    j = 0
+    for pos, value in enumerate(data):
+        i = (i + 1) & 0xFF
+        j = (j + s[i]) & 0xFF
+        s[i], s[j] = s[j], s[i]
+        out[pos] = value ^ s[(s[i] + s[j]) & 0xFF]
+    return bytes(out)
+
+
+def hmac_sha1_16(secret: bytes, data: bytes) -> bytes:
+    return hmac.new(secret, data, hashlib.sha1).digest()[:0x10]
+
+
+def build_version(data: bytes) -> int:
+    if len(data) < 4:
+        return 0
+    return struct.unpack_from(">H", data, 0x02)[0]
+
+
+def decrypt_cb_1bl(section: bytes, secret_1bl: bytes) -> bytes:
+    key = hmac_sha1_16(secret_1bl, section[0x10:0x20])
+    return section[0:0x10] + key + rc4_crypt(key, section[0x20:])
+
+
+def decrypt_cb_cpu(section: bytes, previous_cb: bytes, cpu_key: bytes) -> bytes:
+    material = section[0x10:0x20] + cpu_key
+    key = hmac_sha1_16(previous_cb[0x10:0x20], material)
+    return section[0:0x10] + key + rc4_crypt(key, section[0x20:])
+
+
+def decrypt_cd(section: bytes, previous_cb: bytes, cpu_key: bytes | None) -> bytes:
+    key = hmac_sha1_16(previous_cb[0x10:0x20], section[0x10:0x20])
+    if cpu_key and build_version(section) >= 1920:
+        key = hmac_sha1_16(cpu_key, key)
+    return section[0:0x10] + key + rc4_crypt(key, section[0x20:])
+
+
+def decrypt_ce(section: bytes, cd_section: bytes) -> bytes:
+    key = hmac_sha1_16(cd_section[0x10:0x20], section[0x10:0x20])
+    return section[0:0x10] + key + rc4_crypt(key, section[0x20:])
+
+
+def decrypt_cf(section: bytes, secret_1bl: bytes) -> bytes:
+    key = hmac_sha1_16(secret_1bl, section[0x20:0x30])
+    return section[0:0x20] + key + rc4_crypt(key, section[0x30:])
+
+
+def decrypt_cg(section: bytes, cf_section: bytes) -> bytes:
+    key = hmac_sha1_16(cf_section[0x330:0x340], section[0x10:0x20])
+    return section[0:0x10] + key + rc4_crypt(key, section[0x20:])
+
+
+def aligned_bootloader_size(size: int) -> int:
+    return (size + 0xF) & ~0xF
 
 
 def bb_spare_offset_per_page(page: int) -> int:
@@ -206,6 +322,7 @@ def extract_slice(image: bytes, offset: int, size: int) -> bytes:
 def scan_bootloaders(image: bytes, start: int = 0x8000, end: int = 0x100000) -> list[dict[str, int | str]]:
     found: list[dict[str, int | str]] = []
     last_off = -0x1000
+    counts: dict[str, int] = {}
     for off in range(start, min(end, len(image) - 0x10), 0x10):
         magic, version, _pairing, _flags, entrypoint, size = struct.unpack_from(">HHHHII", image, off)
         if not (1888 <= version < 20000 and 0x1000 <= size < 0x2000000):
@@ -214,23 +331,111 @@ def scan_bootloaders(image: bytes, start: int = 0x8000, end: int = 0x100000) -> 
             continue
         if off - last_off <= 0x100:
             continue
+        name = MAGIC_NAMES[magic]
+        counts[name] = counts.get(name, 0) + 1
+        occurrence = counts[name]
+        label = f"{name}{occurrence}" if occurrence > 1 else name
         found.append(
             {
                 "offset": off,
                 "magic": magic,
-                "name": MAGIC_NAMES[magic],
+                "name": name,
+                "occurrence": occurrence,
+                "label": label,
                 "version": version,
                 "entrypoint": entrypoint,
                 "size": size,
+                "aligned_size": aligned_bootloader_size(size),
             }
         )
         last_off = off
-    counts: dict[str, int] = {}
-    for bl in found:
-        name = str(bl["name"])
-        counts[name] = counts.get(name, 0) + 1
-        bl["label"] = f"{name}{counts[name]}" if counts[name] > 1 else name
     return found
+
+
+def decrypt_bootloader_chain(
+    image: bytes,
+    chain: list[dict[str, int | str]],
+    secret_1bl: bytes | None,
+    cpu_key: bytes | None,
+) -> list[dict[str, object]]:
+    out: list[dict[str, object]] = []
+    last_cb: bytes | None = None
+    last_cd: bytes | None = None
+    last_cf: bytes | None = None
+
+    for bootloader in chain:
+        section = extract_slice(image, int(bootloader["offset"]), int(bootloader["aligned_size"]))
+        name = str(bootloader["name"])
+        occurrence = int(bootloader["occurrence"])
+        decrypted: bytes | None = None
+        decrypt_error: str | None = None
+
+        try:
+            if name == "CB":
+                if occurrence == 1:
+                    if secret_1bl is None:
+                        decrypt_error = "needs 1BL key"
+                    elif len(section) < 0x20:
+                        decrypt_error = "section too small"
+                    else:
+                        decrypted = decrypt_cb_1bl(section, secret_1bl)
+                else:
+                    if last_cb is None:
+                        decrypt_error = "needs prior decrypted CB"
+                    elif cpu_key is None:
+                        decrypt_error = "needs CPU key"
+                    elif len(section) < 0x20:
+                        decrypt_error = "section too small"
+                    else:
+                        decrypted = decrypt_cb_cpu(section, last_cb, cpu_key)
+                if decrypted is not None:
+                    last_cb = decrypted
+            elif name == "CD":
+                if last_cb is None:
+                    decrypt_error = "needs decrypted CB"
+                elif len(section) < 0x20:
+                    decrypt_error = "section too small"
+                else:
+                    decrypted = decrypt_cd(section, last_cb, cpu_key)
+                    last_cd = decrypted
+            elif name == "CE":
+                if last_cd is None:
+                    decrypt_error = "needs decrypted CD"
+                elif len(section) < 0x20:
+                    decrypt_error = "section too small"
+                else:
+                    decrypted = decrypt_ce(section, last_cd)
+            elif name == "CF":
+                if secret_1bl is None:
+                    decrypt_error = "needs 1BL key"
+                elif len(section) < 0x30:
+                    decrypt_error = "section too small"
+                else:
+                    decrypted = decrypt_cf(section, secret_1bl)
+                    last_cf = decrypted
+            elif name == "CG":
+                if last_cf is None:
+                    decrypt_error = "needs decrypted CF"
+                elif len(section) < 0x20:
+                    decrypt_error = "section too small"
+                else:
+                    decrypted = decrypt_cg(section, last_cf)
+        except Exception as exc:
+            decrypt_error = str(exc)
+
+        entry = dict(bootloader)
+        entry["bytes"] = section
+        entry["decrypted"] = decrypted
+        entry["decrypt_error"] = decrypt_error
+        out.append(entry)
+    return out
+
+
+def format_decrypt_status(stage: dict[str, object]) -> str:
+    if stage.get("decrypted") is not None:
+        return "ok"
+    error = stage.get("decrypt_error")
+    return str(error) if error else "n/a"
 
 
 def compare_sections(name: str, a: bytes, b: bytes) -> None:
@@ -263,17 +468,19 @@ def compare_bootloaders(a: bytes, b: bytes) -> None:
     print("A:")
     for bl in chain_a:
         print(
-            f"  {bl['label']:4} off=0x{bl['offset']:06X} ver={bl['version']} size=0x{bl['size']:X}"
+            f"  {bl['label']:4} off=0x{bl['offset']:06X} ver={bl['version']} "
+            f"size=0x{bl['size']:X} aligned=0x{bl['aligned_size']:X}"
         )
     print("B:")
     for bl in chain_b:
         print(
-            f"  {bl['label']:4} off=0x{bl['offset']:06X} ver={bl['version']} size=0x{bl['size']:X}"
+            f"  {bl['label']:4} off=0x{bl['offset']:06X} ver={bl['version']} "
+            f"size=0x{bl['size']:X} aligned=0x{bl['aligned_size']:X}"
         )
 
     print("\n[Bootloader Stage Diffs]")
     for left, right in zip(chain_a, chain_b):
-        size = min(int(left["size"]), int(right["size"]))
+        size = min(int(left["aligned_size"]), int(right["aligned_size"]))
         left_bytes = extract_slice(a, int(left["offset"]), size)
         right_bytes = extract_slice(b, int(right["offset"]), size)
         print(
@@ -284,14 +491,74 @@ def compare_bootloaders(a: bytes, b: bytes) -> None:
         print(f"stage count differs: A={len(chain_a)} B={len(chain_b)}")
 
 
+def compare_bootloader_decryption(a: bytes, b: bytes, secret_1bl: bytes | None, cpu_key: bytes | None) -> None:
+    chain_a = decrypt_bootloader_chain(a, scan_bootloaders(a), secret_1bl, cpu_key)
+    chain_b = decrypt_bootloader_chain(b, scan_bootloaders(b), secret_1bl, cpu_key)
+
+    print("\n[Bootloader Decryption]")
+    print(f"1BL key provided : {secret_1bl is not None}")
+    print(f"CPU key provided : {cpu_key is not None}")
+    print("A:")
+    for stage in chain_a:
+        if str(stage["name"]) not in {"CB", "CD", "CE", "CF", "CG"}:
+            continue
+        print(f"  {stage['label']:4} {format_decrypt_status(stage)}")
+    print("B:")
+    for stage in chain_b:
+        if str(stage["name"]) not in {"CB", "CD", "CE", "CF", "CG"}:
+            continue
+        print(f"  {stage['label']:4} {format_decrypt_status(stage)}")
+
+    comparable = False
+    print("\n[Bootloader Decrypted Diffs]")
+    for left, right in zip(chain_a, chain_b):
+        if str(left["name"]) not in DECRYPTABLE_BOOTLOADERS or str(right["name"]) not in DECRYPTABLE_BOOTLOADERS:
+            continue
+        left_dec = left.get("decrypted")
+        right_dec = right.get("decrypted")
+        if isinstance(left_dec, bytes) and isinstance(right_dec, bytes):
+            comparable = True
+            print(
+                f"{left['label']:4} diff={diff_count(left_dec, right_dec)} / {max(len(left_dec), len(right_dec))}"
+            )
+            if left_dec != right_dec:
+                for start, end in diff_ranges(left_dec, right_dec):
+                    print(f"  range       : 0x{start:08X}-0x{end - 1:08X} ({end - start} bytes)")
+        else:
+            print(
+                f"{left['label']:4} unavailable "
+                f"A={format_decrypt_status(left)} B={format_decrypt_status(right)}"
+            )
+    if len(chain_a) != len(chain_b):
+        print(f"stage count differs: A={len(chain_a)} B={len(chain_b)}")
+    elif not comparable:
+        print("no decrypted stages available to compare")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compare two gxBuild/xeBuild NAND images.")
     parser.add_argument("image_a", nargs="?", default=str(DEFAULT_A))
     parser.add_argument("image_b", nargs="?", default=str(DEFAULT_B))
+    parser.add_argument("--secret-1bl", dest="secret_1bl", help="Hex 1BL key used for CB/CF decryption")
+    parser.add_argument(
+        "--secret-1bl-file",
+        dest="secret_1bl_file",
+        type=Path,
+        help="File containing a raw or ASCII-hex 1BL key",
+    )
+    parser.add_argument("--cpu-key", dest="cpu_key", help="Hex CPU key used for paired CB/CD decryption")
+    parser.add_argument(
+        "--cpu-key-file",
+        dest="cpu_key_file",
+        type=Path,
+        help="File containing a raw or ASCII-hex CPU key",
+    )
     args = parser.parse_args()
 
     path_a = Path(args.image_a)
     path_b = Path(args.image_b)
+    secret_1bl = load_and_validate_key(args.secret_1bl, args.secret_1bl_file, "secret-1bl")
+    cpu_key = load_and_validate_key(args.cpu_key, args.cpu_key_file, "cpu-key")
     raw_a = load(path_a)
     raw_b = load(path_b)
     logical_a, stripped_a = maybe_strip_ecc(raw_a)
@@ -340,6 +607,7 @@ def main() -> None:
     print(f"SMC Config B meaningful: {contains_meaningful_data(smc_config_b)}")
 
     compare_bootloaders(logical_a, logical_b)
+    compare_bootloader_decryption(logical_a, logical_b, secret_1bl, cpu_key)
 
 
 if __name__ == "__main__":
