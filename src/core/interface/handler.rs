@@ -1775,6 +1775,35 @@ impl Executor {
                 }
 
                 let mut built_nand = nand.clone();
+                if let (Some(primary_cb), Some(cd), Some(ce)) = (
+                    built_nand
+                        .bootloaders
+                        .cb_a
+                        .as_mut()
+                        .or(built_nand.bootloaders.cb.as_mut()),
+                    built_nand.bootloaders.cd.as_mut(),
+                    built_nand.bootloaders.ce.as_mut(),
+                ) {
+                    let update = built_nand
+                        .update
+                        .get_or_insert_with(crate::builder::nand::types::NandUpdate::default);
+                    crate::builder::chain::decrypt_chain(
+                        primary_cb,
+                        built_nand.bootloaders.cb_x.as_mut(),
+                        built_nand.bootloaders.cb_b.as_mut(),
+                        built_nand.bootloaders.sc.as_mut(),
+                        cd,
+                        ce,
+                        update.cf_0.as_mut(),
+                        update.cg_0.as_mut(),
+                        update.cf_1.as_mut(),
+                        update.cg_1.as_mut(),
+                        &cpukey,
+                    )
+                    .map_err(|e| {
+                        HandlerError::message(format!("Build: failed to decrypt fresh boot chain: {}", e))
+                    })?;
+                }
                 let clean_bytes = built_nand
                     .build_in_place(cpukey)
                     .map_err(|e| HandlerError::message(format!("Build failed: {}", e)))?;

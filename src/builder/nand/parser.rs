@@ -120,6 +120,7 @@ impl NandSkeleton {
             &image,
             header.cb_offset() as usize,
             header.cf_offset.get() as usize,
+            layout,
             &flashfs,
         )?;
 
@@ -208,6 +209,7 @@ impl NandSkeleton {
             &self.image,
             self.header.cb_offset() as usize,
             self.header.cf_offset.get() as usize,
+            self.options.layout,
             flashfs,
         )
     }
@@ -330,6 +332,7 @@ impl NandSkeleton {
             &image,
             header.cb_offset() as usize,
             header.cf_offset.get() as usize,
+            layout,
             &flashfs,
         )?;
 
@@ -435,6 +438,7 @@ impl NandSkeleton {
         image: &[u8],
         cb_offset: usize,
         cf_ptr: usize,
+        layout: NandLayout,
         flashfs: &crate::builder::filesystem::flashfs::FlashFS,
     ) -> Result<(NandBootloaders, NandUpdate)> {
         let mut bl = NandBootloaders {
@@ -467,15 +471,18 @@ impl NandSkeleton {
                              cg_count: usize,
                              cf0_offset: usize,
                              cf1_offset: usize,
+                             cf_meta: Option<&crate::builder::chain::cf::CfMetadata>,
                              image: &[u8],
+                             layout: &NandLayout,
                              flashfs: &FlashFS|
          -> Vec<u8> {
+            let target_size = (bl_size + 0xF) & !0xF;
             let slot_start = if cg_count == 0 {
                 cf0_offset
             } else {
                 cf1_offset
             };
-            let mut read_size = bl_size;
+            let mut read_size = target_size;
             if slot_start > 0 {
                 let max_slot_end = slot_start + 0x10000;
                 if off + read_size > max_slot_end {
@@ -486,28 +493,44 @@ impl NandSkeleton {
                 return vec![];
             }
             let mut data = image[off..off + read_size].to_vec();
-            if data.len() < bl_size {
-                let sysupdate_name = if cg_count == 0 {
-                    "sysupdate.xexp1"
-                } else {
-                    "sysupdate.xexp2"
-                };
-                if let Some(entry) = flashfs
-                    .root
-                    .entries
-                    .iter()
-                    .find(|e| e.file_name.to_lowercase() == sysupdate_name)
-                {
-                    let needed = bl_size - data.len();
-                    data.extend_from_slice(&entry.data[..std::cmp::min(needed, entry.data.len())]);
-                } else {
-                    warn!(
-                        "[builder] CG{} overflows patch slot but {} not found in FlashFS!",
-                        cg_count + 1,
-                        sysupdate_name
-                    );
-                    if off + bl_size <= image.len() {
-                        data = image[off..off + bl_size].to_vec();
+            if data.len() < target_size {
+                let needed = target_size - data.len();
+                let mut appended = false;
+
+                if let Some(meta) = cf_meta {
+                    if meta.cg_blocks_used > 0 && !meta.cg_block_numbers.is_empty() {
+                        let start_block = meta.cg_block_numbers[0];
+                        let chain_data = flashfs.root.get_chain_data(image, layout, start_block);
+                        if !chain_data.is_empty() {
+                            let take = std::cmp::min(needed, chain_data.len());
+                            data.extend_from_slice(&chain_data[..take]);
+                            appended = true;
+                        }
+                    }
+                }
+
+                if !appended {
+                    let sysupdate_name = if cg_count == 0 {
+                        "sysupdate.xexp1"
+                    } else {
+                        "sysupdate.xexp2"
+                    };
+                    if let Some(entry) = flashfs
+                        .root
+                        .entries
+                        .iter()
+                        .find(|e| e.file_name.to_lowercase() == sysupdate_name)
+                    {
+                        data.extend_from_slice(&entry.data[..std::cmp::min(needed, entry.data.len())]);
+                    } else {
+                        warn!(
+                            "[builder] CG{} overflows patch slot but neither CF block chain nor {} was available in FlashFS!",
+                            cg_count + 1,
+                            sysupdate_name
+                        );
+                        if off + target_size <= image.len() {
+                            data = image[off..off + target_size].to_vec();
+                        }
                     }
                 }
             }
@@ -666,8 +689,13 @@ impl NandSkeleton {
                         bl_version,
                         bl_size
                     );
+                    let cf_meta = if cg_count == 0 {
+                        update.cf_0.as_ref().and_then(|cf| cf.metadata.as_ref())
+                    } else {
+                        update.cf_1.as_ref().and_then(|cf| cf.metadata.as_ref())
+                    };
                     let actual_data = fetch_cg_data(
-                        off, bl_size, cg_count, cf0_offset, cf1_offset, image, &flashfs,
+                        off, bl_size, cg_count, cf0_offset, cf1_offset, cf_meta, image, &layout, &flashfs,
                     );
                     if actual_data.is_empty() {
                         info!("[builder] Failed to fetch complete CG data, stopping chain walk");
@@ -766,8 +794,13 @@ impl NandSkeleton {
                             bl_header.version.get(),
                             bl_size
                         );
+                        let cf_meta = if cg_count == 0 {
+                            update.cf_0.as_ref().and_then(|cf| cf.metadata.as_ref())
+                        } else {
+                            update.cf_1.as_ref().and_then(|cf| cf.metadata.as_ref())
+                        };
                         let actual_data = fetch_cg_data(
-                            off, bl_size, cg_count, cf0_offset, cf1_offset, image, &flashfs,
+                            off, bl_size, cg_count, cf0_offset, cf1_offset, cf_meta, image, &layout, &flashfs,
                         );
                         if actual_data.is_empty() {
                             info!("[builder] Failed to fetch complete CG data, stopping CF_Ptr chain walk");
@@ -851,8 +884,13 @@ impl NandSkeleton {
                                     bl_header.version.get(),
                                     bl_size
                                 );
+                                let cf_meta = if cg_count == 0 {
+                                    update.cf_0.as_ref().and_then(|cf| cf.metadata.as_ref())
+                                } else {
+                                    update.cf_1.as_ref().and_then(|cf| cf.metadata.as_ref())
+                                };
                                 let actual_data = fetch_cg_data(
-                                    off, bl_size, cg_count, cf0_offset, cf1_offset, image, &flashfs,
+                                    off, bl_size, cg_count, cf0_offset, cf1_offset, cf_meta, image, &layout, &flashfs,
                                 );
                                 if actual_data.is_empty() {
                                     info!("[builder] Failed to fetch complete CG data, stopping discovery scan");

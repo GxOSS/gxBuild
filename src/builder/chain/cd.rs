@@ -66,6 +66,7 @@ pub struct BootloaderCd {
     pub data: Vec<u8>,
     pub metadata: Option<CdMetadata>,
     pub derived_key: Option<[u8; 16]>,
+    pub using_cpu_key: bool,
 }
 
 impl BootloaderCd {
@@ -77,9 +78,24 @@ impl BootloaderCd {
             data: payload.to_vec(),
             metadata: None,
             derived_key: None,
+            using_cpu_key: false,
         };
         cd.populate_metadata();
         Ok(cd)
+    }
+
+    fn payload_looks_decrypted(payload: &[u8]) -> bool {
+        payload.len() >= 0x214
+            && (payload[0x20..0x24] == [0, 0, 0, 0]
+                || payload[0x210..0x214] == [0, 0, 0, 0])
+    }
+
+    fn crypt_payload(&mut self, key: &[u8; 16], payload_size: usize) -> Result<()> {
+        self.derived_key = Some(*key);
+        let mut rc4 = Rc4::new(key).map_err(|e| CdError::Rc4Init(e.to_string()))?;
+        rc4.crypt(&mut self.data[0x10..payload_size])
+            .map_err(|e| CdError::Rc4Crypt(e.to_string()))?;
+        Ok(())
     }
 
     pub fn populate_metadata(&mut self) {
@@ -137,10 +153,10 @@ impl BootloaderCd {
     }
 
     pub fn is_decrypted(&self) -> bool {
-        if self.data.len() < 0x111 {
+        if self.data.len() < 0x224 {
             return false;
         }
-        self.data[0x110] == 0x00
+        Self::payload_looks_decrypted(&self.data[0x10..])
     }
 
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) -> Result<()> {
@@ -213,23 +229,64 @@ impl BootloaderCd {
 
         let derived_key = hmac_sha(cbb_key, &[&self.data[0..16]])
             .map_err(|e| CdError::KeyDerivation(e.to_string()))?;
-        let mut final_key = [0u8; 16];
-        final_key.copy_from_slice(&derived_key[..16]);
-        info!("[builder] CD Decryption Key Derived: {:02x?}", final_key);
+        let mut base_key = [0u8; 16];
+        base_key.copy_from_slice(&derived_key[..16]);
+        info!("[builder] CD base key derived: {:02x?}", base_key);
+
+        if self.is_decrypted() {
+            let final_key = if self.using_cpu_key {
+                let key = cpu_key.ok_or_else(|| {
+                    CdError::KeyDerivation(
+                        "CPU key required for CD CPU-key encryption mode".to_string(),
+                    )
+                })?;
+                let derived_key_cpu = hmac_sha(key, &[&base_key])
+                    .map_err(|e| CdError::KeyDerivation(e.to_string()))?;
+                let mut cpu_wrapped = [0u8; 16];
+                cpu_wrapped.copy_from_slice(&derived_key_cpu[..16]);
+                cpu_wrapped
+            } else {
+                base_key
+            };
+            return self.crypt_payload(&final_key, payload_size);
+        }
+
+        let encrypted_payload = self.data[0x10..payload_size].to_vec();
+        let mut base_candidate = encrypted_payload.clone();
+        let mut rc4 = Rc4::new(&base_key).map_err(|e| CdError::Rc4Init(e.to_string()))?;
+        rc4.crypt(&mut base_candidate)
+            .map_err(|e| CdError::Rc4Crypt(e.to_string()))?;
+        if Self::payload_looks_decrypted(&base_candidate) {
+            self.data[0x10..payload_size].copy_from_slice(&base_candidate);
+            self.derived_key = Some(base_key);
+            self.using_cpu_key = false;
+            self.populate_metadata();
+            return Ok(());
+        }
 
         if let Some(key) = cpu_key {
-            if let Ok(derived_key_cpu) = hmac_sha(key, &[&final_key]) {
-                final_key.copy_from_slice(&derived_key_cpu[..16]);
-            } else {
-                warn!("[builder] CPU key HMAC derivation failed, continuing with CBB-derived key");
+            let derived_key_cpu = hmac_sha(key, &[&base_key])
+                .map_err(|e| CdError::KeyDerivation(e.to_string()))?;
+            let mut cpu_wrapped_key = [0u8; 16];
+            cpu_wrapped_key.copy_from_slice(&derived_key_cpu[..16]);
+
+            let mut cpu_candidate = encrypted_payload;
+            let mut rc4 =
+                Rc4::new(&cpu_wrapped_key).map_err(|e| CdError::Rc4Init(e.to_string()))?;
+            rc4.crypt(&mut cpu_candidate)
+                .map_err(|e| CdError::Rc4Crypt(e.to_string()))?;
+            if Self::payload_looks_decrypted(&cpu_candidate) {
+                info!("[builder] CD requires CPU-key encryption mode");
+                self.data[0x10..payload_size].copy_from_slice(&cpu_candidate);
+                self.derived_key = Some(cpu_wrapped_key);
+                self.using_cpu_key = true;
+                self.populate_metadata();
+                return Ok(());
             }
         }
 
-        self.derived_key = Some(final_key);
-        let mut rc4 = Rc4::new(&final_key).map_err(|e| CdError::Rc4Init(e.to_string()))?;
-        rc4.crypt(&mut self.data[0x10..payload_size])
-            .map_err(|e| CdError::Rc4Crypt(e.to_string()))?;
-        Ok(())
+        warn!("[builder] CD decryption mode could not be identified");
+        Err(CdError::ParseError)
     }
 
     pub fn derived_key(&self) -> [u8; 16] {

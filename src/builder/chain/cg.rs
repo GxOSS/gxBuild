@@ -61,6 +61,7 @@ pub struct BootloaderCg {
     pub header: BootloaderHeader,
     pub data: Vec<u8>,
     pub metadata: Option<CgMetadata>,
+    pub decrypted: bool,
 }
 
 impl BootloaderCg {
@@ -71,9 +72,25 @@ impl BootloaderCg {
             header,
             data: payload.to_vec(),
             metadata: None,
+            decrypted: false,
         };
+        cg.decrypted = cg.heuristic_is_decrypted();
         cg.populate_metadata();
         Ok(cg)
+    }
+
+    fn heuristic_is_decrypted(&self) -> bool {
+        if self.data.len() < 0x2C {
+            return false;
+        }
+
+        let original_size = BigEndian::read_u32(&self.data[0x10..0x14]);
+        let new_size = BigEndian::read_u32(&self.data[0x28..0x2C]);
+
+        original_size != 0
+            && new_size != 0
+            && original_size < 0x0800_0000
+            && new_size < 0x0800_0000
     }
 
     pub fn populate_metadata(&mut self) {
@@ -119,11 +136,7 @@ impl BootloaderCg {
     }
 
     pub fn is_decrypted(&self) -> bool {
-        if self.data.len() < 0x14 {
-            return false;
-        }
-
-        (BigEndian::read_u32(&self.data[0x10..0x14]) & 0xFFF) == 0x000
+        self.decrypted || self.heuristic_is_decrypted()
     }
 
     pub fn print_info(&self) {
@@ -198,6 +211,10 @@ impl BootloaderCg {
         let mut rc4 = Rc4::new(&final_key).map_err(|e| CgError::Rc4Init(e.to_string()))?;
         rc4.crypt(&mut self.data[0x10..payload_size])
             .map_err(|e| CgError::Rc4Crypt(e.to_string()))?;
+        self.decrypted = !self.decrypted;
+        if self.decrypted {
+            self.populate_metadata();
+        }
         Ok(())
     }
 

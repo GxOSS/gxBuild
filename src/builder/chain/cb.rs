@@ -77,6 +77,7 @@ pub struct BootloaderCb {
     pub data: Vec<u8>,
     pub metadata: Option<CbMetadata>,
     pub derived_key: Option<[u8; 16]>,
+    pub decrypted: bool,
 }
 
 impl BootloaderCb {
@@ -97,6 +98,7 @@ impl BootloaderCb {
                     data: bytes.to_vec(),
                     metadata: None,
                     derived_key: None,
+                    decrypted: false,
                 };
             }
         };
@@ -106,7 +108,9 @@ impl BootloaderCb {
             data: payload.to_vec(),
             metadata: None,
             derived_key: None,
+            decrypted: false,
         };
+        cb.decrypted = cb.verify_decrypted();
         cb.populate_metadata();
         cb
     }
@@ -119,7 +123,9 @@ impl BootloaderCb {
             data: payload.to_vec(),
             metadata: None,
             derived_key: None,
+            decrypted: false,
         };
+        cb.decrypted = cb.verify_decrypted();
         cb.populate_metadata();
         Ok(cb)
     }
@@ -275,10 +281,7 @@ impl BootloaderCb {
     }
 
     pub fn is_decrypted(&self) -> bool {
-        if self.data.len() < 0x380 {
-            return false;
-        }
-        self.data[0x260..0x380].iter().all(|&b| b == 0)
+        self.decrypted || self.verify_decrypted()
     }
 
     pub fn calculate_rotsum(&self, sha_out: &mut [u8; 0x14]) {
@@ -419,7 +422,10 @@ impl BootloaderCb {
         rc4.crypt(&mut self.data[0x10..payload_len])
             .map_err(|e| CbError::Rc4Crypt(e.to_string()))?;
 
-        self.populate_metadata();
+        self.decrypted = !self.decrypted;
+        if self.decrypted {
+            self.populate_metadata();
+        }
         Ok(())
     }
 
@@ -457,7 +463,10 @@ impl BootloaderCb {
         rc4.crypt(&mut self.data[0x10..payload_len])
             .map_err(|e| CbError::Rc4Crypt(e.to_string()))?;
 
-        self.populate_metadata();
+        self.decrypted = !self.decrypted;
+        if self.decrypted {
+            self.populate_metadata();
+        }
         Ok(())
     }
 
@@ -490,6 +499,11 @@ impl BootloaderCb {
         let mut rc4 = Rc4::new(&decrypt_key).map_err(|e| CbError::Rc4Init(e.to_string()))?;
         rc4.crypt(&mut self.data[0x10..payload_len])
             .map_err(|e| CbError::Rc4Crypt(e.to_string()))?;
+
+        self.decrypted = !self.decrypted;
+        if self.decrypted {
+            self.populate_metadata();
+        }
 
         Ok(())
     }
@@ -529,8 +543,50 @@ impl BootloaderCb {
             .map_err(|e| CbError::Rc4Crypt(e.to_string()))?;
         info!("[cb] CB_B v2 RC4 decryption successful");
 
+        self.decrypted = !self.decrypted;
+        if self.decrypted {
+            self.populate_metadata();
+        }
+
         Ok(())
     }
+
+    pub fn derive_key_from_nonce(&self, onebl_key: &[u8; 16]) -> Option<[u8; 16]> {
+        let nonce = self.data.get(0..16)?;
+        let derived = hmac_sha(onebl_key, &[nonce]).ok()?;
+        let mut key = [0u8; 16];
+        key.copy_from_slice(&derived[..16]);
+        Some(key)
+    }
+
+    pub fn derive_split_key_v1(
+        &self,
+        cb_a_key: &[u8; 16],
+        cpu_key: &[u8; 16],
+    ) -> Option<[u8; 16]> {
+        let nonce = self.data.get(0..16)?;
+        let derived = hmac_sha(cb_a_key, &[nonce, cpu_key]).ok()?;
+        let mut key = [0u8; 16];
+        key.copy_from_slice(&derived[..16]);
+        Some(key)
+    }
+
+    pub fn derive_split_key_v2(
+        &self,
+        cb_a_hdr: &BootloaderHeader,
+        cb_a_key: &[u8; 16],
+        cpu_key: &[u8; 16],
+    ) -> Option<[u8; 16]> {
+        let nonce = self.data.get(0..16)?;
+        let mut cb_a_hdr_copy: [u8; 16] = zerocopy::IntoBytes::as_bytes(cb_a_hdr).try_into().ok()?;
+        cb_a_hdr_copy[0x6] = 0;
+        cb_a_hdr_copy[0x7] = 0;
+        let derived = hmac_sha(cb_a_key, &[nonce, cpu_key, &cb_a_hdr_copy]).ok()?;
+        let mut key = [0u8; 16];
+        key.copy_from_slice(&derived[..16]);
+        Some(key)
+    }
+
     /// Returns the derived RC4 key if decryption has been performed.
     pub fn derived_key(&self) -> Option<[u8; 16]> {
         self.derived_key

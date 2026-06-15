@@ -1517,24 +1517,41 @@ impl NandSkeleton {
 
         skel.prepare_for_assembly()?;
 
-        if let Some(cb) = skel
+        let primary_cb_key = if let Some(cb) = skel
             .bootloaders
             .cb_a
             .as_mut()
             .or(skel.bootloaders.cb.as_mut())
         {
             if cb.metadata.is_some() {
-                if let Some(rc4_key) = cb.derived_key() {
+                let rc4_key = cb.derived_key().or_else(|| cb.derive_key_from_nonce(&ONEBL_KEY));
+                if let Some(rc4_key) = rc4_key {
                     cb.recalculate_per_box_digest(&cpukey, &rc4_key, &smc_hash);
+                    Some(rc4_key)
                 } else {
                     log::warn!("[builder] CB_A/CB has no derived key, skipping per-box digest recalculation");
+                    None
                 }
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
 
         if let Some(cb_b) = skel.bootloaders.cb_b.as_mut() {
             if cb_b.metadata.is_some() {
-                if let Some(rc4_key) = cb_b.derived_key() {
+                let rc4_key = cb_b.derived_key().or_else(|| {
+                    let cb_a = skel.bootloaders.cb_a.as_ref().or(skel.bootloaders.cb.as_ref())?;
+                    let cb_a_key = primary_cb_key.or_else(|| cb_a.derive_key_from_nonce(&ONEBL_KEY))?;
+                    let uses_new_crypto = (cb_a.header.flags.get() & 0x1000) != 0;
+                    if uses_new_crypto {
+                        cb_b.derive_split_key_v2(&cb_a.header, &cb_a_key, &cpukey)
+                    } else {
+                        cb_b.derive_split_key_v1(&cb_a_key, &cpukey)
+                    }
+                });
+                if let Some(rc4_key) = rc4_key {
                     cb_b.recalculate_per_box_digest(&cpukey, &rc4_key, &smc_hash);
                 } else {
                     log::warn!(
@@ -1829,6 +1846,7 @@ mod tests {
             data: large_cd,
             derived_key: None,
             metadata: None,
+            using_cpu_key: false,
         });
 
         let logical = skeleton.assemble_logical().unwrap();

@@ -191,7 +191,7 @@ pub fn decrypt_chain(
     cg_0: Option<&mut cg::BootloaderCg>,
     cf_1: Option<&mut cf::BootloaderCf>,
     cg_1: Option<&mut cg::BootloaderCg>,
-    _cpukey: &[u8; 16],
+    cpukey: &[u8; 16],
 ) -> Result<(), String> {
     let mut cb_nonce = [0u8; 16];
     if cb.data.len() >= 16 {
@@ -228,13 +228,17 @@ pub fn decrypt_chain(
     let cd_key: [u8; 16] = if let Some(cb_b_bl) = cb_b {
         if cb_a_uses_new_crypto {
             info!("[builder] CB_A new crypto (flags & 0x1000): using decrypt_v2 for CB_B");
-            if let Err(e) = cb_b_bl.decrypt_v2(&cb.header, &cb_key, _cpukey) {
+            if let Err(e) = cb_b_bl.decrypt_v2(&cb.header, &cb_key, cpukey) {
                 log::warn!("[builder] CB_B v2 decryption failed: {}", e);
+            } else {
+                cb_b_bl.decrypted = true;
             }
         } else {
             info!("[builder] Using decrypt_v1 for CB_B");
-            if let Err(e) = cb_b_bl.decrypt_v1(&cb_key, _cpukey) {
+            if let Err(e) = cb_b_bl.decrypt_v1(&cb_key, cpukey) {
                 log::warn!("[builder] CB_B v1 decryption failed: {}", e);
+            } else {
+                cb_b_bl.decrypted = true;
             }
         }
         // Debug: Print first 0x30 bytes of decrypted CB_B to find LDV
@@ -291,7 +295,7 @@ pub fn decrypt_chain(
 
     info!("[builder] Decrypting CD and CE...");
     if !cd.is_decrypted() {
-        if let Err(e) = cd.decrypt(&cd_key, None) {
+        if let Err(e) = cd.decrypt(&cd_key, Some(cpukey)) {
             log::warn!("[builder] CD decryption failed: {}", e);
         }
     }
@@ -411,6 +415,53 @@ pub fn encrypt_chain(
         cb.data[0x20..0x30].copy_from_slice(&digest);
     }
 
+    if let Some(ref mut cb_b_bl) = cb_b {
+        if !cb_b_bl.is_decrypted() {
+            let has_metadata = cb_b_bl.metadata.is_some();
+            let has_derived_key = cb_b_bl.derived_key().is_some();
+            log::warn!(
+                "[builder] CB_B pre-encrypt check failed: decrypted={} metadata={} derived_key={}",
+                cb_b_bl.decrypted,
+                has_metadata,
+                has_derived_key
+            );
+            if has_metadata && has_derived_key {
+                log::warn!(
+                    "[builder] CB_B state flag was lost, but metadata and derived key are present; continuing as decrypted"
+                );
+                cb_b_bl.decrypted = true;
+            } else {
+                return Err("CB_B is not decrypted before final chain encryption".to_string());
+            }
+        }
+    }
+    if !cd.is_decrypted() {
+        return Err("CD is not decrypted before final chain encryption".to_string());
+    }
+    if !ce.is_decrypted() {
+        return Err("CE is not decrypted before final chain encryption".to_string());
+    }
+    if let Some(ref cf) = cf_0 {
+        if !cf.is_decrypted() {
+            return Err("CF slot 0 is not decrypted before final chain encryption".to_string());
+        }
+    }
+    if let Some(ref cg) = cg_0 {
+        if !cg.is_decrypted() {
+            return Err("CG slot 0 is not decrypted before final chain encryption".to_string());
+        }
+    }
+    if let Some(ref cf) = cf_1 {
+        if !cf.is_decrypted() {
+            return Err("CF slot 1 is not decrypted before final chain encryption".to_string());
+        }
+    }
+    if let Some(ref cg) = cg_1 {
+        if !cg.is_decrypted() {
+            return Err("CG slot 1 is not decrypted before final chain encryption".to_string());
+        }
+    }
+
     // Encrypt in reverse order (innermost first).
     // Slot 1 - read CG HMAC from decrypted CF, then re-encrypt CG, then re-encrypt CF
     if let (Some(cf), Some(cg)) = (cf_1, cg_1) {
@@ -467,10 +518,14 @@ pub fn encrypt_chain(
             info!("[builder] CB_A new crypto (flags & 0x1000): using encrypt_v2 for CB_B");
             if let Err(e) = cb_b_bl.decrypt_v2(&cb.header, &cb_key, cpukey) {
                 log::warn!("[builder] CB_B v2 re-encryption failed: {}", e);
+            } else {
+                cb_b_bl.decrypted = false;
             }
         } else {
             if let Err(e) = cb_b_bl.decrypt_v1(&cb_key, cpukey) {
                 log::warn!("[builder] CB_B v1 re-encryption failed: {}", e);
+            } else {
+                cb_b_bl.decrypted = false;
             }
         }
         info!("[builder] CB_B re-encrypted.");
@@ -478,7 +533,7 @@ pub fn encrypt_chain(
     if keep_cd_plaintext {
         info!("[builder] CD left plaintext.");
     } else {
-        if let Err(e) = cd.decrypt(&cd_key, None) {
+        if let Err(e) = cd.decrypt(&cd_key, Some(cpukey)) {
             log::warn!("[builder] CD re-encryption failed: {}", e);
         }
         info!("[builder] CD re-encrypted.");
